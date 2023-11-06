@@ -1,6 +1,6 @@
 use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPool, Executor};
+use sqlx::{postgres::PgPoolOptions, Executor, Pool, Postgres};
 
 #[derive(Serialize, Deserialize)]
 struct StarkNetTransaction {
@@ -17,8 +17,8 @@ struct StarkNetTransaction {
 use std::sync::Arc;
 
 struct AppState {
-    db_pool: PgPool,
-    redis_client: Arc<redis::Client>,
+    db_pool: Pool<Postgres>,
+    // redis_client: Arc<redis::Client>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -28,17 +28,19 @@ struct Transaction {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get redis address from environment variable
-    let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
+    // let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
-    let pool = PgPool::connect(&db_addr).await?;
-    let client = redis::Client::open(redis_addr)?;
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db_addr)
+        .await?;
+    // let client = redis::Client::open(redis_addr)?;
 
     sqlx::migrate!().run(&pool).await?;
 
     let shared_state = Arc::new(AppState {
         db_pool: pool,
-        redis_client: Arc::new(client),
+        // redis_client: Arc::new(client),
     });
 
     let app = Router::new()
