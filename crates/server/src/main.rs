@@ -2,6 +2,7 @@ mod db;
 
 extern crate dotenv;
 
+use crate::db::Simulation;
 use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use sqlx::{postgres::PgPoolOptions, Executor, Pool, Postgres};
 
 #[derive(Serialize, Deserialize)]
 struct StarkNetTransaction {
-    // Define your transaction structure here
+    // Define your transaction structure here;
 }
 
 // Resources
@@ -26,10 +27,10 @@ struct AppState {
     // redis_client: Arc<redis::Client>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Transaction {
-    name: String,
-}
+// #[derive(Serialize, Deserialize)]
+// struct Transaction {
+//     Starknet
+// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // "/simulate",
         // post({
         //     let shared_state1 = Arc::clone(&shared_state);
-        //     move |body: Json<Transaction>| simulate(body, shared_state1)
+        //     move |body: Json<StarkNetTransaction>| simulate(body, shared_state1)
         // })
         .route(
             "/:chain/tx/:hash",
