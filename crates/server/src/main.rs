@@ -1,4 +1,7 @@
+extern crate dotenv;
+
 use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
+use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, Executor, Pool, Postgres};
 
@@ -28,6 +31,8 @@ struct Transaction {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
+
     // let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
     let pool = PgPoolOptions::new()
