@@ -76,6 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn simulate(Json(payload): Json<Transaction>, state: Arc<AppState>) {
+    // TODO: Get current block number from node
+
+    // TODO: Insert into database
     let sim = db::Simulation::default();
     // Insert into database
     sqlx::query!(
@@ -86,8 +89,16 @@ async fn simulate(Json(payload): Json<Transaction>, state: Arc<AppState>) {
         sim.transaction_type,
         sim.transaction_version,
     ).execute(&state.db_pool).await.unwrap();
+
+    // TODO(jainkunal): Execute the transaction in context of the block and get status
+
+    // TODO(jainkunal): Update status to DB
+
+    // TODO: Return
 }
 
-async fn read_transaction(state: Arc<AppState>, id: Path<String>) -> impl IntoResponse {
+async fn read_transaction(_state: Arc<AppState>, id: Path<String>) -> impl IntoResponse {
     // Implement your business logic here
+    dbg!(id);
+    "Hello, World!"
 }

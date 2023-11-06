@@ -1,6 +1,6 @@
 To execute a transaction using forked node context follow
 
-rust```
+```
 use blockifier::transaction::transaction_execution::Transaction;
 use blockifier::transaction::account_transaction::AccountTransaction;
 use blockifier::transaction::transactions::{InvokeTransaction};
@@ -237,7 +237,7 @@ fn main() {
 
     let mut tx_state = CachedState::<_>::create_transactional(&mut cached_fork_state);
     let tx_info = tx.execute(&mut tx_state, &block_context, true, true);
-    
+
     dbg!("----------------------------------");
     // sanitize_and_debug_call_info(tx_info.unwrap().execute_call_info.unwrap());
     // let mut blocifier_state = create_cheatnet_state(cached_fork_state);
