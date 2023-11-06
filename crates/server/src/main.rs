@@ -1,17 +1,14 @@
+mod app_state;
 mod db;
+mod handlers;
 
 extern crate dotenv;
 
-use crate::db::Simulation;
-use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
+use app_state::AppState;
+use axum::{extract::Path, response::IntoResponse, routing::get, Router};
 use dotenv::dotenv;
-use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPoolOptions, Executor, Pool, Postgres};
-
-#[derive(Serialize, Deserialize)]
-struct StarkNetTransaction {
-    // Define your transaction structure here;
-}
+use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -19,18 +16,6 @@ struct StarkNetTransaction {
 // https://www.apianalytics.dev/
 // - https://github.com/tom-draper/api-analytics
 // https://docs.rs/axum-prometheus/latest/axum_prometheus/
-
-use std::sync::Arc;
-
-struct AppState {
-    db_pool: Pool<Postgres>,
-    // redis_client: Arc<redis::Client>,
-}
-
-// #[derive(Serialize, Deserialize)]
-// struct Transaction {
-//     Starknet
-// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,28 +59,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     Ok(())
-}
-
-async fn simulate(Json(payload): Json<Transaction>, state: Arc<AppState>) {
-    // TODO: Get current block number from node
-
-    // TODO: Insert into database
-    let sim = db::Simulation::default();
-    // Insert into database
-    sqlx::query!(
-        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_type, transaction_version) VALUES ($1, $2, $3, $4, $5)",
-        sim.team_id,
-        sim.chain_id,
-        sim.block_at,
-        sim.transaction_type,
-        sim.transaction_version,
-    ).execute(&state.db_pool).await.unwrap();
-
-    // TODO(jainkunal): Execute the transaction in context of the block and get status
-
-    // TODO(jainkunal): Update status to DB
-
-    // TODO: Return
 }
 
 async fn read_transaction(_state: Arc<AppState>, id: Path<String>) -> impl IntoResponse {
