@@ -14,3 +14,4 @@ tower-http.workspace = true
 tokio.workspace = true
 serde.workspace = true
 dotenv.workspace = true
+chrono.workspace = true

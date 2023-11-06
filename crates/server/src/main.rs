@@ -1,3 +1,5 @@
+mod db;
+
 extern crate dotenv;
 
 use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
@@ -74,9 +76,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn simulate(Json(payload): Json<Transaction>, state: Arc<AppState>) {
-    let _ = sqlx::query!("INSERT INTO simulations (name) VALUES ($1)", "k")
-        .execute(&state.db_pool)
-        .await;
+    let sim = db::Simulation::default();
+    // Insert into database
+    sqlx::query!(
+        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_type, transaction_version) VALUES ($1, $2, $3, $4, $5)",
+        sim.team_id,
+        sim.chain_id,
+        sim.block_at,
+        sim.transaction_type,
+        sim.transaction_version,
+    ).execute(&state.db_pool).await.unwrap();
 }
 
 async fn read_transaction(state: Arc<AppState>, id: Path<String>) -> impl IntoResponse {

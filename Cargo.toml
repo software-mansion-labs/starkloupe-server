@@ -14,7 +14,7 @@ edition = "2021"
 [workspace.dependencies]
 axum = "0.6.20"
 redis = { version = "0.23.3", features = ["tokio-comp"] }
-sqlx = { version = "0.7.2", features = ["runtime-tokio", "tls-native-tls", "postgres"] }
+sqlx = { version = "0.7.2", features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid"] }
 tower = "0.4.13"
 tower-http = "0.4.4"
 tokio = { version = "1.33.0", features = ["full"] }
@@ -43,3 +43,4 @@ ctor = "0.2.4"
 indoc = "2"
 starknet-crypto = "0.5.1"
 dotenv = "0.15.0"
+chrono = "0.4.31"
