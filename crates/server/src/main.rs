@@ -5,8 +5,9 @@ mod handlers;
 extern crate dotenv;
 
 use app_state::AppState;
-use axum::{extract::Path, response::IntoResponse, routing::get, Router};
+use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
 use dotenv::dotenv;
+use handlers::simulate::{simulate, StarkNetTransaction};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
@@ -37,12 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app = Router::new()
-        // .route(
-        // "/simulate",
-        // post({
-        //     let shared_state1 = Arc::clone(&shared_state);
-        //     move |body: Json<StarkNetTransaction>| simulate(body, shared_state1)
-        // })
+        .route(
+            "/simulate",
+            post({
+                let shared_state = Arc::clone(&shared_state);
+                move |body: Json<StarkNetTransaction>| simulate(body, shared_state)
+            }),
+        )
         .route(
             "/:chain/tx/:hash",
             get({
