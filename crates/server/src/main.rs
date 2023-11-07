@@ -5,9 +5,18 @@ mod handlers;
 extern crate dotenv;
 
 use app_state::AppState;
-use axum::{extract::Path, response::IntoResponse, routing::get, routing::post, Json, Router};
+use axum::{
+    extract::{Path, State},
+    http::Request,
+    http::StatusCode,
+    middleware::{self, Next},
+    response::Response,
+    routing::get,
+    routing::post,
+    Json, Router,
+};
 use dotenv::dotenv;
-use handlers::simulate::{simulate, StarkNetTransaction};
+use handlers::simulate::simulate;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 
@@ -17,6 +26,23 @@ use std::sync::Arc;
 // https://www.apianalytics.dev/
 // - https://github.com/tom-draper/api-analytics
 // https://docs.rs/axum-prometheus/latest/axum_prometheus/
+
+async fn auth_middleware<B>(
+    State(_state): State<Arc<AppState>>,
+    req: Request<B>,
+    next: Next<B>,
+) -> Result<Response, StatusCode> {
+    let is_authorized = match req.headers().get("x-api-key") {
+        Some(key) if key == "your_api_key" => true,
+        _ => false,
+    };
+
+    if !is_authorized {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    Ok(next.run(req).await)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,20 +64,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app = Router::new()
-        .route(
-            "/simulate",
-            post({
-                let shared_state = Arc::clone(&shared_state);
-                move |body: Json<StarkNetTransaction>| simulate(body, shared_state)
-            }),
-        )
-        .route(
-            "/:chain/tx/:hash",
-            get({
-                let shared_state = Arc::clone(&shared_state);
-                move |path: Path<String>| read_transaction(shared_state, path)
-            }),
-        );
+        .route("/simulate", post(simulate))
+        .route_layer(middleware::from_fn_with_state(
+            shared_state.clone(),
+            auth_middleware,
+        ))
+        .route("/:chain/tx/:hash", get(read_transaction))
+        .with_state(shared_state);
 
     println!("Listening on 0.0.0.0:3000");
 
@@ -63,8 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn read_transaction(_state: Arc<AppState>, id: Path<String>) -> impl IntoResponse {
+async fn read_transaction(
+    State(_state): State<Arc<AppState>>,
+    path: Path<(String, String)>,
+) -> Result<Json<String>, StatusCode> {
     // Implement your business logic here
-    dbg!(id);
-    "Hello, World!"
+    dbg!(path);
+    Ok(Json("Hello, World!".to_string()))
 }

@@ -1,7 +1,6 @@
 use crate::app_state::AppState;
 use crate::db;
-use axum::http::StatusCode;
-use axum::Json;
+use axum::{extract::State, http::StatusCode, Json};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -20,13 +19,12 @@ pub struct StarkNetTransaction {
 }
 
 #[derive(Serialize)]
-pub struct SimulateResult {
-}
+pub struct SimulateResult {}
 
 pub async fn simulate(
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
-    state: Arc<AppState>,
-) -> (StatusCode, Json<SimulateResult>) {
+) -> Result<Json<SimulateResult>, StatusCode> {
     let block_number = get_current_block_number().await;
 
     // TODO: Insert into database
@@ -51,7 +49,7 @@ pub async fn simulate(
 
     // TODO: Return
 
-    (StatusCode::OK, Json(SimulateResult {}))
+    Ok(Json(SimulateResult {}))
 }
 
 async fn get_current_block_number() -> u64 {
