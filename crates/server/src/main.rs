@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth_middleware,
         ))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
+        .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state);
 
     println!("Listening on 0.0.0.0:3000");
