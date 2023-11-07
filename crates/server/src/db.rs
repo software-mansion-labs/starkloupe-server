@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use sqlx::types::Uuid;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Simulation {
     pub id: Uuid,
     pub team_id: i32,
@@ -12,4 +12,9 @@ pub struct Simulation {
     // TODO: Tranasction fields starting with invoke
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+#[derive(Clone, Debug)]
+pub struct Team {
+    pub id: i32,
 }

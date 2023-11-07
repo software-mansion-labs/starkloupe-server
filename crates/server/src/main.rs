@@ -15,6 +15,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use db::Team;
 use dotenv::dotenv;
 use handlers::simulate::simulate;
 use sqlx::postgres::PgPoolOptions;
@@ -29,17 +30,26 @@ use std::sync::Arc;
 
 async fn auth_middleware<B>(
     State(_state): State<Arc<AppState>>,
-    req: Request<B>,
+    mut req: Request<B>,
     next: Next<B>,
 ) -> Result<Response, StatusCode> {
-    let is_authorized = match req.headers().get("x-api-key") {
-        Some(key) if key == "your_api_key" => true,
-        _ => false,
-    };
+    // TODO: We will get team from the DB.
+    let team = match req.headers().get("x-api-key") {
+        Some(key) => {
+            if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
+                // Walnut Team
+                Ok(Team { id: 1 })
+            } else if key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT" {
+                // Briq Team
+                Ok(Team { id: 2 })
+            } else {
+                Err(StatusCode::UNAUTHORIZED)
+            }
+        }
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }?;
 
-    if !is_authorized {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    req.extensions_mut().insert(team);
 
     Ok(next.run(req).await)
 }

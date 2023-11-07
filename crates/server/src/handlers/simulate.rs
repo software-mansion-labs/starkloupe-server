@@ -1,6 +1,6 @@
 use crate::app_state::AppState;
 use crate::db;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode, Extension, Json};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -22,6 +22,7 @@ pub struct StarkNetTransaction {
 pub struct SimulateResult {}
 
 pub async fn simulate(
+    Extension(team): Extension<db::Team>,
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
@@ -32,6 +33,9 @@ pub async fn simulate(
     sim.chain_id = payload.chain_id as i32;
     sim.block_at = block_number as i32;
     sim.transaction_version = payload.version as i32;
+    sim.team_id = team.id;
+
+    dbg!(sim.clone());
 
     // Insert into database
     sqlx::query!(

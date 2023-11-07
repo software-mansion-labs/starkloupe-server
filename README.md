@@ -1,5 +1,7 @@
 # Running server binary
-`cargo run server`
+
+`cargo run --bin server`
 
 # DB
+
 Read /migrations/README.md

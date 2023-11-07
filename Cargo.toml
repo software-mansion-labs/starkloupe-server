@@ -3,6 +3,7 @@ members = [
     "crates/conversions",
     "crates/forking",
     "crates/server",
+    "crates/team-onboarding",
 ]
 resolver = "2"
 
