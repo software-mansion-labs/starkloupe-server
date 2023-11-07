@@ -1,7 +1,7 @@
 Use `sqlx` command line to create migrations
 
 # Installation
-cargo install sqlx-cli
+`cargo install sqlx-cli`
 
 # Adding a migration
-sqlx migrate add
+`sqlx migrate add`
