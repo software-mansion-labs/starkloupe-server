@@ -4,8 +4,13 @@ use axum::{extract::State, http::StatusCode, Extension, Json};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use starknet_providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
+use url::Url;
 
 #[derive(Serialize, Deserialize)]
 pub struct StarkNetTransaction {
@@ -26,7 +31,9 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let block_number = get_current_block_number().await;
+    let rpc_client = rpc_client();
+
+    let block_number = rpc_client.block_number().await.unwrap();
 
     // TODO: Insert into database
     let mut sim = db::Simulation::default();
@@ -56,16 +63,15 @@ pub async fn simulate(
     Ok(Json(SimulateResult {}))
 }
 
-async fn get_current_block_number() -> u64 {
-    let method = "starknet_blockNumber";
-    let params = HashMap::new();
-
-    let res_value = query_node(method, params).await;
-
-    match res_value {
-        serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
-        _ => 0,
-    }
+fn rpc_client() -> JsonRpcClient<HttpTransport> {
+    JsonRpcClient::new(HttpTransport::new(
+        Url::parse(
+            std::env::var("NODE_URL")
+                .unwrap_or("https://ofsg.mainnet-juno.rpc.nethermind.io".to_string())
+                .as_str(),
+        )
+        .unwrap(),
+    ))
 }
 
 async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {

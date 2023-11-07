@@ -3536,9 +3536,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "starknet-providers 0.7.0",
  "tokio",
  "tower",
  "tower-http",
+ "url",
 ]
 
 [[package]]
@@ -3907,7 +3909,7 @@ dependencies = [
  "starknet-crypto 0.6.1",
  "starknet-ff",
  "starknet-macros",
- "starknet-providers",
+ "starknet-providers 0.5.0",
  "starknet-signers",
 ]
 
@@ -3919,7 +3921,7 @@ checksum = "111ed887e4db14f0df1f909905e7737e4730770c8ed70997b58a71d5d940daac"
 dependencies = [
  "async-trait",
  "starknet-core 0.5.1",
- "starknet-providers",
+ "starknet-providers 0.5.0",
  "starknet-signers",
  "thiserror",
 ]
@@ -3935,7 +3937,7 @@ dependencies = [
  "serde_with",
  "starknet-accounts",
  "starknet-core 0.5.1",
- "starknet-providers",
+ "starknet-providers 0.5.0",
  "thiserror",
 ]
 
@@ -4085,6 +4087,26 @@ dependencies = [
  "serde_json",
  "serde_with",
  "starknet-core 0.5.1",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "starknet-providers"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52072c2d258bf692affeccd602613d5f6c61a6ffc84da8f191ab4a1b0a5e24d1"
+dependencies = [
+ "async-trait",
+ "auto_impl",
+ "ethereum-types",
+ "flate2",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "starknet-core 0.7.2",
  "thiserror",
  "url",
 ]

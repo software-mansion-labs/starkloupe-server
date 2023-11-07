@@ -17,3 +17,5 @@ dotenv.workspace = true
 chrono.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+starknet-providers.workspace = true
+url.workspace = true
