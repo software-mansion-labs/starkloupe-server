@@ -74,12 +74,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app = Router::new()
-        .route("/simulate", post(simulate))
+        .route("/v1/simulate", post(simulate))
         .route_layer(middleware::from_fn_with_state(
             shared_state.clone(),
             auth_middleware,
         ))
-        .route("/:chain/tx/:hash", get(read_transaction))
+        .route("/v1/:chain/tx/:hash", get(read_transaction))
         .with_state(shared_state);
 
     println!("Listening on 0.0.0.0:3000");
