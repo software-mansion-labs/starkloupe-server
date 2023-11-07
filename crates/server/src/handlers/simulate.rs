@@ -15,12 +15,13 @@ use url::Url;
 #[derive(Serialize, Deserialize)]
 pub struct StarkNetTransaction {
     // Define your transaction structure here;
-    chain_id: u32,
-    contract_address: String,
+    chain_id: String,
+    wallet_address: String,
     calldata: Vec<String>,
     nonce: u8,
     max_fee: u128,
     version: u8,
+    cairo_version: String,
 }
 
 #[derive(Serialize)]
@@ -31,27 +32,34 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let rpc_client = rpc_client();
+    let rpc_client = create_rpc_client();
 
     let block_number = rpc_client.block_number().await.unwrap();
 
     // TODO: Insert into database
     let mut sim = db::Simulation::default();
-    sim.chain_id = payload.chain_id as i32;
+    sim.team_id = team.id;
+    sim.chain_id = payload.chain_id;
     sim.block_at = block_number as i32;
     sim.transaction_version = payload.version as i32;
-    sim.team_id = team.id;
+    sim.nonce = payload.nonce as i32;
+    sim.max_fee = payload.max_fee.to_string();
+    sim.cairo_version = payload.cairo_version;
+    sim.calldata = payload.calldata;
 
     dbg!(sim.clone());
 
     // Insert into database
     sqlx::query!(
-        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_type, transaction_version) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         sim.team_id,
         sim.chain_id,
         sim.block_at,
-        sim.transaction_type,
         sim.transaction_version,
+        sim.nonce,
+        sim.max_fee,
+        sim.cairo_version,
+        &sim.calldata,
     ).execute(&state.db_pool).await.unwrap();
 
     // TODO(jainkunal): Execute the transaction in context of the block and get status
@@ -63,7 +71,7 @@ pub async fn simulate(
     Ok(Json(SimulateResult {}))
 }
 
-fn rpc_client() -> JsonRpcClient<HttpTransport> {
+fn create_rpc_client() -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(
         Url::parse(
             std::env::var("NODE_URL")
