@@ -7,6 +7,7 @@ extern crate dotenv;
 use app_state::AppState;
 use axum::{
     extract::{Path, State},
+    http::Method,
     http::Request,
     http::StatusCode,
     middleware::{self, Next},
@@ -20,6 +21,7 @@ use dotenv::dotenv;
 use handlers::simulate::simulate;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Resources
@@ -35,24 +37,26 @@ async fn auth_middleware<B>(
     next: Next<B>,
 ) -> Result<Response, StatusCode> {
     // TODO: We will get team from the DB.
-    let team = match req.headers().get("x-api-key") {
-        Some(key) => {
-            if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
-                // Walnut Team
-                Ok(Team { id: 1 })
-            } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
-                || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
-            {
-                // Briq Team
-                Ok(Team { id: 2 })
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
+    if req.method() != Method::OPTIONS {
+        let team = match req.headers().get("x-api-key") {
+            Some(key) => {
+                if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
+                    // Walnut Team
+                    Ok(Team { id: 1 })
+                } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
+                    || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
+                {
+                    // Briq Team
+                    Ok(Team { id: 2 })
+                } else {
+                    Err(StatusCode::UNAUTHORIZED)
+                }
             }
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }?;
+            _ => Err(StatusCode::UNAUTHORIZED),
+        }?;
 
-    req.extensions_mut().insert(team);
+        req.extensions_mut().insert(team);
+    }
 
     Ok(next.run(req).await)
 }
@@ -93,7 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/_ah/warmup", get(|| async { "OK" }))
-        .with_state(shared_state);
+        .with_state(shared_state)
+        .layer(CorsLayer::permissive());
 
     println!("Listening on 0.0.0.0:3000");
 

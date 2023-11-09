@@ -17,7 +17,7 @@ axum = "0.6.20"
 redis = { version = "0.23.3", features = ["tokio-comp"] }
 sqlx = { version = "0.7.2", features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid"] }
 tower = "0.4.13"
-tower-http = "0.4.4"
+tower-http = {version="0.4.4", features = ["cors"]}
 tokio = { version = "1.33.0", features = ["full"] }
 blockifier = { git = "https://github.com/jainkunal/blockifier", rev="d895ae1788b9484de34e68d7d7cfbad2aa3bbd92" }
 conversions = { path = "./crates/conversions" }
