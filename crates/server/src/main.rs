@@ -40,7 +40,9 @@ async fn auth_middleware<B>(
             if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
                 // Walnut Team
                 Ok(Team { id: 1 })
-            } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF" {
+            } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
+                || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
+            {
                 // Briq Team
                 Ok(Team { id: 2 })
             } else {
