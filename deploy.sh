@@ -1,3 +1,5 @@
+# Fail if any command fails
+set -e
 cd crates/server
 cargo sqlx prepare
 cd ../../
