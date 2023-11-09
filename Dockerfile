@@ -17,6 +17,8 @@ RUN cargo build --release --bin server
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 RUN apt-get update && apt install -y openssl
+RUN apt-get install -y --no-install-recommends ca-certificates
+RUN update-ca-certificates
 COPY --from=builder /app/target/release/server /usr/local/bin
 
 # TODO: Change password and remove from here
