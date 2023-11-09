@@ -20,6 +20,7 @@ use dotenv::dotenv;
 use handlers::simulate::simulate;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -57,6 +58,15 @@ async fn auth_middleware<B>(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("trace"))
+        // .with(
+        //     tracing_subscriber::EnvFilter::try_from_default_env()
+        //         .unwrap_or_else(|_| "server=debug".into()),
+        // )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     // let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
