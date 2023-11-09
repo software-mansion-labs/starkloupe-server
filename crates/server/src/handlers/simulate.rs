@@ -48,13 +48,14 @@ pub async fn simulate(
         Some(version) => version,
         None => String::from(""),
     };
+    sim.wallet_address = payload.wallet_address;
     sim.calldata = payload.calldata;
 
     dbg!(sim.clone());
 
     // Insert into database
     sqlx::query!(
-        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         sim.team_id,
         sim.chain_id,
         sim.block_at,
@@ -62,6 +63,7 @@ pub async fn simulate(
         sim.nonce,
         sim.max_fee,
         sim.cairo_version,
+        sim.wallet_address,
         &sim.calldata,
     ).execute(&state.db_pool).await.unwrap();
 
