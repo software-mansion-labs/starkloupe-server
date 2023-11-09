@@ -1,3 +1,6 @@
+cd crates/server
+cargo sqlx prepare
+cd ../../
 password=$(aws ecr get-login-password --region us-east-1)
 echo $password | docker login --username AWS --password-stdin 414942293597.dkr.ecr.us-east-1.amazonaws.com
 docker buildx build --platform linux/amd64 -t walnut-server-pipeline .
