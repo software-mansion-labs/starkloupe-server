@@ -32,7 +32,7 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let rpc_client = create_rpc_client();
+    let rpc_client = create_rpc_client(payload.chain_id.clone());
 
     let block_number = rpc_client.block_number().await.unwrap();
 
@@ -79,15 +79,13 @@ pub async fn simulate(
     Ok(Json(SimulateResult {}))
 }
 
-fn create_rpc_client() -> JsonRpcClient<HttpTransport> {
-    JsonRpcClient::new(HttpTransport::new(
-        Url::parse(
-            std::env::var("NODE_URL")
-                .unwrap_or("https://ofsg.mainnet-juno.rpc.nethermind.io".to_string())
-                .as_str(),
-        )
-        .unwrap(),
-    ))
+fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
+    let url = match chain_id.as_str() {
+        "0x534e5f474f45524c49" => "https://ikah.goerli1-juno.rpc.nethermind.io",
+        "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
+        _ => panic!("Invalid chain id"),
+    };
+    JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
 }
 
 async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
