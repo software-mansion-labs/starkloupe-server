@@ -1,4 +1,5 @@
 use chrono::NaiveDateTime;
+use serde::Serialize;
 use sqlx::types::Uuid;
 
 #[derive(Clone, Debug, Default)]

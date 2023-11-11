@@ -18,7 +18,7 @@ use axum::{
 };
 use db::Team;
 use dotenv::dotenv;
-use handlers::simulate::simulate;
+use handlers::{simulate::simulate, simulations::get_simulations};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/v1/simulate", post(simulate))
+        .route("/v1/simulations", get(get_simulations))
         .route_layer(middleware::from_fn_with_state(
             shared_state.clone(),
             auth_middleware,
