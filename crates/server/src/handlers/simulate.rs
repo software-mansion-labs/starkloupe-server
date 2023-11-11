@@ -4,6 +4,7 @@ use axum::{extract::State, http::StatusCode, Extension, Json};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement,
 };
@@ -35,9 +36,9 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let rpc_client = create_rpc_client(payload.chain_id.clone());
+    let public_rpc_client = create_rpc_client(payload.chain_id.clone(), false);
 
-    let block_number = rpc_client.block_number().await.unwrap();
+    let block_number = public_rpc_client.block_number().await.unwrap();
 
     // TODO: Insert into database
     let mut sim = db::Simulation::default();
@@ -60,18 +61,20 @@ pub async fn simulate(
     dbg!(sim.clone());
 
     // Insert into database
-    sqlx::query!(
-        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        sim.team_id,
-        sim.chain_id,
-        sim.block_at,
-        sim.transaction_version,
-        sim.nonce,
-        sim.max_fee,
-        sim.cairo_version,
-        sim.wallet_address,
-        &sim.calldata,
-    ).execute(&state.db_pool).await.unwrap();
+    let row: (Uuid,) = sqlx::query_as(
+        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id")
+        .bind(&sim.team_id)
+        .bind(&sim.chain_id)
+        .bind(&sim.block_at)
+        .bind(&sim.transaction_version)
+        .bind(&sim.nonce)
+        .bind(&sim.max_fee)
+        .bind(&sim.cairo_version)
+        .bind(&sim.wallet_address)
+        .bind(&sim.calldata)
+    .fetch_one(&state.db_pool).await.unwrap();
+
+    let id = row.0;
 
     let tx_b = BroadcastedTransaction::Invoke(BroadcastedInvokeTransaction {
         sender_address: FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
@@ -84,11 +87,32 @@ pub async fn simulate(
         nonce: FieldElement::from_dec_str(sim.nonce.to_string().as_str()).unwrap(),
         is_query: false,
     });
-    let st = rpc_client
+
+    let st = public_rpc_client
         .simulate_transaction(BlockId::Number(sim.block_at as u64), tx_b, [])
         .await;
 
-    dbg!(st);
+    dbg!(&st);
+
+    if st.is_err() {
+        sqlx::query!(
+            "UPDATE simulations SET status = $1 WHERE id = $2",
+            "failure",
+            id,
+        )
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    } else {
+        sqlx::query!(
+            "UPDATE simulations SET status = $1 WHERE id = $2",
+            "success",
+            id,
+        )
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    }
 
     // TODO(jainkunal): Execute the transaction in context of the block and get status
 
@@ -99,10 +123,18 @@ pub async fn simulate(
     Ok(Json(SimulateResult {}))
 }
 
-fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
-    let url = match chain_id.as_str() {
-        "0x534e5f474f45524c49" => "https://3dfa-54-87-10-131.ngrok-free.app",
-        "0x534e5f4d41494e" => "https://0721-54-87-10-131.ngrok-free.app",
+fn create_rpc_client(chain_id: String, is_private: bool) -> JsonRpcClient<HttpTransport> {
+    let url = match is_private {
+        true => match chain_id.as_str() {
+            "0x534e5f474f45524c49" => "https://3dfa-54-87-10-131.ngrok-free.app",
+            "0x534e5f4d41494e" => "https://0721-54-87-10-131.ngrok-free.app",
+            _ => panic!("Invalid chain id"),
+        },
+        false => match chain_id.as_str() {
+            "0x534e5f474f45524c49" => "https://ikah.goerli1-juno.rpc.nethermind.io",
+            "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
+            _ => panic!("Invalid chain id"),
+        },
         _ => panic!("Invalid chain id"),
     };
     JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))

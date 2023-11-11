@@ -37,6 +37,7 @@ pub struct SimulationRes {
     calldata: Vec<String>,
     created_at: i64,
     updated_at: i64,
+    status: String,
 }
 
 #[derive(Serialize)]
@@ -83,6 +84,7 @@ pub async fn get_simulations(
             calldata: simulation.calldata.map_or(Vec::new(), |calldata| calldata),
             created_at: simulation.created_at.assume_utc().unix_timestamp(),
             updated_at: simulation.updated_at.assume_utc().unix_timestamp(),
+            status: simulation.status,
         })
         .collect();
 

@@ -16,6 +16,7 @@ pub struct Simulation {
     pub calldata: Vec<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub status: String,
 }
 
 #[derive(Clone, Debug)]
