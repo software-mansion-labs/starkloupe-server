@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use sqlx::types::Uuid;
 use starknet::core::types::{
-    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement, SimulationFlag,
+    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, ExecuteInvocation, FieldElement,
+    SimulationFlag, TransactionTrace,
 };
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -92,11 +93,9 @@ pub async fn simulate(
         .simulate_transaction(
             BlockId::Number(sim.block_at as u64),
             tx_b,
-            [SimulationFlag::SkipValidate, SimulationFlag::SkipFeeCharge],
+            [SimulationFlag::SkipFeeCharge],
         )
         .await;
-
-    dbg!(&st);
 
     if st.is_err() {
         sqlx::query!(
@@ -108,14 +107,40 @@ pub async fn simulate(
         .await
         .unwrap();
     } else {
-        sqlx::query!(
-            "UPDATE simulations SET status = $1 WHERE id = $2",
-            "success",
-            id,
-        )
-        .execute(&state.db_pool)
-        .await
-        .unwrap();
+        match st.unwrap().transaction_trace {
+            TransactionTrace::Invoke(t) => match t.execute_invocation {
+                ExecuteInvocation::Reverted(_) => {
+                    sqlx::query!(
+                        "UPDATE simulations SET status = $1 WHERE id = $2",
+                        "failure",
+                        id,
+                    )
+                    .execute(&state.db_pool)
+                    .await
+                    .unwrap();
+                }
+                ExecuteInvocation::Success(_) => {
+                    sqlx::query!(
+                        "UPDATE simulations SET status = $1 WHERE id = $2",
+                        "success",
+                        id,
+                    )
+                    .execute(&state.db_pool)
+                    .await
+                    .unwrap();
+                }
+            },
+            _ => {
+                sqlx::query!(
+                    "UPDATE simulations SET status = $1 WHERE id = $2",
+                    "success",
+                    id,
+                )
+                .execute(&state.db_pool)
+                .await
+                .unwrap();
+            }
+        };
     }
 
     // TODO(jainkunal): Execute the transaction in context of the block and get status
