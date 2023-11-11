@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use sqlx::types::Uuid;
 use starknet::core::types::{
-    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement,
+    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement, SimulationFlag,
 };
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -89,7 +89,11 @@ pub async fn simulate(
     });
 
     let st = public_rpc_client
-        .simulate_transaction(BlockId::Number(sim.block_at as u64), tx_b, [])
+        .simulate_transaction(
+            BlockId::Number(sim.block_at as u64),
+            tx_b,
+            [SimulationFlag::SkipValidate, SimulationFlag::SkipFeeCharge],
+        )
         .await;
 
     dbg!(&st);
