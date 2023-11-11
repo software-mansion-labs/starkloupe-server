@@ -4,6 +4,9 @@ use axum::{extract::State, http::StatusCode, Extension, Json};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use starknet::core::types::{
+    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement,
+};
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
@@ -70,6 +73,24 @@ pub async fn simulate(
         &sim.calldata,
     ).execute(&state.db_pool).await.unwrap();
 
+    let tx_b = BroadcastedTransaction::Invoke(BroadcastedInvokeTransaction {
+        sender_address: FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
+        calldata: sim
+            .calldata
+            .iter()
+            .map(|s| FieldElement::from_dec_str(s.as_str()).unwrap())
+            .collect(),
+        max_fee: FieldElement::from_dec_str("23440000000000000").unwrap(),
+        signature: vec![],
+        nonce: FieldElement::from_dec_str(sim.nonce.to_string().as_str()).unwrap(),
+        is_query: false,
+    });
+    let st = rpc_client
+        .simulate_transaction(BlockId::Number(sim.block_at as u64), tx_b, [])
+        .await;
+
+    dbg!(st);
+
     // TODO(jainkunal): Execute the transaction in context of the block and get status
 
     // TODO(jainkunal): Update status to DB
@@ -81,8 +102,8 @@ pub async fn simulate(
 
 fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
     let url = match chain_id.as_str() {
-        "0x534e5f474f45524c49" => "https://ikah.goerli1-juno.rpc.nethermind.io",
-        "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
+        "0x534e5f474f45524c49" => "https://3dfa-54-87-10-131.ngrok-free.app",
+        "0x534e5f4d41494e" => "https://0721-54-87-10-131.ngrok-free.app",
         _ => panic!("Invalid chain id"),
     };
     JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
