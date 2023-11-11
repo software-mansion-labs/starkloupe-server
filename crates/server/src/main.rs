@@ -18,10 +18,10 @@ use axum::{
 };
 use db::Team;
 use dotenv::dotenv;
-use handlers::{simulate::simulate, simulations::get_simulations};
+use handlers::{simulate::simulate, simulate_trace::simulate_trace, simulations::get_simulations};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Resources
@@ -97,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .route("/v1/simulations", get(get_simulations))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
+        .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .layer(CorsLayer::permissive());

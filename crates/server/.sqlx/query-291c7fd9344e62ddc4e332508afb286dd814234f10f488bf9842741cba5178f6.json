@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM simulations WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "team_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "chain_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "block_at",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "transaction_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "nonce",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "max_fee",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "cairo_version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "wallet_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "calldata",
+        "type_info": "VarcharArray"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 12,
+        "name": "status",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "291c7fd9344e62ddc4e332508afb286dd814234f10f488bf9842741cba5178f6"
+}
