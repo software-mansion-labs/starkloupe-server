@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("trace"))
+        .with(tracing_subscriber::EnvFilter::new("debug"))
         // .with(
         //     tracing_subscriber::EnvFilter::try_from_default_env()
         //         .unwrap_or_else(|_| "server=debug".into()),
