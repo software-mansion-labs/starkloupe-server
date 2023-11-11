@@ -25,19 +25,19 @@ pub struct SimulationsRequest {
 
 #[derive(Serialize)]
 pub struct SimulationRes {
-    id: String,
-    team_id: i32,
-    chain_id: String,
-    block_at: i32,
-    transaction_version: i32,
-    nonce: i32,
-    max_fee: String,
-    cairo_version: String,
-    wallet_address: String,
-    calldata: Vec<String>,
-    created_at: i64,
-    updated_at: i64,
-    status: String,
+    pub id: String,
+    pub team_id: i32,
+    pub chain_id: String,
+    pub block_at: i32,
+    pub transaction_version: i32,
+    pub nonce: i32,
+    pub max_fee: String,
+    pub cairo_version: String,
+    pub wallet_address: String,
+    pub calldata: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub status: String,
 }
 
 #[derive(Serialize)]

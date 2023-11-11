@@ -1,11 +1,13 @@
 use crate::app_state::AppState;
 use crate::db;
+use crate::handlers::simulations::SimulationRes;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use chrono::NaiveDateTime;
+use serde::Serialize;
 use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement,
@@ -53,10 +55,16 @@ fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
 }
 
+#[derive(Serialize)]
+pub struct SimulateTraceResponse {
+    simulated_transaction: SimulatedTransaction,
+    simulation: SimulationRes,
+}
+
 pub async fn simulate_trace(
     State(state): State<Arc<AppState>>,
     id: Path<String>,
-) -> Result<Json<SimulatedTransaction>, StatusCode> {
+) -> Result<Json<SimulateTraceResponse>, StatusCode> {
     // Implement your business logic here
     let row = sqlx::query!(
         "SELECT * FROM simulations WHERE id = $1",
@@ -66,8 +74,8 @@ pub async fn simulate_trace(
     .await
     .unwrap();
 
-    let sim = db::Simulation {
-        id: row.id.unwrap(),
+    let sim = SimulationRes {
+        id: row.id.map_or(String::new(), |id| id.to_string()),
         team_id: row.team_id,
         chain_id: row.chain_id,
         block_at: row.block_at,
@@ -77,8 +85,8 @@ pub async fn simulate_trace(
         cairo_version: row.cairo_version,
         wallet_address: row.wallet_address,
         calldata: row.calldata.map_or(Vec::new(), |calldata| calldata),
-        created_at: NaiveDateTime::from_timestamp_opt(0, 42_000_000).unwrap(),
-        updated_at: NaiveDateTime::from_timestamp_opt(0, 42_000_000).unwrap(),
+        created_at: row.created_at.assume_utc().unix_timestamp(),
+        updated_at: row.updated_at.assume_utc().unix_timestamp(),
         status: row.status,
     };
 
@@ -105,7 +113,10 @@ pub async fn simulate_trace(
         .await;
 
     match st {
-        Ok(s) => Ok(Json(s)),
+        Ok(s) => Ok(Json(SimulateTraceResponse {
+            simulated_transaction: s,
+            simulation: sim,
+        })),
         Err(_) => Err(StatusCode::NOT_FOUND),
     }
 }
