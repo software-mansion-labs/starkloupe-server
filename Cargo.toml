@@ -4,6 +4,7 @@ members = [
     "crates/forking",
     "crates/server",
     "crates/team-onboarding",
+    "crates/batch-sim",
 ]
 resolver = "2"
 
