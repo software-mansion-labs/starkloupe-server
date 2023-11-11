@@ -35,8 +35,8 @@ pub struct SimulationRes {
     cairo_version: String,
     wallet_address: String,
     calldata: Vec<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: i64,
+    updated_at: i64,
 }
 
 #[derive(Serialize)]
@@ -45,11 +45,10 @@ pub struct SimulationsResponse {
 }
 
 pub async fn get_simulations(
-    Extension(team): Extension<db::Team>,
     State(state): State<Arc<AppState>>,
     Query(query): Query<SimulationsRequest>,
 ) -> Result<Json<SimulationsResponse>, StatusCode> {
-    let simulations = match sqlx::query!("SELECT * FROM simulations")
+    let simulations = match sqlx::query!("SELECT * FROM simulations order by created_at DESC")
         .fetch_all(&state.db_pool)
         .await
     {
@@ -82,8 +81,8 @@ pub async fn get_simulations(
             cairo_version: simulation.cairo_version,
             wallet_address: simulation.wallet_address,
             calldata: simulation.calldata.map_or(Vec::new(), |calldata| calldata),
-            created_at: simulation.created_at.to_string(),
-            updated_at: simulation.updated_at.to_string(),
+            created_at: simulation.created_at.assume_utc().unix_timestamp(),
+            updated_at: simulation.updated_at.assume_utc().unix_timestamp(),
         })
         .collect();
 

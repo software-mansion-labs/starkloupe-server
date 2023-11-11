@@ -91,11 +91,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/v1/simulate", post(simulate))
-        .route("/v1/simulations", get(get_simulations))
         .route_layer(middleware::from_fn_with_state(
             shared_state.clone(),
             auth_middleware,
         ))
+        .route("/v1/simulations", get(get_simulations))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
