@@ -49,8 +49,7 @@ async fn auth_middleware<B>(
                 {
                     // Briq Team
                     Ok(Team { id: 2 })
-                }
-                if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
+                } else if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
                     // Jediswap
                     Ok(Team { id: 3 })
                 } else {
