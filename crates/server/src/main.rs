@@ -20,6 +20,7 @@ use db::Team;
 use dotenv::dotenv;
 use handlers::{simulate::simulate, simulate_trace::simulate_trace, simulations::get_simulations};
 use sqlx::postgres::PgPoolOptions;
+use starknet_abi::AbiParser;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

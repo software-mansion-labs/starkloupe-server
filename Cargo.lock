@@ -3592,6 +3592,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "starknet",
+ "starknet-abi",
  "starknet-providers",
  "tokio",
  "tower",
@@ -3982,6 +3983,15 @@ dependencies = [
  "starknet-macros",
  "starknet-providers",
  "starknet-signers",
+]
+
+[[package]]
+name = "starknet-abi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "starknet",
 ]
 
 [[package]]
