@@ -1,21 +1,8 @@
-use crate::db;
-use crate::{app_state::AppState, db::Simulation};
+use crate::app_state::AppState;
 use axum::extract::Query;
-use axum::{extract::State, http::StatusCode, Extension, Json};
-use chrono::NaiveDateTime;
-use reqwest;
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use serde_json;
-use sqlx::query;
-use sqlx::types::time::PrimitiveDateTime;
-use sqlx::types::Uuid;
-use starknet_providers::{
-    jsonrpc::{HttpTransport, JsonRpcClient},
-    Provider,
-};
-use std::collections::HashMap;
 use std::sync::Arc;
-use url::Url;
 
 #[derive(Serialize, Deserialize)]
 pub struct SimulationsRequest {

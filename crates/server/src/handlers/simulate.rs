@@ -1,9 +1,9 @@
 use crate::app_state::AppState;
 use crate::db;
 use axum::{extract::State, http::StatusCode, Extension, Json};
-use reqwest;
+// use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json;
+// use serde_json;
 use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, ExecuteInvocation, FieldElement,
@@ -13,7 +13,7 @@ use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use std::sync::Arc;
 use url::Url;
 
@@ -164,7 +164,6 @@ fn create_rpc_client(chain_id: String, is_private: bool) -> JsonRpcClient<HttpTr
             "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
             _ => panic!("Invalid chain id"),
         },
-        _ => panic!("Invalid chain id"),
     };
     JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
 }
@@ -195,25 +194,25 @@ pub fn convert_array(arr: Vec<String>) -> Vec<String> {
     converted_arr
 }
 
-async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
-    let json_payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1,
-    });
+// async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
+//     let json_payload = serde_json::json!({
+//         "jsonrpc": "2.0",
+//         "method": method,
+//         "params": params,
+//         "id": 1,
+//     });
 
-    let node_url = "https://ofsg.mainnet-juno.rpc.nethermind.io";
+//     let node_url = "https://ofsg.mainnet-juno.rpc.nethermind.io";
 
-    let client = reqwest::Client::new();
-    let res = client
-        .post(node_url)
-        .json(&json_payload)
-        .send()
-        .await
-        .unwrap();
+//     let client = reqwest::Client::new();
+//     let res = client
+//         .post(node_url)
+//         .json(&json_payload)
+//         .send()
+//         .await
+//         .unwrap();
 
-    let data: HashMap<String, serde_json::Value> = res.json().await.unwrap();
+//     let data: HashMap<String, serde_json::Value> = res.json().await.unwrap();
 
-    data.get("result").unwrap().clone()
-}
+//     data.get("result").unwrap().clone()
+// }

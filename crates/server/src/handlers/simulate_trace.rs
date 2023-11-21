@@ -1,12 +1,10 @@
 use crate::app_state::AppState;
-use crate::db;
 use crate::handlers::simulations::SimulationRes;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use chrono::NaiveDateTime;
 use serde::Serialize;
 use sqlx::types::Uuid;
 use starknet::core::types::{
