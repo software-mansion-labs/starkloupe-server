@@ -52,6 +52,9 @@ async fn auth_middleware<B>(
                 } else if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
                     // Jediswap
                     Ok(Team { id: 3 })
+                } else if key == "walnut_LSBhhfrvdhy_CJUpRxe2hA7QHmPUMqhp33" {
+                    // Starknet Id
+                    Ok(Team { id: 4 })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)
                 }
