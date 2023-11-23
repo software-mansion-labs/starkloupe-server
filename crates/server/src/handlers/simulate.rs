@@ -38,9 +38,9 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let public_rpc_client = create_rpc_client(payload.chain_id.clone(), false);
+    let private_rpc_client = create_rpc_client(payload.chain_id.clone(), true);
 
-    let block_number = public_rpc_client.block_number().await.unwrap();
+    let block_number = private_rpc_client.block_number().await.unwrap();
 
     // TODO: Insert into database
     let mut sim = db::Simulation::default();
@@ -89,11 +89,11 @@ pub async fn simulate(
         is_query: false,
     });
 
-    let st = public_rpc_client
+    let st = private_rpc_client
         .simulate_transaction(
             BlockId::Number(sim.block_at as u64),
             tx_b,
-            [SimulationFlag::SkipFeeCharge],
+            [SimulationFlag::SkipValidate, SimulationFlag::SkipFeeCharge],
         )
         .await;
 
