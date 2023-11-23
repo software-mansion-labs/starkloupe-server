@@ -13,6 +13,7 @@ use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
+use tracing::info;
 // use std::collections::HashMap;
 use std::sync::Arc;
 use url::Url;
@@ -98,6 +99,7 @@ pub async fn simulate(
         .await;
 
     if st.is_err() {
+        info!("Simulation failed {}", st.err().unwrap());
         sqlx::query!(
             "UPDATE simulations SET status = $1 WHERE id = $2",
             "failure",
@@ -109,7 +111,8 @@ pub async fn simulate(
     } else {
         match st.unwrap().transaction_trace {
             TransactionTrace::Invoke(t) => match t.execute_invocation {
-                ExecuteInvocation::Reverted(_) => {
+                ExecuteInvocation::Reverted(r) => {
+                    info!("Simulation reverted {}", r.revert_reason.as_str());
                     sqlx::query!(
                         "UPDATE simulations SET status = $1 WHERE id = $2",
                         "failure",
@@ -120,6 +123,7 @@ pub async fn simulate(
                     .unwrap();
                 }
                 ExecuteInvocation::Success(_) => {
+                    info!("Simulation succeeded");
                     sqlx::query!(
                         "UPDATE simulations SET status = $1 WHERE id = $2",
                         "success",
@@ -131,6 +135,7 @@ pub async fn simulate(
                 }
             },
             _ => {
+                info!("Simulation success");
                 sqlx::query!(
                     "UPDATE simulations SET status = $1 WHERE id = $2",
                     "success",
