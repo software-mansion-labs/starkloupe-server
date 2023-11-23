@@ -20,7 +20,6 @@ use db::Team;
 use dotenv::dotenv;
 use handlers::{simulate::simulate, simulate_trace::simulate_trace, simulations::get_simulations};
 use sqlx::postgres::PgPoolOptions;
-use starknet_abi::AbiParser;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -73,12 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("debug"))
-        // .with(
-        //     tracing_subscriber::EnvFilter::try_from_default_env()
-        //         .unwrap_or_else(|_| "server=debug".into()),
-        // )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "debug,hyper::client::connect::http=info,hyper::proto::h1::io=info".into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer().json())
         .init();
 
     // let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());

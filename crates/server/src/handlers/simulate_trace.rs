@@ -101,7 +101,7 @@ pub async fn simulate_trace(
         nonce: FieldElement::from_dec_str(sim.nonce.to_string().as_str()).unwrap(),
         is_query: false,
     });
-    dbg!(tx_b.clone());
+
     let st = rpc_client
         .simulate_transaction(
             BlockId::Number(sim.block_at as u64),
