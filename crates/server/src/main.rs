@@ -73,9 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "debug,hyper::client::connect::http=info,hyper::proto::h1::io=info".into()
-            }),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,server=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer().json())
         .init();
@@ -106,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
     println!("Listening on 0.0.0.0:3000");
