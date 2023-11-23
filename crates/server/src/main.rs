@@ -16,6 +16,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use axum_prometheus::PrometheusMetricLayer;
 use db::Team;
 use dotenv::dotenv;
 use handlers::{simulate::simulate, simulate_trace::simulate_trace, simulations::get_simulations};
@@ -94,6 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // redis_client: Arc::new(client),
     });
 
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
     let app = Router::new()
         .route("/v1/simulate", post(simulate))
         .route_layer(middleware::from_fn_with_state(
@@ -105,6 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
+        .route("/metrics", get(|| async move { metric_handle.render() }))
+        .layer(prometheus_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
