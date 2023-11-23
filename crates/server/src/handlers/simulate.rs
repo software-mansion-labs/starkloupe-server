@@ -60,8 +60,6 @@ pub async fn simulate(
     sim.wallet_address = payload.wallet_address;
     sim.calldata = payload.calldata;
 
-    dbg!(sim.clone());
-
     // Insert into database
     let row: (Uuid,) = sqlx::query_as(
         "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id")
@@ -77,6 +75,7 @@ pub async fn simulate(
     .fetch_one(&state.db_pool).await.unwrap();
 
     let id = row.0;
+    info!("Inserted into database with id {}", id);
 
     let tx_b = BroadcastedTransaction::Invoke(BroadcastedInvokeTransaction {
         sender_address: FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
