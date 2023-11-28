@@ -1,61 +1,34 @@
 use crate::app_state::AppState;
 use crate::handlers::simulations::SimulationRes;
+use crate::types::TransactionExecutionInfo;
+use crate::utils::simulate::convert_to_hex;
+use crate::utils::simulate::create_fork_cached_state_at;
+use crate::utils::simulate::get_block_context;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
+use blockifier::state::cached_state::CachedState;
+use blockifier::transaction::transaction_execution::Transaction;
+use blockifier::transaction::transactions::ExecutableTransaction;
 use serde::Serialize;
 use sqlx::types::Uuid;
-use starknet::core::types::{
-    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, FieldElement,
-    SimulatedTransaction, SimulationFlag,
+use starknet::core::types::BlockId;
+use starknet_api::block::BlockNumber;
+use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::hash::{StarkFelt, StarkHash};
+use starknet_api::transaction::{
+    Calldata, Fee, InvokeTransaction as SAInvokeTransaction, InvokeTransactionV1,
+    Transaction as StarknetApiTransaction, TransactionHash, TransactionSignature,
 };
-use starknet_providers::{
-    jsonrpc::{HttpTransport, JsonRpcClient},
-    Provider,
-};
+use starknet_api::{contract_address, patricia_key, stark_felt};
+
 use std::{str::FromStr, sync::Arc};
-use url::Url;
-
-pub fn convert_array(arr: Vec<String>) -> Vec<String> {
-    // Convert String to u64
-    let num_transactions = arr[0].clone().parse::<i32>().unwrap();
-    let mut converted_arr: Vec<String> = Vec::new();
-    converted_arr.push(arr[0].clone());
-
-    for i in 0..num_transactions {
-        let contract_address = arr[4 * i as usize + 1].clone();
-        let selector = arr[4 * i as usize + 2].clone();
-        converted_arr.push(contract_address);
-        converted_arr.push(selector);
-
-        let calldata_len_current = arr[4 * i as usize + 4].clone().parse::<i32>().unwrap();
-        converted_arr.push(arr[4 * i as usize + 4].clone());
-
-        let start_index: usize = 4 * num_transactions as usize
-            + 2
-            + arr[4 * i as usize + 3].parse::<i32>().unwrap() as usize;
-        let end_index: usize = start_index + calldata_len_current as usize;
-
-        let args = &arr[start_index..end_index];
-        converted_arr.extend_from_slice(args);
-    }
-    converted_arr
-}
-
-fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
-    let url = match chain_id.as_str() {
-        "0x534e5f474f45524c49" => "https://3dfa-54-87-10-131.ngrok-free.app",
-        "0x534e5f4d41494e" => "https://0721-54-87-10-131.ngrok-free.app",
-        _ => panic!("Invalid chain id"),
-    };
-    JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
-}
 
 #[derive(Serialize)]
 pub struct SimulateTraceResponse {
-    simulated_transaction: SimulatedTransaction,
+    execution_info: TransactionExecutionInfo,
     simulation: SimulationRes,
 }
 
@@ -88,33 +61,51 @@ pub async fn simulate_trace(
         status: row.status,
     };
 
-    let rpc_client = create_rpc_client(sim.chain_id.clone());
+    let calldata_raw: Vec<StarkFelt> = sim
+        .calldata
+        .clone()
+        .iter()
+        .map(|x| stark_felt!(convert_to_hex(x).as_str()))
+        .collect();
 
-    let tx_b = BroadcastedTransaction::Invoke(BroadcastedInvokeTransaction {
-        sender_address: FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
-        calldata: convert_array(sim.calldata.clone())
-            .iter()
-            .map(|s| FieldElement::from_dec_str(s.as_str()).unwrap())
-            .collect(),
-        max_fee: FieldElement::from_dec_str("23200000090853470717981").unwrap(),
-        signature: vec![],
-        nonce: FieldElement::from_dec_str(sim.nonce.to_string().as_str()).unwrap(),
-        is_query: false,
-    });
+    let tx_raw = InvokeTransactionV1 {
+        sender_address: contract_address!(sim.wallet_address.as_str()),
+        nonce: Nonce(StarkFelt::from(sim.nonce as u64)),
+        calldata: Calldata(calldata_raw.into()),
+        max_fee: Fee::default(),
+        signature: TransactionSignature(vec![]),
+    };
 
-    let st = rpc_client
-        .simulate_transaction(
-            BlockId::Number(sim.block_at as u64),
-            tx_b,
-            [SimulationFlag::SkipValidate, SimulationFlag::SkipFeeCharge],
-        )
-        .await;
+    let tx_hash = TransactionHash(StarkHash::default());
+    let tx = Transaction::from_api(
+        StarknetApiTransaction::Invoke(SAInvokeTransaction::V1(tx_raw)),
+        tx_hash,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
 
-    match st {
-        Ok(s) => Ok(Json(SimulateTraceResponse {
-            simulated_transaction: s,
+    let chain_id = ChainId(sim.chain_id.clone());
+    let block_context = get_block_context(chain_id.clone(), BlockNumber(sim.block_at as u64));
+
+    // TODO: Don't use File cache
+    let mut cached_fork_state = create_fork_cached_state_at(
+        chain_id,
+        BlockId::Number(sim.block_at as u64),
+        "/tmp/sn-debugger/cache",
+    );
+
+    let mut tx_state = CachedState::<_>::create_transactional(&mut cached_fork_state);
+
+    let tx_info = tx.execute(&mut tx_state, &block_context, true, false);
+    // dbg!(tx_info);
+
+    match tx_info {
+        Ok(tx_info) => Ok(Json(SimulateTraceResponse {
+            execution_info: tx_info.into(),
             simulation: sim,
         })),
-        Err(_) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::EXPECTATION_FAILED),
     }
 }

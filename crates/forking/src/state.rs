@@ -14,8 +14,8 @@ use conversions::StarknetConversions;
 use flate2::read::GzDecoder;
 use num_bigint::BigUint;
 use starknet::core::types::{BlockId, ContractClass as ContractClassStarknet};
-use starknet::providers::jsonrpc::{HttpTransport, JsonRpcClientError};
-use starknet::providers::{JsonRpcClient, Provider, ProviderError};
+use starknet::providers::jsonrpc::HttpTransport;
+use starknet::providers::{JsonRpcClient, Provider};
 use starknet_api::deprecated_contract_class::{
     ContractClass as DeprecatedContractClass, ContractClassAbiEntry, EntryPoint, EntryPointType,
 };
@@ -26,14 +26,13 @@ use starknet_api::{
 };
 use std::collections::HashMap;
 use std::io::Read;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use url::Url;
 
 #[derive(Debug)]
 pub struct ForkStateReader {
     client: JsonRpcClient<HttpTransport>,
     block_id: BlockId,
-    runtime: Runtime,
     cache: ForkCache,
 }
 
@@ -43,7 +42,6 @@ impl ForkStateReader {
         ForkStateReader {
             client: JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap())),
             block_id,
-            runtime: Runtime::new().expect("Could not instantiate Runtime"),
             cache: ForkCache::load_or_new(url, block_id, cache_dir),
         }
     }
@@ -59,24 +57,33 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
-        match self.runtime.block_on(self.client.get_storage_at(
-            contract_address.to_field_element(),
-            key.0.key().to_field_element(),
-            self.block_id,
-        )) {
-            Ok(value) => {
-                let value_sf = value.to_stark_felt();
-                self.cache
-                    .cache_get_storage_at(contract_address, key, value_sf);
-                Ok(value_sf)
-            }
-            Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
-                node_connection_error()
-            }
-            Err(_) => Err(StateReadError(format!(
+        tokio::task::block_in_place(move || {
+            Handle::current().block_on(async move {
+                match self
+                    .client
+                    .get_storage_at(
+                        contract_address.to_field_element(),
+                        key.0.key().to_field_element(),
+                        self.block_id,
+                    )
+                    .await
+                {
+                    Ok(value) => {
+                        let value_sf = value.to_stark_felt();
+                        self.cache
+                            .cache_get_storage_at(contract_address, key, value_sf);
+                        Ok(value_sf)
+                    }
+                    // TODO: handle equivalent error
+                    // Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
+                    //     node_connection_error()
+                    // }
+                    Err(_) => Err(StateReadError(format!(
                 "Unable to get storage at address: {contract_address:?} and key: {key:?} from fork"
             ))),
-        }
+                }
+            })
+        })
     }
 
     fn get_nonce_at(&mut self, contract_address: ContractAddress) -> StateResult<Nonce> {
@@ -84,22 +91,27 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
-        match self.runtime.block_on(
-            self.client
-                .get_nonce(self.block_id, contract_address.to_field_element()),
-        ) {
-            Ok(nonce) => {
-                let nonce = nonce.to_nonce();
-                self.cache.cache_get_nonce_at(contract_address, nonce);
-                Ok(nonce)
-            }
-            Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
-                node_connection_error()
-            }
-            Err(_) => Err(StateReadError(format!(
-                "Unable to get nonce at {contract_address:?} from fork"
-            ))),
-        }
+        tokio::task::block_in_place(move || {
+            Handle::current().block_on(async move {
+                match self
+                    .client
+                    .get_nonce(self.block_id, contract_address.to_field_element())
+                    .await
+                {
+                    Ok(nonce) => {
+                        let nonce = nonce.to_nonce();
+                        self.cache.cache_get_nonce_at(contract_address, nonce);
+                        Ok(nonce)
+                    }
+                    // Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
+                    //     node_connection_error()
+                    // }
+                    Err(_) => Err(StateReadError(format!(
+                        "Unable to get nonce at {contract_address:?} from fork"
+                    ))),
+                }
+            })
+        })
     }
 
     fn get_class_hash_at(&mut self, contract_address: ContractAddress) -> StateResult<ClassHash> {
@@ -107,23 +119,28 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
-        match self.runtime.block_on(
-            self.client
-                .get_class_hash_at(self.block_id, contract_address.to_field_element()),
-        ) {
-            Ok(class_hash) => {
-                let class_hash = class_hash.to_class_hash();
-                self.cache
-                    .cache_get_class_hash_at(contract_address, class_hash);
-                Ok(class_hash)
-            }
-            Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
-                node_connection_error()
-            }
-            Err(_) => Err(StateReadError(format!(
-                "Unable to get class hash at {contract_address:?} from fork"
-            ))),
-        }
+        tokio::task::block_in_place(move || {
+            Handle::current().block_on(async move {
+                match self
+                    .client
+                    .get_class_hash_at(self.block_id, contract_address.to_field_element())
+                    .await
+                {
+                    Ok(class_hash) => {
+                        let class_hash = class_hash.to_class_hash();
+                        self.cache
+                            .cache_get_class_hash_at(contract_address, class_hash);
+                        Ok(class_hash)
+                    }
+                    // Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
+                    //     node_connection_error()
+                    // }
+                    Err(_) => Err(StateReadError(format!(
+                        "Unable to get class hash at {contract_address:?} from fork"
+                    ))),
+                }
+            })
+        })
     }
 
     fn get_compiled_contract_class(
@@ -134,21 +151,26 @@ impl StateReader for ForkStateReader {
             if let Some(cache_hit) = self.cache.get_compiled_contract_class(class_hash) {
                 Ok(cache_hit)
             } else {
-                match self.runtime.block_on(
-                    self.client
-                        .get_class(self.block_id, class_hash.to_field_element()),
-                ) {
-                    Ok(contract_class) => {
-                        self.cache
-                            .cache_get_compiled_contract_class(class_hash, &contract_class);
+                tokio::task::block_in_place(move || {
+                    Handle::current().block_on(async move {
+                        match self
+                            .client
+                            .get_class(self.block_id, class_hash.to_field_element())
+                            .await
+                        {
+                            Ok(contract_class) => {
+                                self.cache
+                                    .cache_get_compiled_contract_class(class_hash, &contract_class);
 
-                        Ok(contract_class)
-                    }
-                    Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
-                        node_connection_error()
-                    }
-                    Err(_) => Err(UndeclaredClassHash(*class_hash)),
-                }
+                                Ok(contract_class)
+                            }
+                            // Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
+                            //     node_connection_error()
+                            // }
+                            Err(_) => Err(UndeclaredClassHash(*class_hash)),
+                        }
+                    })
+                })
             };
 
         match contract_class? {

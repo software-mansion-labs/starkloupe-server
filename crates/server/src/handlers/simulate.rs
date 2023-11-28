@@ -1,26 +1,34 @@
 use crate::app_state::AppState;
 use crate::db;
+use crate::utils::simulate::{convert_to_hex, create_fork_cached_state_at, get_block_context};
 use axum::{extract::State, http::StatusCode, Extension, Json};
-// use reqwest;
+
+use blockifier::state::cached_state::CachedState;
+use blockifier::transaction::transaction_execution::Transaction;
+use blockifier::transaction::transactions::ExecutableTransaction;
+
 use serde::{Deserialize, Serialize};
-// use serde_json;
+
 use sqlx::types::Uuid;
-use starknet::core::types::{
-    BlockId, BroadcastedInvokeTransaction, BroadcastedTransaction, ExecuteInvocation, FieldElement,
-    SimulationFlag, TransactionTrace,
+use starknet::core::types::BlockId;
+use starknet_api::block::BlockNumber;
+use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::hash::{StarkFelt, StarkHash};
+use starknet_api::transaction::{
+    Calldata, Fee, InvokeTransaction as SAInvokeTransaction, InvokeTransactionV1,
+    Transaction as StarknetApiTransaction, TransactionHash, TransactionSignature,
 };
+use starknet_api::{contract_address, patricia_key, stark_felt};
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
-use tracing::info;
-// use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::info;
 use url::Url;
 
 #[derive(Serialize, Deserialize)]
 pub struct StarkNetTransaction {
-    // Define your transaction structure here;
     chain_id: String,
     wallet_address: String,
     calldata: Vec<String>,
@@ -42,7 +50,6 @@ pub async fn simulate(
 
     let block_number = private_rpc_client.block_number().await.unwrap();
 
-    // TODO: Insert into database
     let mut sim = db::Simulation::default();
     sim.team_id = team.id;
     sim.chain_id = payload.chain_id;
@@ -77,81 +84,60 @@ pub async fn simulate(
     let id = row.0;
     info!("Inserted into database with id {}", id);
 
-    let tx_b = BroadcastedTransaction::Invoke(BroadcastedInvokeTransaction {
-        sender_address: FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
-        calldata: convert_array(sim.calldata.clone())
-            .iter()
-            .map(|s| FieldElement::from_dec_str(s.as_str()).unwrap())
-            .collect(),
-        max_fee: FieldElement::from_dec_str("23440000000000000").unwrap(),
-        signature: vec![],
-        nonce: FieldElement::from_dec_str(sim.nonce.to_string().as_str()).unwrap(),
-        is_query: false,
-    });
+    let calldata_raw: Vec<StarkFelt> = sim
+        .calldata
+        .iter()
+        .map(|x| stark_felt!(convert_to_hex(x).as_str()))
+        .collect();
 
-    let st = private_rpc_client
-        .simulate_transaction(
-            BlockId::Number(sim.block_at as u64),
-            tx_b,
-            [SimulationFlag::SkipValidate, SimulationFlag::SkipFeeCharge],
-        )
-        .await;
+    let tx_raw = InvokeTransactionV1 {
+        sender_address: contract_address!(sim.wallet_address.as_str()),
+        nonce: Nonce(StarkFelt::from(payload.nonce)),
+        calldata: Calldata(calldata_raw.into()),
+        max_fee: Fee::default(),
+        signature: TransactionSignature(vec![]),
+    };
 
-    if st.is_err() {
-        info!("Simulation failed {}", st.err().unwrap());
-        sqlx::query!(
-            "UPDATE simulations SET status = $1 WHERE id = $2",
-            "failure",
-            id,
-        )
-        .execute(&state.db_pool)
-        .await
-        .unwrap();
-    } else {
-        match st.unwrap().transaction_trace {
-            TransactionTrace::Invoke(t) => match t.execute_invocation {
-                ExecuteInvocation::Reverted(r) => {
-                    info!("Simulation reverted {}", r.revert_reason.as_str());
-                    sqlx::query!(
-                        "UPDATE simulations SET status = $1 WHERE id = $2",
-                        "failure",
-                        id,
-                    )
-                    .execute(&state.db_pool)
-                    .await
-                    .unwrap();
-                }
-                ExecuteInvocation::Success(_) => {
-                    info!("Simulation succeeded");
-                    sqlx::query!(
-                        "UPDATE simulations SET status = $1 WHERE id = $2",
-                        "success",
-                        id,
-                    )
-                    .execute(&state.db_pool)
-                    .await
-                    .unwrap();
-                }
-            },
-            _ => {
-                info!("Simulation success");
-                sqlx::query!(
-                    "UPDATE simulations SET status = $1 WHERE id = $2",
-                    "success",
-                    id,
-                )
-                .execute(&state.db_pool)
-                .await
-                .unwrap();
-            }
-        };
-    }
+    let tx_hash = TransactionHash(StarkHash::default());
+    let tx = Transaction::from_api(
+        StarknetApiTransaction::Invoke(SAInvokeTransaction::V1(tx_raw)),
+        tx_hash,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
 
-    // TODO(jainkunal): Execute the transaction in context of the block and get status
+    let chain_id = ChainId(sim.chain_id);
+    let block_context = get_block_context(chain_id.clone(), BlockNumber(sim.block_at as u64));
 
-    // TODO(jainkunal): Update status to DB
+    // TODO: Don't use File cache
+    let mut cached_fork_state = create_fork_cached_state_at(
+        chain_id,
+        BlockId::Number(sim.block_at as u64),
+        "/tmp/sn-debugger/cache",
+    );
 
-    // TODO: Return
+    let mut tx_state = CachedState::<_>::create_transactional(&mut cached_fork_state);
+
+    let tx_info = tx.execute(&mut tx_state, &block_context, true, false);
+
+    let sim_status = match tx_info {
+        Ok(tx) => match tx.revert_error {
+            Some(_) => "failure",
+            None => "success",
+        },
+        Err(_) => "failure",
+    };
+
+    sqlx::query!(
+        "UPDATE simulations SET status = $1 WHERE id = $2",
+        sim_status,
+        id,
+    )
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
 
     Ok(Json(SimulateResult {}))
 }
@@ -170,32 +156,6 @@ fn create_rpc_client(chain_id: String, is_private: bool) -> JsonRpcClient<HttpTr
         },
     };
     JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
-}
-
-pub fn convert_array(arr: Vec<String>) -> Vec<String> {
-    // Convert String to u64
-    let num_transactions = arr[0].clone().parse::<i32>().unwrap();
-    let mut converted_arr: Vec<String> = Vec::new();
-    converted_arr.push(arr[0].clone());
-
-    for i in 0..num_transactions {
-        let contract_address = arr[4 * i as usize + 1].clone();
-        let selector = arr[4 * i as usize + 2].clone();
-        converted_arr.push(contract_address);
-        converted_arr.push(selector);
-
-        let calldata_len_current = arr[4 * i as usize + 4].clone().parse::<i32>().unwrap();
-        converted_arr.push(arr[4 * i as usize + 4].clone());
-
-        let start_index: usize = 4 * num_transactions as usize
-            + 2
-            + arr[4 * i as usize + 3].parse::<i32>().unwrap() as usize;
-        let end_index: usize = start_index + calldata_len_current as usize;
-
-        let args = &arr[start_index..end_index];
-        converted_arr.extend_from_slice(args);
-    }
-    converted_arr
 }
 
 // async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
