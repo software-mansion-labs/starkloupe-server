@@ -32,7 +32,7 @@ pub struct StarkNetTransaction {
     chain_id: String,
     wallet_address: String,
     calldata: Vec<String>,
-    nonce: u8,
+    nonce: Option<u8>,
     max_fee: Option<u128>,
     version: u8,
     cairo_version: Option<String>,
@@ -55,7 +55,6 @@ pub async fn simulate(
     sim.chain_id = payload.chain_id;
     sim.block_at = block_number as i32;
     sim.transaction_version = payload.version as i32;
-    sim.nonce = payload.nonce as i32;
     sim.max_fee = match payload.max_fee {
         Some(max_fee) => max_fee.to_string(),
         None => String::from(""),
@@ -66,6 +65,16 @@ pub async fn simulate(
     };
     sim.wallet_address = payload.wallet_address;
     sim.calldata = payload.calldata;
+    sim.nonce = u32::try_from(
+        private_rpc_client
+            .get_nonce(
+                BlockId::Number(block_number),
+                FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap() as i32;
 
     // Insert into database
     let row: (Uuid,) = sqlx::query_as(

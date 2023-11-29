@@ -64,6 +64,7 @@ pub async fn simulate_trace(
         status: row.status,
     };
 
+
     let calldata_raw: Vec<StarkFelt> = sim
         .calldata
         .clone()
