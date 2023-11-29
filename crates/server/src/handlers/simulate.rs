@@ -10,7 +10,7 @@ use blockifier::transaction::transactions::ExecutableTransaction;
 use serde::{Deserialize, Serialize};
 
 use sqlx::types::Uuid;
-use starknet::core::types::BlockId;
+use starknet::core::types::{BlockId, FieldElement};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
 use starknet_api::hash::{StarkFelt, StarkHash};
@@ -34,7 +34,6 @@ pub struct StarkNetTransaction {
     calldata: Vec<String>,
     nonce: Option<u8>,
     max_fee: Option<u128>,
-    version: u8,
     cairo_version: Option<String>,
 }
 
@@ -54,7 +53,7 @@ pub async fn simulate(
     sim.team_id = team.id;
     sim.chain_id = payload.chain_id;
     sim.block_at = block_number as i32;
-    sim.transaction_version = payload.version as i32;
+    sim.transaction_version = 0;
     sim.max_fee = match payload.max_fee {
         Some(max_fee) => max_fee.to_string(),
         None => String::from(""),
@@ -101,7 +100,7 @@ pub async fn simulate(
 
     let tx_raw = InvokeTransactionV1 {
         sender_address: contract_address!(sim.wallet_address.as_str()),
-        nonce: Nonce(StarkFelt::from(payload.nonce)),
+        nonce: Nonce(StarkFelt::from(sim.nonce as u64)),
         calldata: Calldata(calldata_raw.into()),
         max_fee: Fee::default(),
         signature: TransactionSignature(vec![]),
