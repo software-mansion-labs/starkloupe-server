@@ -56,6 +56,9 @@ async fn auth_middleware<B>(
                 } else if key == "walnut_LSBhhfrvdhy_CJUpRxe2hA7QHmPUMqhp33" {
                     // Starknet Id
                     Ok(Team { id: 4 })
+                } else if key == "walnut_NbiV2gLJ2yS_XPNHFEg51bMzYH2psq4chs" {
+                    // HH India: Satyam Bansal (@satyambnsal)
+                    Ok(Team { id: 5 })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)
                 }
