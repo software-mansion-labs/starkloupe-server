@@ -5,7 +5,7 @@ use sqlx::types::Uuid;
 #[derive(Clone, Debug, Default)]
 pub struct Simulation {
     pub id: Uuid,
-    pub team_id: i32,
+    pub project_id: i32,
     pub chain_id: String,
     pub block_at: i32,
     pub transaction_version: i32,
@@ -20,6 +20,11 @@ pub struct Simulation {
 }
 
 #[derive(Clone, Debug)]
-pub struct Team {
+pub struct Project {
     pub id: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct User {
+    pub sub: String,
 }

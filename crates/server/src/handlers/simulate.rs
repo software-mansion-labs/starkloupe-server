@@ -34,14 +34,14 @@ pub struct StarkNetTransaction {
     calldata: Vec<String>,
     nonce: Option<u8>,
     max_fee: Option<u128>,
-    cairo_version: Option<String>,
+    cairo_version: String,
 }
 
 #[derive(Serialize)]
 pub struct SimulateResult {}
 
 pub async fn simulate(
-    Extension(team): Extension<db::Team>,
+    Extension(project): Extension<db::Project>,
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
@@ -50,7 +50,7 @@ pub async fn simulate(
     let block_number = private_rpc_client.block_number().await.unwrap();
 
     let mut sim = db::Simulation::default();
-    sim.team_id = team.id;
+    sim.project_id = project.id;
     sim.chain_id = payload.chain_id;
     sim.block_at = block_number as i32;
     sim.transaction_version = 0;
@@ -58,10 +58,7 @@ pub async fn simulate(
         Some(max_fee) => max_fee.to_string(),
         None => String::from(""),
     };
-    sim.cairo_version = match payload.cairo_version {
-        Some(version) => version,
-        None => String::from(""),
-    };
+    sim.cairo_version = payload.cairo_version;
     sim.wallet_address = payload.wallet_address;
     sim.calldata = payload.calldata;
     sim.nonce = u32::try_from(
@@ -77,8 +74,8 @@ pub async fn simulate(
 
     // Insert into database
     let row: (Uuid,) = sqlx::query_as(
-        "INSERT INTO simulations (team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id")
-        .bind(&sim.team_id)
+        "INSERT INTO simulations (project_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id")
+        .bind(&sim.project_id)
         .bind(&sim.chain_id)
         .bind(&sim.block_at)
         .bind(&sim.transaction_version)

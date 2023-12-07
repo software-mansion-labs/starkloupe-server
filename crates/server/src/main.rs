@@ -18,9 +18,12 @@ use axum::{
     Json, Router,
 };
 use axum_prometheus::PrometheusMetricLayer;
-use db::Team;
+use cookie::Cookie;
+use db::{Project, User};
 use dotenv::dotenv;
 use handlers::{simulate::simulate, simulate_trace::simulate_trace, simulations::get_simulations};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -38,27 +41,27 @@ async fn auth_middleware<B>(
     mut req: Request<B>,
     next: Next<B>,
 ) -> Result<Response, StatusCode> {
-    // TODO: We will get team from the DB.
+    // TODO: We will get project from the DB.
     if req.method() != Method::OPTIONS {
-        let team = match req.headers().get("x-api-key") {
+        let project = match req.headers().get("x-api-key") {
             Some(key) => {
                 if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
-                    // Walnut Team
-                    Ok(Team { id: 1 })
+                    // Walnut Project
+                    Ok(Project { id: 1 })
                 } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
                     || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
                 {
-                    // Briq Team
-                    Ok(Team { id: 2 })
+                    // Briq Project
+                    Ok(Project { id: 2 })
                 } else if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
                     // Jediswap
-                    Ok(Team { id: 3 })
+                    Ok(Project { id: 3 })
                 } else if key == "walnut_LSBhhfrvdhy_CJUpRxe2hA7QHmPUMqhp33" {
                     // Starknet Id
-                    Ok(Team { id: 4 })
+                    Ok(Project { id: 4 })
                 } else if key == "walnut_NbiV2gLJ2yS_XPNHFEg51bMzYH2psq4chs" {
                     // HH India: Satyam Bansal (@satyambnsal)
-                    Ok(Team { id: 5 })
+                    Ok(Project { id: 5 })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)
                 }
@@ -66,7 +69,88 @@ async fn auth_middleware<B>(
             _ => Err(StatusCode::UNAUTHORIZED),
         }?;
 
-        req.extensions_mut().insert(team);
+        req.extensions_mut().insert(project);
+    }
+
+    Ok(next.run(req).await)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    email: String,
+    sub: String,
+    projects: Vec<String>,
+    iat: i32,
+}
+
+async fn user_auth_middleware<B>(
+    State(_state): State<Arc<AppState>>,
+    mut req: Request<B>,
+    next: Next<B>,
+) -> Result<Response, StatusCode> {
+    if req.method() != Method::OPTIONS {
+        let session_token = if let Some(header_value) = req.headers().get("Authorization") {
+            if let Ok(auth_str) = header_value.to_str() {
+                if auth_str.starts_with("Bearer ") {
+                    Some(auth_str.trim_start_matches("Bearer "))
+                } else {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+            } else {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        } else if let Some(cookie_value) = req.headers().get("cookie") {
+            // Parse cookies and look for "session-token"
+            if let Ok(cookie_str) = cookie_value.to_str() {
+                for cookie in Cookie::split_parse_encoded(cookie_str) {
+                    if let Ok(cookie) = cookie {
+                        if cookie.name() == "session-token" {
+                            Some(cookie.value());
+                        }
+                    }
+                }
+            }
+            return Err(StatusCode::UNAUTHORIZED);
+        } else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+
+        if let Some(token) = session_token {
+            if let Ok(data) = decode::<Claims>(
+                token,
+                &DecodingKey::from_secret(
+                    b"cc7e0d44fd473002f1c42167459001140ec6389b7353f8088f4d9a95f2f596f2",
+                ),
+                &Validation::new(Algorithm::HS256),
+            ) {
+                let claims = data.claims;
+                req.extensions_mut().insert(User { sub: claims.sub });
+
+                let projects_result = sqlx::query!(
+                    r#"
+                    SELECT * FROM projects
+                    WHERE slug = ANY($1)
+                    "#,
+                    &claims.projects as _
+                )
+                .fetch_all(&_state.db_pool)
+                .await;
+
+                match projects_result {
+                    Ok(rows) => {
+                        let projects: Vec<Project> =
+                            rows.into_iter().map(|row| Project { id: row.id }).collect();
+                        req.extensions_mut().insert(projects);
+                    }
+                    Err(e) => {
+                        dbg!(e);
+                        // Handle the error, e.g., log it or return it
+                    }
+                }
+            } else {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
     }
 
     Ok(next.run(req).await)
@@ -101,13 +185,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
+    let user_auth_routes = Router::new()
+        .route("/v1/simulations", get(get_simulations))
+        .layer(middleware::from_fn_with_state(
+            shared_state.clone(),
+            user_auth_middleware,
+        ));
+
     let app = Router::new()
         .route("/v1/simulate", post(simulate))
         .route_layer(middleware::from_fn_with_state(
             shared_state.clone(),
             auth_middleware,
         ))
-        .route("/v1/simulations", get(get_simulations))
+        .merge(user_auth_routes)
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))

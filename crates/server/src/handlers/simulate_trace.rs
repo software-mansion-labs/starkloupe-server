@@ -50,7 +50,7 @@ pub async fn simulate_trace(
 
     let sim = SimulationRes {
         id: row.id.map_or(String::new(), |id| id.to_string()),
-        team_id: row.team_id,
+        project_id: row.project_id,
         chain_id: row.chain_id,
         block_at: row.block_at,
         transaction_version: row.transaction_version,

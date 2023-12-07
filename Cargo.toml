@@ -52,3 +52,5 @@ starknet-providers = "0.7.0"
 tracing = "0.1.40"
 tracing-subscriber = {version="0.3.17", features = ["std", "registry", "env-filter", "json"]}
 starknet-abi = { path = "./crates/starknet-abi" }
+cookie = { version = "0.18", features = ["percent-encode"] }
+jsonwebtoken = "9.2.0"
