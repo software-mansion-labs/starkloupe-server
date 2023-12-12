@@ -62,6 +62,9 @@ async fn auth_middleware<B>(
                 } else if key == "walnut_NbiV2gLJ2yS_XPNHFEg51bMzYH2psq4chs" {
                     // HH India: Satyam Bansal (@satyambnsal)
                     Ok(Project { id: 5 })
+                } else if key == "walnut_Pqz5bFL2wSb_9uQZXpBXgLqEPZHTz04QzN" {
+                    // Carmine
+                    Ok(Project { id: 6 })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)
                 }
