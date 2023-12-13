@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-
+use serde::{Deserialize, Serialize};
 use sqlx::types::Uuid;
 
 #[derive(Clone, Debug, Default)]
@@ -19,12 +19,13 @@ pub struct Simulation {
     pub status: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     pub id: i32,
+    pub name: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct User {
-    pub sub: String,
+    pub email: String,
 }

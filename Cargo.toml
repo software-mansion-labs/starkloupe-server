@@ -54,3 +54,4 @@ tracing-subscriber = {version="0.3.17", features = ["std", "registry", "env-filt
 starknet-abi = { path = "./crates/starknet-abi" }
 cookie = { version = "0.18", features = ["percent-encode"] }
 jsonwebtoken = "9.2.0"
+urlencoding = "2.1.3"
