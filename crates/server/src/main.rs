@@ -147,7 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
             user_auth_middleware,
-        ));
+        ))
+        .layer(CorsLayer::permissive());
 
     let app = Router::new()
         .route("/v1/simulate", post(simulate))
