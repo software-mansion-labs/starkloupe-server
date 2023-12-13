@@ -98,7 +98,6 @@ async fn get_user_projects(
 struct Claims {
     email: String,
     sub: String,
-    projects: Vec<String>,
     iat: i32,
 }
 
