@@ -155,8 +155,8 @@ fn create_rpc_client(chain_id: String, is_private: bool) -> JsonRpcClient<HttpTr
             _ => panic!("Invalid chain id"),
         },
         false => match chain_id.as_str() {
-            "0x534e5f474f45524c49" => "https://ikah.goerli1-juno.rpc.nethermind.io",
-            "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
+            "0x534e5f474f45524c49" => "https://free-rpc.nethermind.io/goerli-juno",
+            "0x534e5f4d41494e" => "https://free-rpc.nethermind.io/mainnet-juno",
             _ => panic!("Invalid chain id"),
         },
     };

@@ -61,8 +61,8 @@ pub fn create_fork_cached_state_at(
     cache_dir: &str,
 ) -> CachedState<ForkStateReader> {
     let url = match chain_id.0.as_str() {
-        "0x534e5f474f45524c49" => "https://ikah.goerli1-juno.rpc.nethermind.io",
-        "0x534e5f4d41494e" => "https://ofsg.mainnet-juno.rpc.nethermind.io",
+        "0x534e5f474f45524c49" => "https://free-rpc.nethermind.io/goerli-juno",
+        "0x534e5f4d41494e" => "https://free-rpc.nethermind.io/mainnet-juno",
         _ => panic!("Invalid chain id"),
     };
     CachedState::new(
