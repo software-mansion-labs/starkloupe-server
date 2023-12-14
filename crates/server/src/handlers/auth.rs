@@ -7,6 +7,7 @@ use axum::{
 use cookie::Cookie;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use redis;
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
@@ -56,11 +57,11 @@ fn user_cache_key(user_email: &str) -> String {
 }
 
 pub async fn cache_all_users_and_projects(
-    redis_client: &redis::Client,
+    redis_pool: &deadpool_redis::Pool,
     db_pool: &Pool<Postgres>,
     expiry: i32,
 ) {
-    let mut redis_conn = redis_client.get_connection().unwrap();
+    let mut redis_connection = redis_pool.get().await.unwrap();
     let all_users_projects = fetch_users_and_projects(db_pool).await;
 
     let mut pipe = redis::pipe();
@@ -73,16 +74,17 @@ pub async fn cache_all_users_and_projects(
             .arg(&serialized_projects);
     }
 
-    let _: () = pipe.query(&mut redis_conn).unwrap();
+    let _: () = pipe.query_async(&mut redis_connection).await.unwrap();
 }
 
 async fn get_user_projects(
-    redis_conn: &mut redis::Connection,
+    redis_conn: &mut deadpool_redis::Connection,
     user_email: &String,
 ) -> Vec<Project> {
     let cached_value: Option<String> = redis::cmd("GET")
         .arg(user_cache_key(&user_email))
-        .query(redis_conn)
+        .query_async(redis_conn)
+        .await
         .unwrap();
 
     match cached_value {
@@ -144,8 +146,8 @@ pub async fn user_auth_middleware<B>(
                 let claims = data.claims;
                 let user_email = claims.email;
 
-                let mut redis_con = _state.redis_client.get_connection().unwrap();
-                let user_projects = get_user_projects(&mut redis_con, &user_email).await;
+                let mut redis_connection = _state.redis_pool.get().await.unwrap();
+                let user_projects = get_user_projects(&mut redis_connection, &user_email).await;
 
                 req.extensions_mut().insert(User { email: user_email });
 

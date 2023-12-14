@@ -19,6 +19,7 @@ use axum::{
 };
 use axum_prometheus::PrometheusMetricLayer;
 use db::Project;
+use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
     auth::{cache_all_users_and_projects, user_auth_middleware},
@@ -113,31 +114,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
-    let pool = PgPoolOptions::new()
+    let db_pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&db_addr)
         .await?;
-    let client = redis::Client::open(redis_addr)?;
 
-    let pool_for_background = pool.clone();
-    let client_for_background = client.clone();
+    let redis_cfg = deadpool_redis::Config::from_url(redis_addr);
+    let redis_pool = redis_cfg
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .unwrap();
+
+    let db_pool_for_background = db_pool.clone();
+    let redis_pool_for_background = redis_pool.clone();
+
+    sqlx::migrate!().run(&db_pool).await?;
 
     // Schedule background task that runs refetch every 5 minutes
     // TODO: Cross task concurrency issues exist here, but it's fine for now.
     tokio::spawn(async move {
         loop {
-            let _ =
-                cache_all_users_and_projects(&client_for_background, &pool_for_background, 60 * 5)
-                    .await;
+            let _ = cache_all_users_and_projects(
+                &redis_pool_for_background,
+                &db_pool_for_background,
+                60 * 5,
+            )
+            .await;
             tokio::time::sleep(Duration::from_secs((60 * 5) - 30)).await;
         }
     });
 
-    sqlx::migrate!().run(&pool).await?;
-
     let shared_state = Arc::new(AppState {
-        db_pool: pool,
-        redis_client: client,
+        db_pool,
+        redis_pool,
     });
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();

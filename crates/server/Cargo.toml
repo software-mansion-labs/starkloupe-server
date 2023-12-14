@@ -32,3 +32,4 @@ axum-prometheus = "0.4.0"
 cookie.workspace = true
 jsonwebtoken.workspace = true
 urlencoding.workspace = true
+deadpool-redis.workspace = true
