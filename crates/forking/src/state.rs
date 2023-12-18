@@ -135,9 +135,12 @@ impl StateReader for ForkStateReader {
                     // Err(ProviderError::Other(JsonRpcClientError::TransportError(_))) => {
                     //     node_connection_error()
                     // }
-                    Err(_) => Err(StateReadError(format!(
-                        "Unable to get class hash at {contract_address:?} from fork"
-                    ))),
+                    Err(ee) => {
+                        dbg!(ee);
+                        Err(StateReadError(format!(
+                            "Unable to get class hash at {contract_address:?} from fork"
+                        )))
+                    }
                 }
             })
         })

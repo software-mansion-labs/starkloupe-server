@@ -1,12 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
-use num_bigint::BigUint;
-use num_traits::Num;
 use blockifier::{
     block_context::{BlockContext, FeeTokenAddresses, GasPrices},
     state::cached_state::{CachedState, GlobalContractCache},
 };
 use forking::state::ForkStateReader;
+use num_bigint::BigUint;
+use num_traits::Num;
 use starknet::core::types::BlockId;
 use starknet_api::{
     block::{BlockNumber, BlockTimestamp},
@@ -61,8 +61,12 @@ pub fn create_fork_cached_state_at(
     cache_dir: &str,
 ) -> CachedState<ForkStateReader> {
     let url = match chain_id.0.as_str() {
-        "0x534e5f474f45524c49" => "https://free-rpc.nethermind.io/goerli-juno",
-        "0x534e5f4d41494e" => "https://free-rpc.nethermind.io/mainnet-juno",
+        "0x534e5f474f45524c49" => {
+            "https://starknet-goerli.g.alchemy.com/v2/D2pgqj4yeZmmZyBY7tw-CMnO2nUL8n94"
+        }
+        "0x534e5f4d41494e" => {
+            "https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
+        }
         _ => panic!("Invalid chain id"),
     };
     CachedState::new(
