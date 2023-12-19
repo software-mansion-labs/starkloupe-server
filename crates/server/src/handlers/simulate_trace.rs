@@ -6,7 +6,7 @@ use axum::{
 };
 use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::Serialize;
-use simulate::{simulate, SimulationRes};
+use simulate::{simulate, SimulationArgs, SimulationRes};
 use sqlx::types::Uuid;
 use starknet::core::types::{
     CallType, EventContent, ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation,
@@ -18,7 +18,7 @@ use std::{str::FromStr, sync::Arc};
 #[derive(Serialize)]
 pub struct SimulateTraceResponse {
     simulated_transaction: SimulatedTransaction,
-    simulation: SimulationRes,
+    simulation: Option<SimulationRes>,
 }
 
 pub async fn simulate_trace(
@@ -50,14 +50,37 @@ pub async fn simulate_trace(
         status: row.status,
     };
 
-    let tx_info = simulate(&sim);
+    let tx_info = simulate(SimulationArgs {
+        chain_id: sim.chain_id.clone(),
+        block_at: (sim.block_at as u64).clone(),
+        nonce: (sim.nonce as u64).clone(),
+        wallet_address: sim.wallet_address.clone(),
+        calldata: sim.calldata.clone(),
+    });
 
     match tx_info {
         Ok(tx_info) => Ok(Json(SimulateTraceResponse {
             simulated_transaction: to_simulated_transaction(tx_info),
-            simulation: sim,
+            simulation: Some(sim),
         })),
         Err(_) => Err(StatusCode::EXPECTATION_FAILED),
+    }
+}
+
+pub async fn simulate_transaction(
+    Json(payload): Json<SimulationArgs>,
+) -> Result<Json<SimulateTraceResponse>, StatusCode> {
+    let tx_info = simulate(payload);
+
+    match tx_info {
+        Ok(tx_info) => Ok(Json(SimulateTraceResponse {
+            simulated_transaction: to_simulated_transaction(tx_info),
+            simulation: None,
+        })),
+        Err(e) => {
+            dbg!(e);
+            Err(StatusCode::EXPECTATION_FAILED)
+        }
     }
 }
 

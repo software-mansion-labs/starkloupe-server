@@ -22,7 +22,7 @@ use dotenv::dotenv;
 use handlers::{
     auth::{cache_all_users_and_projects, user_auth_middleware},
     simulate::simulate,
-    simulate_trace::simulate_trace,
+    simulate_trace::{simulate_trace, simulate_transaction},
     simulations::get_simulations,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -164,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .merge(user_auth_routes)
         .route("/v1/:chain/tx/:hash", get(read_transaction))
+        .route("/v1/simulate-transaction", post(simulate_transaction))
         .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
