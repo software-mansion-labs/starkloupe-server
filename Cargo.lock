@@ -384,15 +384,12 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 name = "batch-sim"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dotenv",
+ "simulate",
  "sqlx",
- "starknet",
- "starknet-providers",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]
@@ -1392,6 +1389,15 @@ dependencies = [
  "darling_core 0.20.3",
  "quote",
  "syn 2.0.38",
+]
+
+[[package]]
+name = "db"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "sqlx",
 ]
 
 [[package]]
@@ -3807,18 +3813,17 @@ dependencies = [
  "axum",
  "axum-prometheus",
  "blockifier",
- "chrono",
  "cookie",
+ "db",
  "deadpool-redis",
  "dotenv",
  "forking",
  "jsonwebtoken",
- "num-bigint",
- "num-traits 0.2.17",
  "redis",
  "reqwest",
  "serde",
  "serde_json",
+ "simulate",
  "sqlx",
  "starknet",
  "starknet-abi",
@@ -3909,6 +3914,19 @@ dependencies = [
  "num-traits 0.2.17",
  "thiserror",
  "time",
+]
+
+[[package]]
+name = "simulate"
+version = "0.1.0"
+dependencies = [
+ "blockifier",
+ "forking",
+ "num-bigint",
+ "num-traits 0.2.17",
+ "serde",
+ "starknet",
+ "starknet_api",
 ]
 
 [[package]]

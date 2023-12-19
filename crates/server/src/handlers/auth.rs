@@ -1,10 +1,10 @@
 use crate::app_state::AppState;
-use crate::db::{Project, User};
 use axum::{
     extract::State, http::Method, http::Request, http::StatusCode, middleware::Next,
     response::Response,
 };
 use cookie::Cookie;
+use db::{Project, User};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use redis;
 use redis::AsyncCommands;

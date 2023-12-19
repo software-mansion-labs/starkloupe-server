@@ -14,7 +14,6 @@ tower-http.workspace = true
 tokio.workspace = true
 serde.workspace = true
 dotenv.workspace = true
-chrono.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 starknet-providers.workspace = true
@@ -26,8 +25,8 @@ starknet-abi.workspace = true
 starknet_api.workspace = true
 blockifier.workspace = true
 forking = { path = "../forking" }
-num-traits.workspace = true
-num-bigint.workspace = true
+simulate = { path = "../simulate" }
+db = { path = "../db" }
 axum-prometheus = "0.4.0"
 cookie.workspace = true
 jsonwebtoken.workspace = true

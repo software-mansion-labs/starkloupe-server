@@ -1,32 +1,16 @@
 use crate::app_state::AppState;
-use crate::db::Project;
 use axum::extract::Query;
 use axum::Extension;
 use axum::{extract::State, http::StatusCode, Json};
+use db::Project;
 use serde::{Deserialize, Serialize};
+use simulate::SimulationRes;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize)]
 pub struct SimulationsRequest {
     wallet_address: Option<String>,
     project_id: Option<i32>,
-}
-
-#[derive(Serialize)]
-pub struct SimulationRes {
-    pub id: String,
-    pub project_id: i32,
-    pub chain_id: String,
-    pub block_at: i32,
-    pub transaction_version: i32,
-    pub nonce: i32,
-    pub max_fee: String,
-    pub cairo_version: String,
-    pub wallet_address: String,
-    pub calldata: Vec<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub status: String,
 }
 
 #[derive(Serialize)]
