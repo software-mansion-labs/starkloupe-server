@@ -2,7 +2,7 @@ use dotenv::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use simulate::{simulate, SimulationRes};
+use simulate::{simulate, SimulationArgs, SimulationRes};
 
 #[tokio::main]
 async fn main() {
@@ -48,7 +48,13 @@ async fn main() {
         .collect();
 
     for sim in simulations_res.iter() {
-        let tx_info = simulate(sim);
+        let tx_info = simulate(SimulationArgs {
+            chain_id: sim.chain_id.clone(),
+            block_at: (sim.block_at as u64).clone(),
+            nonce: (sim.nonce as u64).clone(),
+            wallet_address: sim.wallet_address.clone(),
+            calldata: sim.calldata.clone(),
+        });
 
         let sim_status = match tx_info {
             Ok(tx) => match tx.revert_error {
