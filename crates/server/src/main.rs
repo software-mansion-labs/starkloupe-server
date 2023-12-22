@@ -91,6 +91,12 @@ async fn auth_middleware<B>(
                         name: String::from("Carmine"),
                         slug: String::from("carmine"),
                     })
+                } else if key == "walnut_64vz74v5zPb_osGq4TZSEW3jD8DoK2TJx4" {
+                    Ok(Project {
+                        id: 7,
+                        name: String::from("LayerAkira"),
+                        slug: String::from("layerakira"),
+                    })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)
                 }
