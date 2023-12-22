@@ -52,6 +52,7 @@ async fn auth_middleware<B>(
                     Ok(Project {
                         id: 1,
                         name: String::from("Walnut"),
+                        slug: String::from("walnut"),
                     })
                 } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
                     || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
@@ -60,30 +61,35 @@ async fn auth_middleware<B>(
                     Ok(Project {
                         id: 2,
                         name: String::from("Briq"),
+                        slug: String::from("briq"),
                     })
                 } else if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
                     // Jediswap
                     Ok(Project {
                         id: 3,
                         name: String::from("Jediswap"),
+                        slug: String::from("jediswap"),
                     })
                 } else if key == "walnut_LSBhhfrvdhy_CJUpRxe2hA7QHmPUMqhp33" {
                     // Starknet Id
                     Ok(Project {
                         id: 4,
                         name: String::from("Starknet Id"),
+                        slug: String::from("starknet-id"),
                     })
                 } else if key == "walnut_NbiV2gLJ2yS_XPNHFEg51bMzYH2psq4chs" {
                     // HH India: Satyam Bansal (@satyambnsal)
                     Ok(Project {
                         id: 5,
                         name: String::from("@satyambnsal"),
+                        slug: String::from("satyambnsal"),
                     })
                 } else if key == "walnut_Pqz5bFL2wSb_9uQZXpBXgLqEPZHTz04QzN" {
                     // Carmine
                     Ok(Project {
                         id: 6,
                         name: String::from("Carmine"),
+                        slug: String::from("carmine"),
                     })
                 } else {
                     Err(StatusCode::UNAUTHORIZED)

@@ -1,8 +1,9 @@
+use db::Simulation;
 use dotenv::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use simulate::{simulate, SimulationArgs, SimulationRes};
+use simulate::{simulate, SimulationArgs};
 
 #[tokio::main]
 async fn main() {
@@ -23,37 +24,21 @@ async fn main() {
     // let q = "SELECT * FROM simulations WHERE project_id = 1 AND wallet_address = '0x75160f33545357e0906b1cb5cacc9e4fcec206a258e4cd15802a5658b209db2';";
     // let q = "SELECT id, team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata FROM simulations WHERE team_id=1 LIMIT 20";
 
-    let rows = sqlx::query!("SELECT * FROM simulations WHERE project_id = 2;")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let simulations = sqlx::query_as!(
+        Simulation,
+        "SELECT * FROM simulations WHERE project_id = 2;"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
 
-    let simulations_res: Vec<SimulationRes> = rows
-        .into_iter()
-        .map(|row| SimulationRes {
-            id: row.id.map_or(String::new(), |id| id.to_string()),
-            project_id: row.project_id,
-            chain_id: row.chain_id,
-            block_at: row.block_at,
-            transaction_version: row.transaction_version,
-            nonce: row.nonce,
-            max_fee: row.max_fee,
-            cairo_version: row.cairo_version,
-            wallet_address: row.wallet_address,
-            calldata: row.calldata.map_or(Vec::new(), |calldata| calldata),
-            created_at: row.created_at.assume_utc().unix_timestamp(),
-            updated_at: row.updated_at.assume_utc().unix_timestamp(),
-            status: row.status,
-        })
-        .collect();
-
-    for sim in simulations_res.iter() {
+    for sim in simulations.iter() {
         let tx_info = simulate(SimulationArgs {
             chain_id: sim.chain_id.clone(),
             block_at: (sim.block_at as u64).clone(),
             nonce: (sim.nonce as u64).clone(),
             wallet_address: sim.wallet_address.clone(),
-            calldata: sim.calldata.clone(),
+            calldata: sim.calldata.clone().unwrap_or_default(),
         });
 
         let sim_status = match tx_info {

@@ -60,7 +60,7 @@ pub async fn simulate(
     };
     sim.cairo_version = payload.cairo_version;
     sim.wallet_address = payload.wallet_address;
-    sim.calldata = payload.calldata;
+    sim.calldata = Some(payload.calldata);
     sim.nonce = u32::try_from(
         private_rpc_client
             .get_nonce(
@@ -91,6 +91,7 @@ pub async fn simulate(
 
     let calldata_raw: Vec<StarkFelt> = sim
         .calldata
+        .unwrap_or_default()
         .iter()
         .map(|x| stark_felt!(convert_to_hex(x).as_str()))
         .collect();

@@ -36,6 +36,7 @@ async fn fetch_users_and_projects(db_pool: &Pool<Postgres>) -> HashMap<String, V
             let project = Project {
                 id: project_id,
                 name: rec.name.unwrap(),
+                slug: rec.slug.unwrap(),
             };
             users_projects_map
                 .entry(user_email)

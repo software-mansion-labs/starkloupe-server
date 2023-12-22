@@ -5,8 +5,9 @@ use axum::{
     Json,
 };
 use blockifier::transaction::objects::TransactionExecutionInfo;
+use db::Simulation;
 use serde::Serialize;
-use simulate::{simulate, SimulationArgs, SimulationRes};
+use simulate::{simulate, SimulationArgs};
 use sqlx::types::Uuid;
 use starknet::core::types::{
     CallType, EventContent, ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation,
@@ -18,7 +19,7 @@ use std::{str::FromStr, sync::Arc};
 #[derive(Serialize)]
 pub struct SimulateTraceResponse {
     simulated_transaction: SimulatedTransaction,
-    simulation: Option<SimulationRes>,
+    simulation: Option<Simulation>,
 }
 
 pub async fn simulate_trace(
@@ -26,7 +27,8 @@ pub async fn simulate_trace(
     id: Path<String>,
 ) -> Result<Json<SimulateTraceResponse>, StatusCode> {
     // Implement your business logic here
-    let row = sqlx::query!(
+    let sim: Simulation = sqlx::query_as!(
+        Simulation,
         "SELECT * FROM simulations WHERE id = $1",
         Uuid::from_str(&id.0).unwrap()
     )
@@ -34,28 +36,12 @@ pub async fn simulate_trace(
     .await
     .unwrap();
 
-    let sim = SimulationRes {
-        id: row.id.map_or(String::new(), |id| id.to_string()),
-        project_id: row.project_id,
-        chain_id: row.chain_id,
-        block_at: row.block_at,
-        transaction_version: row.transaction_version,
-        nonce: row.nonce,
-        max_fee: row.max_fee,
-        cairo_version: row.cairo_version,
-        wallet_address: row.wallet_address,
-        calldata: row.calldata.map_or(Vec::new(), |calldata| calldata),
-        created_at: row.created_at.assume_utc().unix_timestamp(),
-        updated_at: row.updated_at.assume_utc().unix_timestamp(),
-        status: row.status,
-    };
-
     let tx_info = simulate(SimulationArgs {
         chain_id: sim.chain_id.clone(),
         block_at: (sim.block_at as u64).clone(),
         nonce: (sim.nonce as u64).clone(),
         wallet_address: sim.wallet_address.clone(),
-        calldata: sim.calldata.clone(),
+        calldata: sim.calldata.clone().unwrap_or_default(),
     });
 
     match tx_info {

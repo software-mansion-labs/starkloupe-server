@@ -10,3 +10,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 sqlx.workspace = true
 simulate = { path = "../simulate" }
+db = { path = "../db" }
