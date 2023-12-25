@@ -1,21 +1,22 @@
 mod app_state;
+mod config;
 mod handlers;
 
 extern crate dotenv;
 
 use app_state::AppState;
 use axum::{
+    body::Body,
     extract::{Path, State},
-    http::Method,
-    http::Request,
-    http::StatusCode,
+    http::{header, HeaderValue, Method, Request, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::get,
     routing::post,
     Json, Router,
 };
 use axum_prometheus::PrometheusMetricLayer;
+use config::rpc_url;
 use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
@@ -110,6 +111,20 @@ async fn auth_middleware<B>(
     Ok(next.run(req).await)
 }
 
+async fn forward_post_request(url: &str, req: Request<Body>) -> impl IntoResponse {
+    let client = reqwest::Client::new();
+    let res = client.post(url).body(req.into_body()).send().await.unwrap();
+    let bytes = res.bytes().await.unwrap();
+
+    let mut response: Response<Body> = Response::new(bytes.into());
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+
+    response
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -181,6 +196,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
+        .route(
+            "/rpc/0x534e5f474f45524c49",
+            post(|req| forward_post_request(rpc_url("0x534e5f474f45524c49"), req)),
+        )
+        .route(
+            "/rpc/0x534e5f4d41494e",
+            post(|req| forward_post_request(rpc_url("0x534e5f4d41494e"), req)),
+        )
         .layer(prometheus_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());

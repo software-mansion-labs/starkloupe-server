@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::config::rpc_url;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use db;
 use simulate::utils::{convert_to_hex, create_fork_cached_state_at, get_block_context};
@@ -45,9 +46,9 @@ pub async fn simulate(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
 ) -> Result<Json<SimulateResult>, StatusCode> {
-    let private_rpc_client = create_rpc_client(payload.chain_id.clone(), true);
+    let rpc_client = create_rpc_client(payload.chain_id.clone());
 
-    let block_number = private_rpc_client.block_number().await.unwrap();
+    let block_number = rpc_client.block_number().await.unwrap();
 
     let mut sim = db::Simulation::default();
     sim.project_id = project.id;
@@ -62,7 +63,7 @@ pub async fn simulate(
     sim.wallet_address = payload.wallet_address;
     sim.calldata = Some(payload.calldata);
     sim.nonce = u32::try_from(
-        private_rpc_client
+        rpc_client
             .get_nonce(
                 BlockId::Number(block_number),
                 FieldElement::from_hex_be(sim.wallet_address.as_str()).unwrap(),
@@ -148,24 +149,8 @@ pub async fn simulate(
     Ok(Json(SimulateResult {}))
 }
 
-fn create_rpc_client(chain_id: String, is_private: bool) -> JsonRpcClient<HttpTransport> {
-    let url = match is_private {
-        true => match chain_id.as_str() {
-            "0x534e5f474f45524c49" => "https://3dfa-54-87-10-131.ngrok-free.app",
-            "0x534e5f4d41494e" => "https://0721-54-87-10-131.ngrok-free.app",
-            _ => panic!("Invalid chain id"),
-        },
-        false => match chain_id.as_str() {
-            "0x534e5f474f45524c49" => {
-                "https://starknet-goerli.g.alchemy.com/v2/D2pgqj4yeZmmZyBY7tw-CMnO2nUL8n94"
-            }
-            "0x534e5f4d41494e" => {
-                "https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
-            }
-            _ => panic!("Invalid chain id"),
-        },
-    };
-    JsonRpcClient::new(HttpTransport::new(Url::parse(url).unwrap()))
+fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
+    JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(&chain_id)).unwrap()))
 }
 
 // async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
