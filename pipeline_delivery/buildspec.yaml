@@ -9,7 +9,7 @@ phases:
     commands:
       - echo Entered the post_build phase...
       - echo Build completed on `date`
-      - docker buildx build -t ${tag}:latest .
+      - docker build -t ${tag}:latest .
       - docker tag $tag:latest $ecr:$tag
       - docker push $ecr
       - printf '[{"name":"container","imageUri":"%s"}]' ${ecr} > imagedefinitions.json

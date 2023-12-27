@@ -1,29 +1,32 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+ARG RUST_VERSION=1.74.1
+
+FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 WORKDIR /app
-
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM chef AS builder 
-COPY --from=planner /app/recipe.json recipe.json
-# Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --recipe-path recipe.json
-# Build application
-COPY . .
-RUN cargo build --release --bin server
-
-# We do not need the Rust toolchain to run the binary!
-FROM debian:bookworm-slim AS runtime
-WORKDIR /app
-RUN apt-get update && apt install -y openssl
+RUN apt-get update && apt install -y openssl libssl-dev && apt install -y pkg-config
 RUN apt-get install -y --no-install-recommends ca-certificates
 RUN update-ca-certificates
-COPY --from=builder /app/target/release/server /usr/local/bin
+COPY . .
+ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
+RUN \
+  --mount=type=cache,target=/app/target/ \
+  --mount=type=cache,target=/usr/local/cargo/registry/ \
+  cargo build --locked --release && \
+  cp ./target/release/server /app
 
-# TODO: Change password and remove from here
+FROM debian:bookworm-slim AS final
+RUN adduser \
+  --disabled-password \
+  --gecos "" \
+  --home "/nonexistent" \
+  --shell "/sbin/nologin" \
+  --no-create-home \
+  --uid "10001" \
+  appuser
+COPY --from=builder /app/server /usr/local/bin
+RUN chown appuser /usr/local/bin/server
+USER appuser
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
 ENV REDIS_ADDR="redis://widoserver-east-1.h4j9ed.0001.use1.cache.amazonaws.com:6379"
-
-EXPOSE 3000
-ENTRYPOINT ["/usr/local/bin/server"]
+WORKDIR /opt/server
+ENTRYPOINT ["server"]
+EXPOSE 3000/tcp
