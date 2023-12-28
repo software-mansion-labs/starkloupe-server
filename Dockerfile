@@ -4,7 +4,9 @@ FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 WORKDIR /app
 COPY . .
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
-RUN apt-get update && apt-get install -y libssl-dev
+RUN apt-get update && apt install -y openssl
+RUN apt-get install -y --no-install-recommends ca-certificates
+RUN update-ca-certificates
 RUN cargo build --locked --release --bin server
 
 FROM debian:bookworm-slim AS final
