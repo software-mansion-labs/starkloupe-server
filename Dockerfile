@@ -2,16 +2,12 @@ ARG RUST_VERSION=1.74.1
 
 FROM rust:${RUST_VERSION}-slim-bookworm AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y openssl libssl-dev && apt-get install -y pkg-config
-RUN apt-get install -y --no-install-recommends ca-certificates
-RUN update-ca-certificates
 COPY . .
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
-RUN cargo build --locked --release && \
-  cp ./target/release/server /app
+RUN apt-get update && apt-get install -y pkg-config libssl-dev
+RUN cargo build --locked --release --bin server
 
 FROM debian:bookworm-slim AS final
-RUN apt-get update && apt-get install -y openssl
 RUN adduser \
   --disabled-password \
   --gecos "" \
@@ -20,7 +16,10 @@ RUN adduser \
   --no-create-home \
   --uid "10001" \
   appuser
-COPY --from=builder /app/server /usr/local/bin
+RUN apt-get update && apt install -y openssl
+RUN apt-get install -y --no-install-recommends ca-certificates
+RUN update-ca-certificates
+COPY --from=builder /app/target/release/server /usr/local/bin
 RUN chown appuser /usr/local/bin/server
 USER appuser
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
