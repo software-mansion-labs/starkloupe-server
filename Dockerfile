@@ -1,4 +1,4 @@
-FROM rust:1.74.1
+FROM public.ecr.aws/docker/library/rust:1.74.1
 
 COPY ./ ./
 
