@@ -22,7 +22,7 @@ use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
     auth::{cache_all_users_and_projects, user_auth_middleware},
-    simulate::simulate,
+    simulate::simulate_handler,
     simulate_trace::{simulate_trace, simulate_transaction},
     simulations::get_simulations,
 };
@@ -184,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(CorsLayer::permissive());
 
     let app = Router::new()
-        .route("/v1/simulate", post(simulate))
+        .route("/v1/simulate", post(simulate_handler))
         .route_layer(middleware::from_fn_with_state(
             shared_state.clone(),
             auth_middleware,

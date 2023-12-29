@@ -122,6 +122,8 @@ pub struct Simulation {
     pub created_at: SerializableDateTime,
     pub updated_at: SerializableDateTime,
     pub status: String,
+    pub error_message: Option<String>,
+    pub error_contract_address: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

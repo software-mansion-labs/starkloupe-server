@@ -1,25 +1,11 @@
 use crate::app_state::AppState;
 use crate::config::rpc_url;
 use axum::{extract::State, http::StatusCode, Extension, Json};
-use db;
-use simulate::utils::{convert_to_hex, create_fork_cached_state_at, get_block_context};
-
-use blockifier::state::cached_state::CachedState;
-use blockifier::transaction::transaction_execution::Transaction;
-use blockifier::transaction::transactions::ExecutableTransaction;
-
+use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::{Deserialize, Serialize};
-
+use simulate::{simulate, to_simulated_transaction, SimulationArgs};
 use sqlx::types::Uuid;
-use starknet::core::types::{BlockId, FieldElement};
-use starknet_api::block::BlockNumber;
-use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
-use starknet_api::hash::{StarkFelt, StarkHash};
-use starknet_api::transaction::{
-    Calldata, Fee, InvokeTransaction as SAInvokeTransaction, InvokeTransactionV1,
-    Transaction as StarknetApiTransaction, TransactionHash, TransactionSignature,
-};
-use starknet_api::{contract_address, patricia_key, stark_felt};
+use starknet::core::types::{BlockId, ExecuteInvocation, FieldElement, TransactionTrace};
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
@@ -41,7 +27,7 @@ pub struct StarkNetTransaction {
 #[derive(Serialize)]
 pub struct SimulateResult {}
 
-pub async fn simulate(
+pub async fn simulate_handler(
     Extension(project): Extension<db::Project>,
     State(state): State<Arc<AppState>>,
     Json(payload): Json<StarkNetTransaction>,
@@ -90,56 +76,38 @@ pub async fn simulate(
     let id = row.0;
     info!("Inserted into database with id {}", id);
 
-    let calldata_raw: Vec<StarkFelt> = sim
-        .calldata
-        .unwrap_or_default()
-        .iter()
-        .map(|x| stark_felt!(convert_to_hex(x).as_str()))
-        .collect();
+    let tx_info = simulate(SimulationArgs {
+        chain_id: sim.chain_id.clone(),
+        block_at: (sim.block_at as u64).clone(),
+        nonce: (sim.nonce as u64).clone(),
+        wallet_address: sim.wallet_address.clone(),
+        calldata: sim.calldata.clone().unwrap_or_default(),
+    });
 
-    let tx_raw = InvokeTransactionV1 {
-        sender_address: contract_address!(sim.wallet_address.as_str()),
-        nonce: Nonce(StarkFelt::from(sim.nonce as u64)),
-        calldata: Calldata(calldata_raw.into()),
-        max_fee: Fee::default(),
-        signature: TransactionSignature(vec![]),
-    };
-
-    let tx_hash = TransactionHash(StarkHash::default());
-    let tx = Transaction::from_api(
-        StarknetApiTransaction::Invoke(SAInvokeTransaction::V1(tx_raw)),
-        tx_hash,
-        None,
-        None,
-        None,
-    )
-    .unwrap();
-
-    let chain_id = ChainId(sim.chain_id);
-    let block_context = get_block_context(chain_id.clone(), BlockNumber(sim.block_at as u64));
-
-    // TODO: Don't use File cache
-    let mut cached_fork_state = create_fork_cached_state_at(
-        chain_id,
-        BlockId::Number(sim.block_at as u64),
-        "/tmp/sn-debugger/cache",
-    );
-
-    let mut tx_state = CachedState::<_>::create_transactional(&mut cached_fork_state);
-
-    let tx_info = tx.execute(&mut tx_state, &block_context, true, false);
+    let mut error_message: Option<String> = None;
+    let mut error_contract_address: Option<String> = None;
 
     let sim_status = match tx_info {
-        Ok(tx) => match tx.revert_error {
-            Some(_) => "failure",
-            None => "success",
-        },
-        Err(_) => "failure",
+        Ok(tx_info) => {
+            if tx_info.revert_error.is_some() {
+                (error_message, error_contract_address) = get_error_from_trace(tx_info);
+                "failure"
+            } else {
+                "success"
+            }
+        }
+
+        Err(err) => {
+            error_message = Some(err.to_string());
+            "failure"
+        }
     };
 
     sqlx::query!(
-        "UPDATE simulations SET status = $1 WHERE id = $2",
+        "UPDATE simulations SET status = $1, error_message = $2, error_contract_address = $3 WHERE id = $4",
         sim_status,
+        error_message,
+        error_contract_address,
         id,
     )
     .execute(&state.db_pool)
@@ -153,25 +121,51 @@ fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(&chain_id)).unwrap()))
 }
 
-// async fn query_node(method: &str, params: HashMap<&str, &str>) -> serde_json::Value {
-//     let json_payload = serde_json::json!({
-//         "jsonrpc": "2.0",
-//         "method": method,
-//         "params": params,
-//         "id": 1,
-//     });
+fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
+    let mut text = std::str::from_utf8(&bytes)?.to_string();
+    text.retain(|c| c != '\0');
+    Ok(text)
+}
 
-//     let node_url = "https://ofsg.mainnet-juno.rpc.nethermind.io";
+fn bytes_to_hex(bytes: [u8; 32]) -> String {
+    let mut hex = String::new();
+    for byte in bytes.iter() {
+        hex.push_str(&format!("{:02x}", byte));
+    }
+    hex
+}
 
-//     let client = reqwest::Client::new();
-//     let res = client
-//         .post(node_url)
-//         .json(&json_payload)
-//         .send()
-//         .await
-//         .unwrap();
-
-//     let data: HashMap<String, serde_json::Value> = res.json().await.unwrap();
-
-//     data.get("result").unwrap().clone()
-// }
+fn get_error_from_trace(tx_info: TransactionExecutionInfo) -> (Option<String>, Option<String>) {
+    let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
+    match transaction_trace {
+        TransactionTrace::Invoke(transaction_trace) => {
+            match transaction_trace.execute_invocation {
+                ExecuteInvocation::Success(function_invocation) => {
+                    let result = function_invocation.result;
+                    if let Some(first_result) = result.first() {
+                        // FAILED
+                        if first_result.to_string() == "77246216553796" {
+                            let error_message_result: Result<String, std::str::Utf8Error> = result
+                                .iter()
+                                .skip(1)
+                                .map(|r| bytes_to_text(r.to_bytes_be()))
+                                .collect::<Result<Vec<String>, _>>()
+                                .map(|v| v.join(""));
+                            if let Ok(error_message_result) = error_message_result {
+                                return (
+                                    Some(error_message_result),
+                                    Some(bytes_to_hex(
+                                        function_invocation.contract_address.to_bytes_be(),
+                                    )),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    return (None, None);
+}
