@@ -22,6 +22,7 @@ use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
     auth::{cache_all_users_and_projects, user_auth_middleware},
+    common_errors::get_common_errors,
     simulate::simulate_handler,
     simulate_trace::{simulate_trace, simulate_transaction},
     simulations::get_simulations,
@@ -177,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let user_auth_routes = Router::new()
         .route("/v1/simulations", get(get_simulations))
+        .route("/v1/simulations/common-errors", get(get_common_errors))
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
             user_auth_middleware,

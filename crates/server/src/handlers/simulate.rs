@@ -5,7 +5,9 @@ use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::{Deserialize, Serialize};
 use simulate::{simulate, to_simulated_transaction, SimulationArgs};
 use sqlx::types::Uuid;
-use starknet::core::types::{BlockId, ExecuteInvocation, FieldElement, TransactionTrace};
+use starknet::core::types::{
+    BlockId, ExecuteInvocation, FieldElement, FunctionInvocation, TransactionTrace,
+};
 use starknet_providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
@@ -90,7 +92,19 @@ pub async fn simulate_handler(
     let sim_status = match tx_info {
         Ok(tx_info) => {
             if tx_info.revert_error.is_some() {
-                (error_message, error_contract_address) = get_error_from_trace(tx_info);
+                let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
+                match transaction_trace {
+                    TransactionTrace::Invoke(transaction_trace) => {
+                        match transaction_trace.execute_invocation {
+                            ExecuteInvocation::Success(function_invocation) => {
+                                (error_message, error_contract_address) =
+                                    get_error_from_call(function_invocation);
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
                 "failure"
             } else {
                 "success"
@@ -135,37 +149,34 @@ fn bytes_to_hex(bytes: [u8; 32]) -> String {
     hex
 }
 
-fn get_error_from_trace(tx_info: TransactionExecutionInfo) -> (Option<String>, Option<String>) {
-    let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
-    match transaction_trace {
-        TransactionTrace::Invoke(transaction_trace) => {
-            match transaction_trace.execute_invocation {
-                ExecuteInvocation::Success(function_invocation) => {
-                    let result = function_invocation.result;
-                    if let Some(first_result) = result.first() {
-                        // FAILED
-                        if first_result.to_string() == "77246216553796" {
-                            let error_message_result: Result<String, std::str::Utf8Error> = result
-                                .iter()
-                                .skip(1)
-                                .map(|r| bytes_to_text(r.to_bytes_be()))
-                                .collect::<Result<Vec<String>, _>>()
-                                .map(|v| v.join(""));
-                            if let Ok(error_message_result) = error_message_result {
-                                return (
-                                    Some(error_message_result),
-                                    Some(bytes_to_hex(
-                                        function_invocation.contract_address.to_bytes_be(),
-                                    )),
-                                );
-                            }
-                        }
-                    }
-                }
-                _ => {}
+fn get_error_from_call(
+    function_invocation: FunctionInvocation,
+) -> (Option<String>, Option<String>) {
+    for call in function_invocation.calls.iter() {
+        let (error_message, error_contract_address) = get_error_from_call(call.clone());
+        if error_message.is_some() && error_contract_address.is_some() {
+            return (error_message, error_contract_address);
+        }
+    }
+    let result = function_invocation.result;
+    if let Some(first_result) = result.first() {
+        // FAILED
+        if first_result.to_string() == "77246216553796" {
+            let error_message_result: Result<String, std::str::Utf8Error> = result
+                .iter()
+                .skip(1)
+                .map(|r| bytes_to_text(r.to_bytes_be()))
+                .collect::<Result<Vec<String>, _>>()
+                .map(|v| v.join(""));
+            if let Ok(error_message_result) = error_message_result {
+                return (
+                    Some(error_message_result),
+                    Some(bytes_to_hex(
+                        function_invocation.contract_address.to_bytes_be(),
+                    )),
+                );
             }
         }
-        _ => {}
     }
     return (None, None);
 }

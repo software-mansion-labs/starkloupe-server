@@ -4,11 +4,14 @@ use axum::Extension;
 use axum::{extract::State, http::StatusCode, Json};
 use db::{Project, Simulation, User};
 use serde::{Deserialize, Serialize};
+use sqlx::{Pool, Postgres};
 use std::sync::Arc;
+
+use super::auth::validate_project;
 
 #[derive(Serialize, Deserialize)]
 pub struct SimulationsRequest {
-    error_message: Option<String>,
+    error_hash: Option<String>,
     project_slug: Option<String>,
 }
 
@@ -39,56 +42,15 @@ pub async fn get_simulations(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SimulationsRequest>,
 ) -> Result<Json<Option<SimulationsResponse>>, StatusCode> {
-    let project: Project = if let Some(project_slug) = query.project_slug.clone() {
-        let project = user_projects
-            .iter()
-            .find(|p| p.slug == project_slug)
-            .cloned();
-        match project {
-            Some(project) => project,
-            None => {
-                if user.email.ends_with("@walnut.dev") {
-                    // Admin access
-                    let project_slug = query.project_slug.clone().unwrap_or_default();
-                    // TODO: cache projects separately and use cache here
-                    match sqlx::query!("SELECT * FROM projects WHERE slug = $1", project_slug)
-                        .fetch_one(&state.db_pool)
-                        .await
-                    {
-                        Ok(row) => Project {
-                            id: row.id,
-                            name: row.name,
-                            slug: row.slug,
-                        },
-                        Err(_) => {
-                            // Poject not found
-                            return Err(StatusCode::NOT_FOUND);
-                        }
-                    }
-                } else {
-                    // Project not found and no admin access
-                    return Err(StatusCode::NOT_FOUND);
-                }
-            }
-        }
-    } else {
-        // No project slug in query
-        let project = user_projects.first().cloned();
-        if let Some(project) = project {
-            project
-        } else {
-            // No projects linked to user
-            return Err(StatusCode::NOT_FOUND);
-        }
-    };
+    let project = validate_project(&state.db_pool, user, user_projects, query.project_slug).await?;
 
-    let simulations = match match query.error_message {
-        Some(error_message) => {
+    let simulations = match match query.error_hash {
+        Some(error_hash) => {
             sqlx::query_as!(
                 Simulation,
-                "SELECT simulations.* FROM simulations WHERE project_id = $1 AND error_message = $2 ORDER BY created_at DESC;",
+                "SELECT simulations.* FROM simulations WHERE project_id = $1 AND md5(error_message) = $2 ORDER BY created_at DESC;",
                 project.id,
-                error_message
+                error_hash
             )
             .fetch_all(&state.db_pool)
             .await
@@ -124,7 +86,7 @@ pub async fn get_simulations(
             WHERE project_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
             GROUP BY error_message
             ORDER BY error_count DESC
-            LIMIT 10
+            LIMIT 5
             "#,
         project.id
     )

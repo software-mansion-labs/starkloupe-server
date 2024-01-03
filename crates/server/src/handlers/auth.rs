@@ -161,3 +161,53 @@ pub async fn user_auth_middleware<B>(
 
     Ok(next.run(req).await)
 }
+
+pub async fn validate_project(
+    db_pool: &Pool<Postgres>,
+    user: User,
+    user_projects: Vec<Project>,
+    project_slug: Option<String>,
+) -> Result<Project, StatusCode> {
+    let project: Project = if let Some(project_slug) = project_slug.clone() {
+        let project = user_projects
+            .iter()
+            .find(|p| p.slug == project_slug)
+            .cloned();
+        match project {
+            Some(project) => project,
+            None => {
+                if user.email.ends_with("@walnut.dev") {
+                    // Admin access
+                    // TODO: cache projects separately and use cache here
+                    match sqlx::query!("SELECT * FROM projects WHERE slug = $1", project_slug)
+                        .fetch_one(db_pool)
+                        .await
+                    {
+                        Ok(row) => Project {
+                            id: row.id,
+                            name: row.name,
+                            slug: row.slug,
+                        },
+                        Err(_) => {
+                            // Poject not found
+                            return Err(StatusCode::NOT_FOUND);
+                        }
+                    }
+                } else {
+                    // Project not found and no admin access
+                    return Err(StatusCode::NOT_FOUND);
+                }
+            }
+        }
+    } else {
+        // No project slug in query
+        let project = user_projects.first().cloned();
+        if let Some(project) = project {
+            project
+        } else {
+            // No projects linked to user
+            return Err(StatusCode::NOT_FOUND);
+        }
+    };
+    Ok(project)
+}
