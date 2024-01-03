@@ -1,5 +1,9 @@
 version: 0.2
 
+env:
+  variables:
+    CODEBUILD_BUILD_IMAGE: 'aws/codebuild/standard:5.0'
+
 phases:
   pre_build:
     commands:
