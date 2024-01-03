@@ -1,9 +1,5 @@
 version: 0.2
 
-env:
-  variables:
-    CODEBUILD_BUILD_IMAGE: 'aws/codebuild/standard:5.0'
-
 phases:
   pre_build:
     commands:
@@ -13,7 +9,7 @@ phases:
     commands:
       - echo Entered the post_build phase...
       - echo Build completed on `date`
-      - docker buildx build --platform linux/amd64 -t ${tag}:latest .
+      - docker build -t ${tag}:latest .
       - docker tag $tag:latest $ecr:$tag
       - docker push $ecr
       - printf '[{"name":"container","imageUri":"%s"}]' ${ecr} > imagedefinitions.json
