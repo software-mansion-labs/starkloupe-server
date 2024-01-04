@@ -3,8 +3,8 @@ use axum::extract::Query;
 use axum::Extension;
 use axum::{extract::State, http::StatusCode, Json};
 use db::{Project, Simulation, User};
+use futures::future;
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 
 use super::auth::validate_project;
@@ -44,84 +44,105 @@ pub async fn get_simulations(
 ) -> Result<Json<Option<SimulationsResponse>>, StatusCode> {
     let project = validate_project(&state.db_pool, user, user_projects, query.project_slug).await?;
 
-    let simulations = match match query.error_hash {
-        Some(error_hash) => {
-            sqlx::query_as!(
-                Simulation,
-                "SELECT simulations.* FROM simulations WHERE project_id = $1 AND md5(error_message) = $2 ORDER BY created_at DESC;",
-                project.id,
-                error_hash
-            )
-            .fetch_all(&state.db_pool)
-            .await
+    let simulations_future = async {
+        match query.error_hash {
+            Some(error_hash) => {
+                match sqlx::query_as!(
+                    Simulation,
+                    "SELECT simulations.* FROM simulations WHERE project_id = $1 AND md5(error_message) = $2 ORDER BY created_at DESC;",
+                    project.id,
+                    error_hash
+                )
+                .fetch_all(&state.db_pool)
+                .await {
+                    Ok(simulations) => Ok(simulations),
+                    Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+                }
+            }
+            None => {
+                match sqlx::query_as!(
+                    Simulation,
+                    "SELECT simulations.* FROM simulations WHERE project_id = $1 ORDER BY created_at DESC;",
+                    project.id
+                )
+                .fetch_all(&state.db_pool)
+                .await {
+                    Ok(simulations) => Ok(simulations),
+                    Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+                }
+            }
         }
-        None => {
-            sqlx::query_as!(
-                Simulation,
-                "SELECT simulations.* FROM simulations WHERE project_id = $1 ORDER BY created_at DESC;",
-                project.id
-            )
-            .fetch_all(&state.db_pool)
-            .await
-        }
-    } {
-        Ok(simulations) => simulations,
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
-    let (
-        simulations_with_failure_count,
-        total_simulations_count,
-        unique_wallet_count,
-        common_errors,
-    ) = match sqlx::query!(
-        r#"
-            SELECT
-                SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) as failure_count,
-                COUNT(*) as total_count,
-                COUNT(DISTINCT wallet_address) as unique_wallet_count,
-                error_message,
-                COUNT(*) as error_count
-            FROM simulations
-            WHERE project_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-            GROUP BY error_message
-            ORDER BY error_count DESC
-            LIMIT 5
-            "#,
-        project.id
-    )
-    .fetch_all(&state.db_pool)
-    .await
-    {
-        Ok(rows) => {
-            let common_errors: Vec<CommonError> = rows
-                .iter()
+    let stats_future = async {
+        match sqlx::query!(
+            r#"
+                SELECT
+                    SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) as failure_count,
+                    COUNT(*) as total_count,
+                    COUNT(DISTINCT wallet_address) as unique_wallet_count
+                FROM simulations
+                WHERE project_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+                "#,
+            project.id
+        )
+        .fetch_one(&state.db_pool)
+        .await
+        {
+            Ok(row) => Ok((
+                row.failure_count.unwrap_or(0),
+                row.total_count.unwrap_or(0),
+                row.unique_wallet_count.unwrap_or(0),
+            )),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        }
+    };
+
+    let common_errors_future = async {
+        match sqlx::query!(
+            r#"
+                    SELECT
+                    error_message,
+                    COUNT(*) as error_count
+                FROM simulations
+                WHERE project_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+                GROUP BY error_message
+                ORDER BY error_count DESC
+                LIMIT 5
+                "#,
+            project.id
+        )
+        .fetch_all(&state.db_pool)
+        .await
+        {
+            Ok(rows) => Ok(rows
+                .into_iter()
                 .map(|row| CommonError {
                     error_message: row.error_message.clone().unwrap_or_default(),
                     error_count: row.error_count.unwrap_or(0),
                 })
-                .collect();
-            (
-                rows.iter()
-                    .fold(0, |acc, row| acc + row.failure_count.unwrap_or(0)),
-                rows.iter()
-                    .fold(0, |acc, row| acc + row.total_count.unwrap_or(0)),
-                rows.iter()
-                    .fold(0, |acc, row| acc + row.unique_wallet_count.unwrap_or(0)),
-                common_errors,
-            )
+                .collect()),
+            Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
         }
-        Err(_) => (0, 0, 0, vec![]),
     };
 
-    Ok(Json(Some(SimulationsResponse {
-        simulations,
-        stats: StatsResponse {
-            failure_simulations: simulations_with_failure_count,
-            total_simulations: total_simulations_count,
-            unique_wallet_count,
+    let result = future::try_join3(simulations_future, stats_future, common_errors_future).await;
+
+    match result {
+        Ok((
+            simulations,
+            (simulations_with_failure_count, total_simulations_count, unique_wallet_count),
             common_errors,
-        },
-        project,
-    })))
+        )) => Ok(Json(Some(SimulationsResponse {
+            simulations,
+            stats: StatsResponse {
+                failure_simulations: simulations_with_failure_count,
+                total_simulations: total_simulations_count,
+                unique_wallet_count,
+                common_errors,
+            },
+            project,
+        }))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }

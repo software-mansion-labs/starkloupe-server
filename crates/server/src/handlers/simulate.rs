@@ -3,7 +3,7 @@ use crate::config::rpc_url;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::{Deserialize, Serialize};
-use simulate::{simulate, to_simulated_transaction, SimulationArgs};
+use simulate::{get_error_from_call, simulate, to_simulated_transaction, SimulationArgs};
 use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, ExecuteInvocation, FieldElement, FunctionInvocation, TransactionTrace,
@@ -133,50 +133,4 @@ pub async fn simulate_handler(
 
 fn create_rpc_client(chain_id: String) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(&chain_id)).unwrap()))
-}
-
-fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
-    let mut text = std::str::from_utf8(&bytes)?.to_string();
-    text.retain(|c| c != '\0');
-    Ok(text)
-}
-
-fn bytes_to_hex(bytes: [u8; 32]) -> String {
-    let mut hex = String::new();
-    for byte in bytes.iter() {
-        hex.push_str(&format!("{:02x}", byte));
-    }
-    hex
-}
-
-fn get_error_from_call(
-    function_invocation: FunctionInvocation,
-) -> (Option<String>, Option<String>) {
-    for call in function_invocation.calls.iter() {
-        let (error_message, error_contract_address) = get_error_from_call(call.clone());
-        if error_message.is_some() && error_contract_address.is_some() {
-            return (error_message, error_contract_address);
-        }
-    }
-    let result = function_invocation.result;
-    if let Some(first_result) = result.first() {
-        // FAILED
-        if first_result.to_string() == "77246216553796" {
-            let error_message_result: Result<String, std::str::Utf8Error> = result
-                .iter()
-                .skip(1)
-                .map(|r| bytes_to_text(r.to_bytes_be()))
-                .collect::<Result<Vec<String>, _>>()
-                .map(|v| v.join(""));
-            if let Ok(error_message_result) = error_message_result {
-                return (
-                    Some(error_message_result),
-                    Some(bytes_to_hex(
-                        function_invocation.contract_address.to_bytes_be(),
-                    )),
-                );
-            }
-        }
-    }
-    return (None, None);
 }

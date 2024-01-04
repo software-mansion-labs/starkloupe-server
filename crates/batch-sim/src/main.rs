@@ -3,7 +3,8 @@ use dotenv::dotenv;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use simulate::{simulate, SimulationArgs};
+use simulate::{get_error_from_call, simulate, to_simulated_transaction, SimulationArgs};
+use starknet::core::types::{ExecuteInvocation, TransactionTrace};
 
 #[tokio::main]
 async fn main() {
@@ -21,12 +22,9 @@ async fn main() {
         .await
         .unwrap();
 
-    // let q = "SELECT * FROM simulations WHERE project_id = 1 AND wallet_address = '0x75160f33545357e0906b1cb5cacc9e4fcec206a258e4cd15802a5658b209db2';";
-    // let q = "SELECT id, team_id, chain_id, block_at, transaction_version, nonce, max_fee, cairo_version, wallet_address, calldata FROM simulations WHERE team_id=1 LIMIT 20";
-
     let simulations = sqlx::query_as!(
         Simulation,
-        "SELECT * FROM simulations WHERE project_id = 2;"
+        "SELECT * FROM simulations WHERE project_id = 2 AND status = 'failure' AND created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC;"
     )
     .fetch_all(&pool)
     .await
@@ -41,12 +39,35 @@ async fn main() {
             calldata: sim.calldata.clone().unwrap_or_default(),
         });
 
+        let mut error_message: Option<String> = None;
+        let mut error_contract_address: Option<String> = None;
+
         let sim_status = match tx_info {
-            Ok(tx) => match tx.revert_error {
-                Some(_) => "failure",
-                None => "success",
-            },
-            Err(_) => "failure",
+            Ok(tx_info) => {
+                if tx_info.revert_error.is_some() {
+                    let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
+                    match transaction_trace {
+                        TransactionTrace::Invoke(transaction_trace) => {
+                            match transaction_trace.execute_invocation {
+                                ExecuteInvocation::Success(function_invocation) => {
+                                    (error_message, error_contract_address) =
+                                        get_error_from_call(function_invocation);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    "failure"
+                } else {
+                    "success"
+                }
+            }
+
+            Err(err) => {
+                error_message = Some(err.to_string());
+                "failure"
+            }
         };
 
         if sim_status != sim.status {
