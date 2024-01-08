@@ -15,6 +15,7 @@ pub struct SimulationsRequest {
 
 #[derive(Serialize)]
 pub struct CommonError {
+    error_contract_address: String,
     error_message: String,
     error_count: i64,
 }
@@ -36,11 +37,12 @@ pub async fn get_common_errors(
     let common_errors = match sqlx::query!(
         r#"
             SELECT
+                error_contract_address,
                 error_message,
                 COUNT(*) as error_count
             FROM simulations
-            WHERE project_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-            GROUP BY error_message
+            WHERE project_id = $1 AND status = 'failure' AND created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY error_contract_address, error_message
             ORDER BY error_count DESC
             "#,
         project.id
@@ -51,6 +53,7 @@ pub async fn get_common_errors(
         Ok(rows) => rows
             .iter()
             .map(|row| CommonError {
+                error_contract_address: row.error_contract_address.clone().unwrap_or_default(),
                 error_message: row.error_message.clone().unwrap_or_default(),
                 error_count: row.error_count.unwrap_or(0),
             })
