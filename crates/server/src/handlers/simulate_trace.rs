@@ -5,12 +5,13 @@ use axum::{
     Json,
 };
 use blockifier::transaction::objects::TransactionExecutionInfo;
+use cheatnet::state::TraceData;
 use db::Simulation;
 use serde::Serialize;
-use simulate::{simulate, to_simulated_transaction, SimulationArgs};
+use simulate::{simulate, SimulationArgs, SimulationInfo};
 use sqlx::types::Uuid;
 use starknet::core::types::{
-    CallType, EventContent, ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation,
+    CallType, ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation,
     InvokeTransactionTrace, SimulatedTransaction, TransactionTrace,
 };
 use starknet_api::hash::StarkFelt;
@@ -36,7 +37,7 @@ pub async fn simulate_trace(
     .await
     .unwrap();
 
-    let tx_info = simulate(SimulationArgs {
+    let simulation_info = simulate(SimulationArgs {
         chain_id: sim.chain_id.clone(),
         block_at: (sim.block_at as u64).clone(),
         nonce: (sim.nonce as u64).clone(),
@@ -44,28 +45,19 @@ pub async fn simulate_trace(
         calldata: sim.calldata.clone().unwrap_or_default(),
     });
 
-    match tx_info {
-        Ok(tx_info) => Ok(Json(SimulateTraceResponse {
-            simulated_transaction: to_simulated_transaction(tx_info),
-            simulation: Some(sim),
-        })),
-        Err(_) => Err(StatusCode::EXPECTATION_FAILED),
-    }
+    Err(StatusCode::EXPECTATION_FAILED)
+    // match tx_info {
+    //     Ok(tx_info) => Ok(Json(SimulateTraceResponse {
+    //         simulated_transaction: to_simulated_transaction(tx_info),
+    //         simulation: Some(sim),
+    //     })),
+    //     Err(_) => Err(StatusCode::EXPECTATION_FAILED),
+    // }
 }
 
 pub async fn simulate_transaction(
     Json(payload): Json<SimulationArgs>,
-) -> Result<Json<SimulateTraceResponse>, StatusCode> {
-    let tx_info = simulate(payload);
-
-    match tx_info {
-        Ok(tx_info) => Ok(Json(SimulateTraceResponse {
-            simulated_transaction: to_simulated_transaction(tx_info),
-            simulation: None,
-        })),
-        Err(e) => {
-            dbg!(e);
-            Err(StatusCode::EXPECTATION_FAILED)
-        }
-    }
+) -> Result<Json<SimulationInfo>, StatusCode> {
+    let simulation_info = simulate(payload);
+    Ok(Json(simulation_info))
 }

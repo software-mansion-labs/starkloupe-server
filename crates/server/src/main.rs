@@ -33,6 +33,8 @@ use tokio::time::Duration;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+// use crate::handlers::verification::verify_handler;
+
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
 // https://crates.io/crates/redis-macros
@@ -186,12 +188,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(CorsLayer::permissive());
 
     let app = Router::new()
-        .route("/v1/simulate", post(simulate_handler))
-        .route_layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            auth_middleware,
-        ))
+        // .route("/v1/simulate", post(simulate_handler))
+        // .route_layer(middleware::from_fn_with_state(
+        //     shared_state.clone(),
+        //     auth_middleware,
+        // ))
         .merge(user_auth_routes)
+        // .route("/v1/verify/:chain_id/:class_hash", post(verify_handler))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-transaction", post(simulate_transaction))
         .route("/v1/simulate-trace/:id", get(simulate_trace))

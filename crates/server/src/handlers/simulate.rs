@@ -3,7 +3,7 @@ use crate::config::rpc_url;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::{Deserialize, Serialize};
-use simulate::{get_error_from_call, simulate, to_simulated_transaction, SimulationArgs};
+use simulate::{simulate, SimulationArgs};
 use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, ExecuteInvocation, FieldElement, FunctionInvocation, TransactionTrace,
@@ -89,33 +89,34 @@ pub async fn simulate_handler(
     let mut error_message: Option<String> = None;
     let mut error_contract_address: Option<String> = None;
 
-    let sim_status = match tx_info {
-        Ok(tx_info) => {
-            if tx_info.revert_error.is_some() {
-                let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
-                match transaction_trace {
-                    TransactionTrace::Invoke(transaction_trace) => {
-                        match transaction_trace.execute_invocation {
-                            ExecuteInvocation::Success(function_invocation) => {
-                                (error_message, error_contract_address) =
-                                    get_error_from_call(function_invocation);
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
-                "failure"
-            } else {
-                "success"
-            }
-        }
+    let sim_status = "success";
+    // let sim_status = match tx_info {
+    //     Ok(tx_info) => {
+    //         if tx_info.revert_error.is_some() {
+    //             let transaction_trace = to_simulated_transaction(tx_info).transaction_trace;
+    //             match transaction_trace {
+    //                 TransactionTrace::Invoke(transaction_trace) => {
+    //                     match transaction_trace.execute_invocation {
+    //                         ExecuteInvocation::Success(function_invocation) => {
+    //                             (error_message, error_contract_address) =
+    //                                 get_error_from_call(function_invocation);
+    //                         }
+    //                         _ => {}
+    //                     }
+    //                 }
+    //                 _ => {}
+    //             }
+    //             "failure"
+    //         } else {
+    //             "success"
+    //         }
+    //     }
 
-        Err(err) => {
-            error_message = Some(err.to_string());
-            "failure"
-        }
-    };
+    //     Err(err) => {
+    //         error_message = Some(err.to_string());
+    //         "failure"
+    //     }
+    // };
 
     sqlx::query!(
         "UPDATE simulations SET status = $1, error_message = $2, error_contract_address = $3 WHERE id = $4",

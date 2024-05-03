@@ -21,10 +21,8 @@ url.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 starknet.workspace = true
-starknet-abi.workspace = true
 starknet_api.workspace = true
 blockifier.workspace = true
-forking = { path = "../forking" }
 simulate = { path = "../simulate" }
 db = { path = "../db" }
 axum-prometheus = "0.4.0"
@@ -32,4 +30,10 @@ cookie.workspace = true
 jsonwebtoken.workspace = true
 urlencoding.workspace = true
 deadpool-redis.workspace = true
+cheatnet.workspace = true
 futures.workspace = true
+cairo-vm.workspace = true
+# sncast.workspace = true
+scarb-api.workspace = true
+cairo-lang-starknet-classes.workspace = true
+anyhow.workspace = true

@@ -10,5 +10,10 @@ starknet.workspace = true
 starknet_api.workspace = true
 num-traits.workspace = true
 num-bigint.workspace = true
-forking = { path = "../forking" }
 sqlx.workspace = true
+cheatnet.workspace = true
+runtime.workspace = true
+url.workspace = true
+tokio.workspace = true
+cairo-vm.workspace = true
+walnut-foundry-utils.workspace = true
