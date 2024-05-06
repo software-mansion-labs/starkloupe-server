@@ -4,6 +4,7 @@ members = [
     "crates/team-onboarding",
     "crates/batch-sim",
     "crates/internal-tracing",
+    "crates/walnut-shared",
 ]
 resolver = "2"
 
@@ -67,6 +68,7 @@ runtime = { path = "../walnut-starknet-foundry/crates/runtime" }
 scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
 itertools = "0.12.1"
 internal-tracing = { path = "./crates/internal-tracing" }
+walnut-shared = { path = "./crates/walnut-shared" }
 # cairo-lang-casm = "2.6.3"
 cairo-lang-casm = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df", features = [
     "serde",

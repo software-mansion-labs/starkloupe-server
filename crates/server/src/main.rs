@@ -33,6 +33,8 @@ use tokio::time::Duration;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::handlers::simulate_trace::simulate_transaction_by_hash_handler;
+
 // use crate::handlers::verification::verify_handler;
 
 // Resources
@@ -197,6 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // .route("/v1/verify/:chain_id/:class_hash", post(verify_handler))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-transaction", post(simulate_transaction))
+        .route(
+            "/v1/:chain_id/simulate-transaction/:tx_hash",
+            get(simulate_transaction_by_hash_handler),
+        )
         .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)

@@ -3,7 +3,7 @@ use crate::config::rpc_url;
 use axum::{extract::State, http::StatusCode, Extension, Json};
 use blockifier::transaction::objects::TransactionExecutionInfo;
 use serde::{Deserialize, Serialize};
-use simulate::{simulate, SimulationArgs};
+use simulate::{simulate, SimulationArgs, SimulationRawArgs};
 use sqlx::types::Uuid;
 use starknet::core::types::{
     BlockId, ExecuteInvocation, FieldElement, FunctionInvocation, TransactionTrace,
@@ -78,13 +78,14 @@ pub async fn simulate_handler(
     let id = row.0;
     info!("Inserted into database with id {}", id);
 
-    let tx_info = simulate(SimulationArgs {
+    let args = SimulationRawArgs {
         chain_id: sim.chain_id.clone(),
-        block_at: (sim.block_at as u64).clone(),
+        block_number: (sim.block_at as u64).clone(),
         nonce: (sim.nonce as u64).clone(),
-        wallet_address: sim.wallet_address.clone(),
+        sender_address: sim.wallet_address.clone(),
         calldata: sim.calldata.clone().unwrap_or_default(),
-    });
+    };
+    let tx_info = simulate(args.into());
 
     let mut error_message: Option<String> = None;
     let mut error_contract_address: Option<String> = None;

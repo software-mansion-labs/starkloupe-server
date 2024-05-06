@@ -37,3 +37,4 @@ cairo-vm.workspace = true
 scarb-api.workspace = true
 cairo-lang-starknet-classes.workspace = true
 anyhow.workspace = true
+walnut-shared.workspace = true

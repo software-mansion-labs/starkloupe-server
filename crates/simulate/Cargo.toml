@@ -17,3 +17,4 @@ url.workspace = true
 tokio.workspace = true
 cairo-vm.workspace = true
 internal-tracing.workspace = true
+walnut-shared.workspace = true

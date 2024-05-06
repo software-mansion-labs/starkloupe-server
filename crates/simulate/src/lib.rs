@@ -24,6 +24,13 @@ use cheatnet::state::CheatnetState;
 use internal_tracing::InternalFnCallTraceEntryNode;
 use serde::Deserialize;
 use serde::Serialize;
+use starknet::core::types::MaybePendingTransactionReceipt;
+use starknet::core::types::TransactionReceipt;
+use starknet::core::types::{
+    ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation, InvokeTransaction,
+    InvokeTransactionTrace, SimulatedTransaction, Transaction, TransactionTrace,
+};
+use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
 use starknet_api::data_availability::DataAvailabilityMode;
@@ -37,15 +44,43 @@ use starknet_api::transaction::{Calldata, TransactionHash, TransactionSignature}
 use starknet_api::{contract_address, patricia_key, stark_felt};
 use std::cell::Ref;
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::sync::Arc;
+use walnut_shared::create_rpc_client;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SimulationArgs {
+pub struct SimulationRawArgs {
     pub chain_id: String,
-    pub block_at: u64,
+    pub block_number: u64,
     pub nonce: u64,
-    pub wallet_address: String,
+    pub sender_address: String,
     pub calldata: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct SimulationArgs {
+    pub chain_id: ChainId,
+    pub block_number: BlockNumber,
+    pub nonce: Nonce,
+    pub sender_address: ContractAddress,
+    pub calldata: Calldata,
+}
+
+impl From<SimulationRawArgs> for SimulationArgs {
+    fn from(raw_args: SimulationRawArgs) -> Self {
+        let calldata: Vec<StarkFelt> = raw_args
+            .calldata
+            .iter()
+            .map(|x| stark_felt!(convert_to_hex(x).as_str()))
+            .collect();
+        Self {
+            chain_id: ChainId(raw_args.chain_id.clone()),
+            block_number: BlockNumber(raw_args.block_number),
+            nonce: Nonce(StarkFelt::from(raw_args.nonce)),
+            sender_address: contract_address!(raw_args.sender_address.as_str()),
+            calldata: Calldata(calldata.into()),
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -53,31 +88,19 @@ pub struct SimulationInfo {
     pub call_trace: SimulationCallTrace,
 }
 
-pub fn simulate(sim: SimulationArgs) -> SimulationInfo {
-    let calldata_raw: Vec<StarkFelt> = sim
-        .calldata
-        .iter()
-        .map(|x| stark_felt!(convert_to_hex(x).as_str()))
-        .collect();
-
-    let chain_id = ChainId(sim.chain_id.clone());
-
-    let mut cached_fork_state = create_fork_cached_state_at(
-        chain_id,
-        BlockNumber(sim.block_at),
-        "/tmp/sn-debugger/cache",
-    );
+pub fn simulate(args: SimulationArgs) -> SimulationInfo {
+    let mut cached_fork_state =
+        create_fork_cached_state_at(args.chain_id, args.block_number, "/tmp/sn-debugger/cache");
 
     let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
-    let storage_address = contract_address!(sim.wallet_address.as_str());
 
     let mut execute_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
         entry_point_selector,
-        calldata: Calldata(calldata_raw.into()),
+        calldata: args.calldata,
         class_hash: None,
         code_address: None,
-        storage_address,
+        storage_address: args.sender_address,
         caller_address: ContractAddress::default(),
         call_type: CallType::Call,
         initial_gas: u64::MAX,
@@ -96,7 +119,7 @@ pub fn simulate(sim: SimulationArgs) -> SimulationInfo {
                 transaction_hash: TransactionHash::default(),
                 version: TransactionVersion::ONE,
                 signature: TransactionSignature::default(),
-                nonce: Nonce(StarkFelt::from(sim.block_at)),
+                nonce: args.nonce,
                 sender_address: ContractAddress::default(),
                 only_query: false,
             },
@@ -182,5 +205,67 @@ fn get_simulation_call_trace(call_trace_ref: Ref<CallTrace>) -> SimulationCallTr
         nested_calls,
         result: call_trace_ref.result.clone(),
         internal_fn_call_trace: call_trace_ref.internal_fn_call_trace.clone(),
+    }
+}
+
+pub async fn simulate_transaction_by_hash(
+    chain_id: ChainId,
+    tx_hash: String,
+) -> Option<SimulationInfo> {
+    let provider_client = create_rpc_client(&chain_id);
+    let transaction_hash = FieldElement::from_str(&tx_hash.as_str()).unwrap();
+    let transaction = provider_client
+        .get_transaction_by_hash(transaction_hash)
+        .await;
+    if let Ok(transaction) = transaction {
+        if let Some((nonce, sender_address, calldata)) = extract_submitted_tx(transaction) {
+            let transaction_receipt = provider_client
+                .get_transaction_receipt(transaction_hash)
+                .await;
+            if let Ok(transaction_receipt) = transaction_receipt {
+                if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
+                    return Some(simulate(SimulationArgs {
+                        chain_id,
+                        block_number,
+                        nonce,
+                        sender_address,
+                        calldata,
+                    }));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_transaction_receipt(
+    transaction_receipt: MaybePendingTransactionReceipt,
+) -> Option<BlockNumber> {
+    match transaction_receipt {
+        MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
+            TransactionReceipt::Invoke(invoke_receipt) => {
+                Some(BlockNumber(invoke_receipt.block_number))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddress, Calldata)> {
+    match transaction {
+        Transaction::Invoke(invoke_transaction) => match invoke_transaction {
+            InvokeTransaction::V1(tx) => {
+                let calldata: Vec<StarkFelt> =
+                    tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce(StarkFelt::from(tx.nonce)),
+                    contract_address!(tx.sender_address),
+                    Calldata(calldata.into()),
+                ))
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
