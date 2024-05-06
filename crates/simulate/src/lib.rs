@@ -90,7 +90,7 @@ pub struct SimulationInfo {
 
 pub fn simulate(args: SimulationArgs) -> SimulationInfo {
     let mut cached_fork_state =
-        create_fork_cached_state_at(args.chain_id, args.block_number, "/tmp/sn-debugger/cache");
+        create_fork_cached_state_at(args.chain_id, args.block_number, "tmp/sn-debugger/cache");
 
     let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
