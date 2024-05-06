@@ -166,7 +166,9 @@ pub fn simulate(args: SimulationArgs) -> SimulationInfo {
         &mut context,
     );
 
-    dbg!(&cheatnet_state.trace_data);
+    dbg!(res.is_ok());
+
+    // dbg!(&cheatnet_state.trace_data);
 
     get_simulation_info(cheatnet_state)
 }

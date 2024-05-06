@@ -31,6 +31,7 @@ pub fn get_internal_fn_call_trace(
     relocated_memory: &Vec<Option<Felt252>>,
     vm_trace: &Vec<TraceEntry>,
 ) -> Option<InternalFnCallTraceEntryNode> {
+    println!("get_internal_fn_call_trace: {:?}", class_hash.to_string());
     let folder_with_precompiled_contracts = "precompiled-contracts";
     let file_name_with_sierra_contract = format!("{}.json", class_hash.to_string());
     let file_path_with_sierra_contract =
