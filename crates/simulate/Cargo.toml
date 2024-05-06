@@ -16,4 +16,4 @@ runtime.workspace = true
 url.workspace = true
 tokio.workspace = true
 cairo-vm.workspace = true
-walnut-foundry-utils.workspace = true
+internal-tracing.workspace = true

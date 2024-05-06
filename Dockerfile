@@ -1,8 +1,9 @@
 ARG RUST_VERSION=1.74.1
 
 FROM rust:${RUST_VERSION} AS builder
-WORKDIR /app
+WORKDIR /app/walnut-server
 COPY . .
+RUN make deps
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
 RUN cargo build --locked --release --bin server
 
@@ -15,7 +16,7 @@ RUN adduser \
   --no-create-home \
   --uid "10001" \
   appuser
-COPY --from=builder /app/target/release/server /usr/local/bin
+COPY --from=builder /app/walnut-server/target/release/server /usr/local/bin
 RUN chown appuser /usr/local/bin/server
 USER appuser
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"

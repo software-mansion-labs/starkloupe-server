@@ -1,7 +1,8 @@
 use blockifier::{
     blockifier::block::BlockInfo,
     context::{BlockContext, ChainInfo},
-    state::cached_state::{CachedState, GlobalContractCache, GLOBAL_CONTRACT_CACHE_SIZE_FOR_TEST},
+    // state::cached_state::{CachedState, GlobalContractCache, GLOBAL_CONTRACT_CACHE_SIZE_FOR_TEST},
+    state::cached_state::CachedState,
     versioned_constants::VersionedConstants,
 };
 use cheatnet::{forking::state::ForkStateReader, state::ExtendedStateReader};
@@ -35,7 +36,7 @@ pub fn create_fork_cached_state_at(
             )
             .ok(),
         },
-        GlobalContractCache::new(GLOBAL_CONTRACT_CACHE_SIZE_FOR_TEST),
+        // GlobalContractCache::new(GLOBAL_CONTRACT_CACHE_SIZE_FOR_TEST),
     )
 }
 

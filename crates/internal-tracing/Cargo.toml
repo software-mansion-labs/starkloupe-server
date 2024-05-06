@@ -1,0 +1,19 @@
+[package]
+name = "internal-tracing"
+version = "1.0.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+starknet_api.workspace = true
+cairo-felt.workspace = true
+cairo-lang-starknet-classes.workspace = true
+cairo-vm.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+num-bigint.workspace = true
+cairo-lang-sierra.workspace = true
+cairo-lang-sierra-to-casm.workspace = true
+itertools = "0.12.1"
+byteorder = "1.5.0"
+indextree = "4.6.1"

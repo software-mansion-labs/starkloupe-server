@@ -21,6 +21,7 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::Cal
 use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CheatnetState;
+use internal_tracing::InternalFnCallTraceEntryNode;
 use serde::Deserialize;
 use serde::Serialize;
 use starknet_api::block::BlockNumber;
@@ -37,7 +38,6 @@ use starknet_api::{contract_address, patricia_key, stark_felt};
 use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use walnut_foundry_utils::InternalFnCallTraceEntryNode;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationArgs {

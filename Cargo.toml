@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/server", "crates/team-onboarding", "crates/batch-sim"]
+members = [
+    "crates/server",
+    "crates/team-onboarding",
+    "crates/batch-sim",
+    "crates/internal-tracing",
+]
 resolver = "2"
 
 [workspace.package]
@@ -20,8 +25,6 @@ sqlx = { version = "0.7.2", features = [
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors", "trace"] }
 tokio = { version = "1.33.0", features = ["full"] }
-# blockifier = { git = "https://github.com/walnuthq/blockifier" }
-blockifier = { path = "../walnut-blockifier/crates/blockifier" }
 conversions = { path = "./crates/conversions" }
 starknet = "0.10.0"
 serde = { version = "1.0.163", features = ["derive"] }
@@ -29,25 +32,6 @@ serde_json = "1.0.104"
 url = "2.5.0"
 starknet_api = "=0.12.0-dev.1"
 num-bigint = { version = "0.4.4", features = ["rand"] }
-
-# DEFAULT CAIRO 
-# cairo-lang-casm = "2.6.3"
-cairo-lang-runner = "2.6.3"
-# cairo-lang-utils = "2.6.3"
-cairo-lang-starknet = "2.6.3"
-# cairo-lang-sierra = "2.6.3"
-# cairo-lang-starknet-classes = "2.6.3"
-# cairo-lang-sierra-to-casm = "2.6.3"
-
-
-# WALNUT CAIRO
-cairo-lang-casm = { path = "../walnut-cairo/crates/cairo-lang-casm" }
-cairo-lang-starknet-classes = { path = "../walnut-cairo/crates/cairo-lang-starknet-classes" }
-cairo-lang-sierra-to-casm = { path = "../walnut-cairo/crates/cairo-lang-sierra-to-casm" }
-cairo-lang-sierra = { path = "../walnut-cairo/crates/cairo-lang-sierra" }
-cairo-lang-utils = { path = "../walnut-cairo/crates/cairo-lang-utils" }
-
-
 camino = { version = "1.1.4", features = ["serde1"] }
 fs2 = "0.4.3"
 flate2 = "1.0.27"
@@ -78,10 +62,24 @@ deadpool-redis = "0.13.0"
 uuid = "1.6.1"
 time = "0.3.31"
 futures = { version = "0.3.30", features = ["async-await"] }
-# cheatnet = { git = "https://github.com/foundry-rs/starknet-foundry.git", branch = "master", package = "cheatnet" }
 cheatnet = { path = "../walnut-starknet-foundry/crates/cheatnet" }
 runtime = { path = "../walnut-starknet-foundry/crates/runtime" }
-walnut-foundry-utils = { path = "../walnut-starknet-foundry/crates/walnut-foundry-utils" }
-# sncast = { path = "../walnut-starknet-foundry/crates/sncast" }
 scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
 itertools = "0.12.1"
+internal-tracing = { path = "./crates/internal-tracing" }
+# cairo-lang-casm = "2.6.3"
+cairo-lang-casm = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df", features = [
+    "serde",
+] }
+cairo-lang-runner = "2.6.3"
+# cairo-lang-utils = "2.6.3"
+cairo-lang-utils = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df" }
+cairo-lang-starknet = "2.6.3"
+# cairo-lang-sierra = "2.6.3"
+cairo-lang-sierra = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df" }
+# cairo-lang-starknet-classes = "2.6.3"
+cairo-lang-starknet-classes = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df" }
+# cairo-lang-sierra-to-casm = "2.6.3"
+cairo-lang-sierra-to-casm = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df" }
+# blockifier = { path = "../walnut-blockifier/crates/blockifier" }
+blockifier = { git = "https://github.com/walnuthq/blockifier", rev = "d9cb972dc7c7a984e5945a1289ba8d251985fef2" }
