@@ -16,11 +16,14 @@ RUN adduser \
   --no-create-home \
   --uid "10001" \
   appuser
-COPY --from=builder /app/walnut-server/target/release/server /usr/local/bin
-RUN chown appuser /usr/local/bin/server
+COPY --from=builder /app/walnut-server/target/release/server /opt/app/server
+COPY --from=builder /app/walnut-server/universal-sierra-compiler /opt/app/universal-sierra-compiler
+COPY --from=builder /app/walnut-server/precompiled-contracts /opt/app/precompiled-contracts
+RUN chown -R appuser /opt/app
 USER appuser
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
 ENV REDIS_ADDR="redis://widoserver-east-1.h4j9ed.0001.use1.cache.amazonaws.com:6379"
-WORKDIR /opt/server
+ENV UNIVERSAL_SIERRA_COMPILER="./universal-sierra-compiler"
+WORKDIR /opt/app
 EXPOSE 3000
-ENTRYPOINT ["server"]
+ENTRYPOINT ["/opt/app/server"]
