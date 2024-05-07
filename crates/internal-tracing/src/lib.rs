@@ -84,7 +84,7 @@ pub struct InternalFnCallTraceEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct InternalFnCallTraceEntryNode {
     pub data: InternalFnCallTraceEntry,
-    pub children: Vec<InternalFnCallTraceEntryNode>,
+    pub nested_calls: Vec<InternalFnCallTraceEntryNode>,
 }
 
 #[derive(Debug)]
@@ -120,13 +120,13 @@ impl InternalFnCallTraceTree {
     }
 
     fn get_serializable(&self, node_id: NodeId) -> InternalFnCallTraceEntryNode {
-        let mut children = Vec::new();
+        let mut nested_calls = Vec::new();
         for child_node_id in node_id.children(&self.arena) {
-            children.push(self.get_serializable(child_node_id));
+            nested_calls.push(self.get_serializable(child_node_id));
         }
         InternalFnCallTraceEntryNode {
             data: self.arena[node_id].get().clone(),
-            children,
+            nested_calls,
         }
     }
 

@@ -10,6 +10,7 @@ use db::Simulation;
 use serde::Serialize;
 use simulate::{
     simulate, simulate_transaction_by_hash, SimulationArgs, SimulationInfo, SimulationRawArgs,
+    TransactionSimulationResult,
 };
 use sqlx::types::Uuid;
 use starknet::core::types::{
@@ -77,7 +78,7 @@ pub async fn simulate_transaction(
 
 pub async fn simulate_transaction_by_hash_handler(
     Path((chain_id, tx_hash)): Path<(String, String)>,
-) -> Result<Json<SimulationInfo>, StatusCode> {
+) -> Result<Json<TransactionSimulationResult>, StatusCode> {
     let chain_id = extract_chain_id(chain_id.as_str());
     let simulation_info = simulate_transaction_by_hash(chain_id, tx_hash).await;
     Ok(Json(simulation_info.unwrap()))

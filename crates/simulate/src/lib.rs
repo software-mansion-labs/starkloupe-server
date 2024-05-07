@@ -26,10 +26,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
-use starknet::core::types::{
-    ExecuteInvocation, FeeEstimate, FieldElement, FunctionInvocation, InvokeTransaction,
-    InvokeTransactionTrace, SimulatedTransaction, Transaction, TransactionTrace,
-};
+use starknet::core::types::{FieldElement, InvokeTransaction, Transaction};
 use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
@@ -210,10 +207,20 @@ fn get_simulation_call_trace(call_trace_ref: Ref<CallTrace>) -> SimulationCallTr
     }
 }
 
+#[derive(Serialize, Debug)]
+pub struct TransactionSimulationResult {
+    pub simulation_result: SimulationInfo,
+    pub chain_id: String,
+    pub block_number: u64,
+    pub nonce: u64,
+    pub sender_address: String,
+    pub calldata: Vec<String>,
+}
+
 pub async fn simulate_transaction_by_hash(
     chain_id: ChainId,
     tx_hash: String,
-) -> Option<SimulationInfo> {
+) -> Option<TransactionSimulationResult> {
     let provider_client = create_rpc_client(&chain_id);
     let transaction_hash = FieldElement::from_str(&tx_hash.as_str()).unwrap();
     let transaction = provider_client
@@ -226,13 +233,26 @@ pub async fn simulate_transaction_by_hash(
                 .await;
             if let Ok(transaction_receipt) = transaction_receipt {
                 if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
-                    return Some(simulate(SimulationArgs {
-                        chain_id,
+                    let simulation_result = simulate(SimulationArgs {
+                        chain_id: chain_id.clone(),
                         block_number,
                         nonce,
                         sender_address,
+                        calldata: calldata.clone(),
+                    });
+                    let calldata = calldata
+                        .0
+                        .iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<String>>();
+                    return Some(TransactionSimulationResult {
+                        simulation_result,
+                        chain_id: chain_id.0,
+                        block_number: block_number.0,
+                        nonce: nonce.0.try_into().unwrap(),
+                        sender_address: sender_address.0.to_string(),
                         calldata,
-                    }));
+                    });
                 }
             }
         }
