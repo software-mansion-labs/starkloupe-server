@@ -16,6 +16,7 @@ use blockifier::transaction::objects::CurrentTransactionInfo;
 use blockifier::transaction::objects::TransactionInfo;
 use blockifier::versioned_constants::VersionedConstants;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::BlockInfoReader;
@@ -24,11 +25,15 @@ use cheatnet::state::CheatnetState;
 use internal_tracing::InternalFnCallTraceEntryNode;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
+use starknet::core::types::ContractClass;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
 use starknet::core::types::{FieldElement, InvokeTransaction, Transaction};
 use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
+use starknet_api::core::ClassHash;
+use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::deprecated_contract_class::EntryPointType;
@@ -163,11 +168,15 @@ pub fn simulate(args: SimulationArgs) -> SimulationInfo {
         &mut context,
     );
 
-    dbg!(res.is_ok());
+    get_simulation_info(
+        &cached_fork_state.state.fork_state_reader.unwrap(),
+        cheatnet_state,
+    )
+}
 
-    // dbg!(&cheatnet_state.trace_data);
-
-    get_simulation_info(cheatnet_state)
+#[derive(Serialize, Debug)]
+pub struct SimulationCallTraceAdditionalInfo {
+    entry_point_selector_name: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -179,11 +188,16 @@ pub struct SimulationCallTrace {
     pub nested_calls: Vec<SimulationCallTrace>,
     pub result: CallResult,
     pub internal_fn_call_trace: Option<InternalFnCallTraceEntryNode>,
+    pub additional_info: SimulationCallTraceAdditionalInfo,
 }
 
-fn get_simulation_info(cheatnet_state: CheatnetState) -> SimulationInfo {
+fn get_simulation_info(
+    fork_state_reader: &ForkStateReader,
+    cheatnet_state: CheatnetState,
+) -> SimulationInfo {
     SimulationInfo {
         call_trace: get_simulation_call_trace(
+            fork_state_reader,
             cheatnet_state
                 .trace_data
                 .current_call_stack
@@ -192,10 +206,16 @@ fn get_simulation_info(cheatnet_state: CheatnetState) -> SimulationInfo {
     }
 }
 
-fn get_simulation_call_trace(call_trace_ref: Ref<CallTrace>) -> SimulationCallTrace {
+fn get_simulation_call_trace(
+    fork_state_reader: &ForkStateReader,
+    call_trace_ref: Ref<CallTrace>,
+) -> SimulationCallTrace {
     let mut nested_calls = Vec::new();
     for nested_call in &call_trace_ref.nested_calls {
-        nested_calls.push(get_simulation_call_trace(nested_call.borrow()));
+        nested_calls.push(get_simulation_call_trace(
+            fork_state_reader,
+            nested_call.borrow(),
+        ));
     }
 
     SimulationCallTrace {
@@ -204,6 +224,11 @@ fn get_simulation_call_trace(call_trace_ref: Ref<CallTrace>) -> SimulationCallTr
         nested_calls,
         result: call_trace_ref.result.clone(),
         internal_fn_call_trace: call_trace_ref.internal_fn_call_trace.clone(),
+        additional_info: get_additional_info(
+            fork_state_reader,
+            call_trace_ref.entry_point.class_hash,
+            call_trace_ref.entry_point.entry_point_selector,
+        ),
     }
 }
 
@@ -290,4 +315,67 @@ fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddr
         },
         _ => None,
     }
+}
+
+fn get_additional_info(
+    fork_state_reader: &ForkStateReader,
+    class_hash: Option<ClassHash>,
+    entry_point_selector: EntryPointSelector,
+) -> SimulationCallTraceAdditionalInfo {
+    let mut entry_point_selector_name: Option<String> = None;
+    if let Some(class_hash) = class_hash {
+        let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
+        if let Some(contract_class) = contract_class {
+            match contract_class {
+                ContractClass::Sierra(class) => {
+                    entry_point_selector_name =
+                        get_entry_point_selector_name(class.abi, entry_point_selector);
+                }
+                _ => {}
+            };
+        }
+    }
+    SimulationCallTraceAdditionalInfo {
+        entry_point_selector_name,
+    }
+}
+
+fn get_entry_point_selector_name(
+    abi: String,
+    entry_point_selector: EntryPointSelector,
+) -> Option<String> {
+    let abi_value: Value = serde_json::from_str(abi.as_str()).unwrap();
+    let external_function_names = get_external_function_names(&abi_value);
+    for external_function_name in external_function_names {
+        let selector = selector_from_name(external_function_name.as_str());
+        if selector == entry_point_selector {
+            return Some(external_function_name);
+        }
+    }
+    None
+}
+
+fn get_external_function_names(value: &Value) -> Vec<String> {
+    let mut function_names = Vec::new();
+
+    if let Value::Array(array) = value {
+        for item in array {
+            if let Value::Object(obj) = item {
+                if obj.get("type") == Some(&Value::String("function".to_string()))
+                    && obj.get("state_mutability") == Some(&Value::String("external".to_string()))
+                {
+                    if let Some(Value::String(name)) = obj.get("name") {
+                        function_names.push(name.clone());
+                    }
+                } else if obj.get("type") == Some(&Value::String("interface".to_string())) {
+                    if let Some(Value::Array(items)) = obj.get("items") {
+                        function_names
+                            .extend(get_external_function_names(&Value::Array(items.clone())));
+                    }
+                }
+            }
+        }
+    }
+
+    function_names
 }

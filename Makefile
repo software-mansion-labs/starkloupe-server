@@ -3,4 +3,4 @@ deps:
 	&& cd .. \
 	&& git clone https://github.com/walnuthq/starknet-foundry.git walnut-starknet-foundry \
 	&& cd walnut-starknet-foundry \
-	&& git checkout a7faee3307c45141e39105127aa0fd5941d0b1fe
+	&& git checkout 6c21a7f6042475182e6ac1b9fd40590cd3a39d74
