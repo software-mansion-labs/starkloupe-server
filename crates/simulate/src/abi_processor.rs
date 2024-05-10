@@ -26,15 +26,13 @@ impl AbiProcessor {
         self.check_if_erc20_token();
     }
 
-    fn process_abi_internal(&mut self, abi_value: &Value) {
-        if let Value::Array(array) = abi_value {
-            for item in array {
-                if let Value::Object(obj) = item {
-                    if obj.get("type") == Some(&Value::String("function".to_string())) {
-                        self.process_abi_function(obj);
-                    } else if obj.get("type") == Some(&Value::String("interface".to_string())) {
-                        self.process_abi_interface(obj);
-                    }
+    fn process_abi_internal(&mut self, abi_value_array: &Vec<Value>) {
+        for item in abi_value_array {
+            if let Value::Object(obj) = item {
+                if obj.get("type") == Some(&Value::String("function".to_string())) {
+                    self.process_abi_function(obj);
+                } else if obj.get("type") == Some(&Value::String("interface".to_string())) {
+                    self.process_abi_interface(obj);
                 }
             }
         }
@@ -61,7 +59,7 @@ impl AbiProcessor {
     fn process_abi_interface(&mut self, obj: &Map<String, Value>) {
         if let Some(Value::Array(items)) = obj.get("items") {
             if self.entry_point_function_name.is_none() {
-                self.process_abi_internal(&Value::Array(items.clone()));
+                self.process_abi_internal(items);
                 if self.entry_point_function_name.is_some() {
                     let current_entry_point_interface_name = match obj.get("name") {
                         Some(Value::String(name)) => Some(name),
@@ -70,7 +68,7 @@ impl AbiProcessor {
                     self.entry_point_interface_name = current_entry_point_interface_name.cloned();
                 }
             } else {
-                self.process_abi_internal(&Value::Array(items.clone()));
+                self.process_abi_internal(items);
             }
         }
     }
