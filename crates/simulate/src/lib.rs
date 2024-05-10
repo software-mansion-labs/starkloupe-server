@@ -1,7 +1,9 @@
+pub mod abi_processor;
 pub mod utils;
 
 use crate::utils::convert_to_hex;
 use crate::utils::create_fork_cached_state_at;
+use abi_processor::AbiProcessor;
 use blockifier::abi::abi_utils::selector_from_name;
 use blockifier::context::BlockContext;
 use blockifier::context::ChainInfo;
@@ -176,7 +178,11 @@ pub fn simulate(args: SimulationArgs) -> SimulationInfo {
 
 #[derive(Serialize, Debug)]
 pub struct SimulationCallTraceAdditionalInfo {
-    entry_point_selector_name: Option<String>,
+    entry_point_function_name: Option<String>,
+    entry_point_interface_name: Option<String>,
+    is_erc20_token: bool,
+    erc20_token_name: Option<String>,
+    erc20_token_symbol: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -322,60 +328,28 @@ fn get_additional_info(
     class_hash: Option<ClassHash>,
     entry_point_selector: EntryPointSelector,
 ) -> SimulationCallTraceAdditionalInfo {
-    let mut entry_point_selector_name: Option<String> = None;
+    let mut additional_info = SimulationCallTraceAdditionalInfo {
+        entry_point_function_name: None,
+        entry_point_interface_name: None,
+        is_erc20_token: false,
+        erc20_token_name: None,
+        erc20_token_symbol: None,
+    };
     if let Some(class_hash) = class_hash {
         let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
         if let Some(contract_class) = contract_class {
             match contract_class {
                 ContractClass::Sierra(class) => {
-                    entry_point_selector_name =
-                        get_entry_point_selector_name(class.abi, entry_point_selector);
+                    let mut abi_processor = AbiProcessor::new(entry_point_selector);
+                    abi_processor.process_abi(class.abi);
+                    additional_info.entry_point_function_name = abi_processor.entry_point_function_name;
+                    additional_info.entry_point_interface_name =
+                        abi_processor.entry_point_interface_name;
+                    additional_info.is_erc20_token = abi_processor.is_erc20_token;
                 }
                 _ => {}
             };
         }
     }
-    SimulationCallTraceAdditionalInfo {
-        entry_point_selector_name,
-    }
-}
-
-fn get_entry_point_selector_name(
-    abi: String,
-    entry_point_selector: EntryPointSelector,
-) -> Option<String> {
-    let abi_value: Value = serde_json::from_str(abi.as_str()).unwrap();
-    let external_function_names = get_external_function_names(&abi_value);
-    for external_function_name in external_function_names {
-        let selector = selector_from_name(external_function_name.as_str());
-        if selector == entry_point_selector {
-            return Some(external_function_name);
-        }
-    }
-    None
-}
-
-fn get_external_function_names(value: &Value) -> Vec<String> {
-    let mut function_names = Vec::new();
-
-    if let Value::Array(array) = value {
-        for item in array {
-            if let Value::Object(obj) = item {
-                if obj.get("type") == Some(&Value::String("function".to_string()))
-                    && obj.get("state_mutability") == Some(&Value::String("external".to_string()))
-                {
-                    if let Some(Value::String(name)) = obj.get("name") {
-                        function_names.push(name.clone());
-                    }
-                } else if obj.get("type") == Some(&Value::String("interface".to_string())) {
-                    if let Some(Value::Array(items)) = obj.get("items") {
-                        function_names
-                            .extend(get_external_function_names(&Value::Array(items.clone())));
-                    }
-                }
-            }
-        }
-    }
-
-    function_names
+    additional_info
 }
