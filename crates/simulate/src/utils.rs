@@ -13,7 +13,7 @@ use starknet_api::{block::BlockNumber, core::ChainId};
 use url::Url;
 
 pub fn create_fork_cached_state_at(
-    chain_id: ChainId,
+    chain_id: &ChainId,
     block_number: BlockNumber,
     cache_dir: &str,
 ) -> CachedState<ExtendedStateReader> {

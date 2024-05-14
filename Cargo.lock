@@ -4835,6 +4835,7 @@ dependencies = [
  "blockifier",
  "cairo-vm",
  "cheatnet",
+ "futures",
  "internal-tracing",
  "num-bigint",
  "num-traits 0.2.18",

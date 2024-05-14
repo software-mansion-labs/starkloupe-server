@@ -1,4 +1,5 @@
 pub mod abi_processor;
+pub mod contract_names;
 pub mod utils;
 
 use crate::utils::convert_to_hex;
@@ -12,6 +13,7 @@ use blockifier::execution::common_hints::ExecutionMode;
 use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
+use blockifier::state::cached_state::CachedState;
 use blockifier::transaction::constants;
 use blockifier::transaction::objects::CommonAccountFields;
 use blockifier::transaction::objects::CurrentTransactionInfo;
@@ -24,6 +26,8 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::Cal
 use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CheatnetState;
+use cheatnet::state::ExtendedStateReader;
+use contract_names::ContractNamesFetcher;
 use internal_tracing::InternalFnCallTraceEntryNode;
 use serde::Deserialize;
 use serde::Serialize;
@@ -92,10 +96,33 @@ pub struct SimulationInfo {
     pub call_trace: SimulationCallTrace,
 }
 
-pub fn simulate(args: SimulationArgs) -> SimulationInfo {
-    let mut cached_fork_state =
-        create_fork_cached_state_at(args.chain_id, args.block_number, "tmp/sn-debugger/cache");
+pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
+    let mut cached_fork_state = create_fork_cached_state_at(
+        &args.chain_id,
+        args.block_number.clone(),
+        "tmp/sn-debugger/cache",
+    );
 
+    let chain_id = args.chain_id.clone();
+
+    let cheatnet_state = run_simulation(args, &mut cached_fork_state);
+
+    let mut simulation_info = get_simulation_info(
+        &cached_fork_state.state.fork_state_reader.unwrap(),
+        cheatnet_state,
+    );
+
+    ContractNamesFetcher::new(&chain_id)
+        .enhance_trace_with_contract_names(&mut simulation_info.call_trace)
+        .await;
+
+    simulation_info
+}
+
+fn run_simulation(
+    args: SimulationArgs,
+    cached_fork_state: &mut CachedState<ExtendedStateReader>,
+) -> CheatnetState {
     let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
     let mut execute_call = CallEntryPoint {
@@ -164,16 +191,13 @@ pub fn simulate(args: SimulationArgs) -> SimulationInfo {
 
     let res = execute_call_entry_point(
         &mut execute_call,
-        &mut cached_fork_state,
+        cached_fork_state,
         &mut cheatnet_state,
         &mut ExecutionResources::default(),
         &mut context,
     );
 
-    get_simulation_info(
-        &cached_fork_state.state.fork_state_reader.unwrap(),
-        cheatnet_state,
-    )
+    cheatnet_state
 }
 
 #[derive(Serialize, Debug)]
@@ -270,7 +294,8 @@ pub async fn simulate_transaction_by_hash(
                         nonce,
                         sender_address,
                         calldata: calldata.clone(),
-                    });
+                    })
+                    .await;
                     let calldata = calldata
                         .0
                         .iter()
@@ -342,7 +367,8 @@ fn get_additional_info(
                 ContractClass::Sierra(class) => {
                     let mut abi_processor = AbiProcessor::new(entry_point_selector);
                     abi_processor.process_abi(class.abi);
-                    additional_info.entry_point_function_name = abi_processor.entry_point_function_name;
+                    additional_info.entry_point_function_name =
+                        abi_processor.entry_point_function_name;
                     additional_info.entry_point_interface_name =
                         abi_processor.entry_point_interface_name;
                     additional_info.is_erc20_token = abi_processor.is_erc20_token;

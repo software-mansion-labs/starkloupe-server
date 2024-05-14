@@ -34,3 +34,9 @@ pub fn extract_chain_id(chain_id: &str) -> ChainId {
         _ => panic!("Invalid chain id"),
     }
 }
+
+pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
+    let mut text = std::str::from_utf8(&bytes)?.to_string();
+    text.retain(|c| c != '\0');
+    Ok(text)
+}

@@ -72,7 +72,7 @@ pub async fn simulate_trace(
 pub async fn simulate_transaction(
     Json(payload): Json<SimulationRawArgs>,
 ) -> Result<Json<SimulationInfo>, StatusCode> {
-    let simulation_info = simulate(payload.into());
+    let simulation_info = simulate(payload.into()).await;
     Ok(Json(simulation_info))
 }
 
