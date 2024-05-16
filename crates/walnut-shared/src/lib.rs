@@ -1,3 +1,5 @@
+use cairo_felt::Felt252;
+use num_bigint::BigInt;
 use starknet_api::core::ChainId;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
@@ -39,4 +41,26 @@ pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
     let mut text = std::str::from_utf8(&bytes)?.to_string();
     text.retain(|c| c != '\0');
     Ok(text)
+}
+
+pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8Error> {
+    //convert do decimal string representation
+    let decimal_arrays = felt_array
+        .iter()
+        .map(|felt| felt.to_string())
+        .collect::<Vec<String>>();
+    let decimal_string = decimal_arrays.join(", ");
+    //convert to hex representation
+    let hex_representation = BigInt::parse_bytes(decimal_string.as_bytes(), 10)
+        .unwrap()
+        .to_str_radix(16);
+    //conver it to bytes
+    let bytes: Vec<u8> = hex_representation
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap())
+        .collect();
+    //get human readable text
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.to_string())
 }

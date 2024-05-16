@@ -7,3 +7,5 @@ edition = "2021"
 url.workspace = true
 starknet-providers.workspace = true
 starknet_api.workspace = true
+num-bigint.workspace = true
+cairo-felt.workspace = true

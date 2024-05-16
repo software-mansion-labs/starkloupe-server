@@ -1,7 +1,6 @@
 pub mod abi_processor;
 pub mod contract_names;
 pub mod utils;
-
 use crate::utils::convert_to_hex;
 use crate::utils::create_fork_cached_state_at;
 use abi_processor::AbiProcessor;
@@ -22,6 +21,7 @@ use blockifier::versioned_constants::VersionedConstants;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
@@ -54,7 +54,7 @@ use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use walnut_shared::create_rpc_client;
+use walnut_shared::{create_rpc_client, decode_felt252};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
@@ -94,6 +94,7 @@ impl From<SimulationRawArgs> for SimulationArgs {
 #[derive(Serialize, Debug)]
 pub struct SimulationInfo {
     pub call_trace: SimulationCallTrace,
+    pub max_nested_error_level: usize,
 }
 
 pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
@@ -207,6 +208,7 @@ pub struct SimulationCallTraceAdditionalInfo {
     is_erc20_token: bool,
     erc20_token_name: Option<String>,
     erc20_token_symbol: Option<String>,
+    error_message: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -216,6 +218,7 @@ pub struct SimulationCallTrace {
     // pub used_l1_resources: L1Resources,
     // pub used_syscalls: SyscallCounter,
     pub nested_calls: Vec<SimulationCallTrace>,
+    pub nested_level: usize,
     pub result: CallResult,
     pub internal_fn_call_trace: Option<InternalFnCallTraceEntryNode>,
     pub additional_info: SimulationCallTraceAdditionalInfo,
@@ -225,33 +228,59 @@ fn get_simulation_info(
     fork_state_reader: &ForkStateReader,
     cheatnet_state: CheatnetState,
 ) -> SimulationInfo {
+    let mut max_nested_error_level: usize = 0;
+    let mut call_trace = get_simulation_call_trace(
+        fork_state_reader,
+        cheatnet_state
+            .trace_data
+            .current_call_stack
+            .borrow_full_trace(),
+        0,
+        &mut max_nested_error_level,
+    );
+
+    update_error_message(&mut call_trace, max_nested_error_level);
+
     SimulationInfo {
-        call_trace: get_simulation_call_trace(
-            fork_state_reader,
-            cheatnet_state
-                .trace_data
-                .current_call_stack
-                .borrow_full_trace(),
-        ),
+        call_trace,
+        max_nested_error_level,
     }
 }
 
 fn get_simulation_call_trace(
     fork_state_reader: &ForkStateReader,
     call_trace_ref: Ref<CallTrace>,
+    nested_level: usize,
+    max_nested_error_level: &mut usize,
 ) -> SimulationCallTrace {
     let mut nested_calls = Vec::new();
+    if call_trace_ref.nested_calls.is_empty()
+        && matches!(&call_trace_ref.result, CallResult::Failure(_))
+    {
+        *max_nested_error_level = nested_level;
+    }
+
     for nested_call in &call_trace_ref.nested_calls {
-        nested_calls.push(get_simulation_call_trace(
+        if let CallResult::Failure(_) = &call_trace_ref.result {
+            if nested_level >= *max_nested_error_level {
+                *max_nested_error_level = nested_level
+            }
+        };
+
+        let nested_trace = get_simulation_call_trace(
             fork_state_reader,
             nested_call.borrow(),
-        ));
+            nested_level + 1,
+            max_nested_error_level,
+        );
+        nested_calls.push(nested_trace);
     }
 
     SimulationCallTrace {
         entry_point: call_trace_ref.entry_point.clone(),
         used_execution_resources: call_trace_ref.used_execution_resources.clone(),
         nested_calls,
+        nested_level,
         result: call_trace_ref.result.clone(),
         internal_fn_call_trace: call_trace_ref.internal_fn_call_trace.clone(),
         additional_info: get_additional_info(
@@ -359,6 +388,7 @@ fn get_additional_info(
         is_erc20_token: false,
         erc20_token_name: None,
         erc20_token_symbol: None,
+        error_message: None,
     };
     if let Some(class_hash) = class_hash {
         let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
@@ -378,4 +408,32 @@ fn get_additional_info(
         }
     }
     additional_info
+}
+
+fn update_error_message(call_trace: &mut SimulationCallTrace, max_nested_error_level: usize) {
+    if call_trace.nested_calls.is_empty() {
+        return;
+    }
+
+    for nested_trace in &mut call_trace.nested_calls {
+        if nested_trace.nested_level == max_nested_error_level {
+            if let CallResult::Failure(failure) = &nested_trace.result {
+                match failure {
+                    CallFailure::Panic { panic_data } => {
+                        match decode_felt252(panic_data.to_vec()) {
+                            Ok(decoded) => {
+                                nested_trace.additional_info.error_message = Some(decoded);
+                            }
+                            Err(_) => panic!("Failed to decode felt252"),
+                        }
+                    }
+                    CallFailure::Error { msg } => {
+                        nested_trace.additional_info.error_message = Some(msg.to_string());
+                    }
+                }
+            }
+        } else {
+            update_error_message(nested_trace, max_nested_error_level);
+        }
+    }
 }
