@@ -33,6 +33,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use starknet::core::types::ContractClass;
+use starknet::core::types::ExecutionResult;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
 use starknet::core::types::{FieldElement, InvokeTransaction, Transaction};
@@ -95,6 +96,7 @@ impl From<SimulationRawArgs> for SimulationArgs {
 pub struct SimulationInfo {
     pub call_trace: SimulationCallTrace,
     pub max_nested_error_level: usize,
+    pub execution_result: ExecutionResult,
 }
 
 pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
@@ -239,11 +241,17 @@ fn get_simulation_info(
         &mut max_nested_error_level,
     );
 
-    update_error_message(&mut call_trace, max_nested_error_level);
+    let mut execution_result: ExecutionResult = ExecutionResult::Succeeded;
+    update_error_message(
+        &mut call_trace,
+        max_nested_error_level,
+        &mut execution_result,
+    );
 
     SimulationInfo {
         call_trace,
         max_nested_error_level,
+        execution_result,
     }
 }
 
@@ -316,7 +324,9 @@ pub async fn simulate_transaction_by_hash(
                 .get_transaction_receipt(transaction_hash)
                 .await;
             if let Ok(transaction_receipt) = transaction_receipt {
-                if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
+                if let Some((block_number, execution_result)) =
+                    extract_transaction_receipt(transaction_receipt)
+                {
                     let simulation_result = simulate(SimulationArgs {
                         chain_id: chain_id.clone(),
                         block_number,
@@ -347,12 +357,13 @@ pub async fn simulate_transaction_by_hash(
 
 fn extract_transaction_receipt(
     transaction_receipt: MaybePendingTransactionReceipt,
-) -> Option<BlockNumber> {
+) -> Option<(BlockNumber, ExecutionResult)> {
     match transaction_receipt {
         MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
-            TransactionReceipt::Invoke(invoke_receipt) => {
-                Some(BlockNumber(invoke_receipt.block_number))
-            }
+            TransactionReceipt::Invoke(invoke_receipt) => Some((
+                BlockNumber(invoke_receipt.block_number),
+                invoke_receipt.execution_result,
+            )),
             _ => None,
         },
         _ => None,
@@ -410,7 +421,11 @@ fn get_additional_info(
     additional_info
 }
 
-fn update_error_message(call_trace: &mut SimulationCallTrace, max_nested_error_level: usize) {
+fn update_error_message(
+    call_trace: &mut SimulationCallTrace,
+    max_nested_error_level: usize,
+    execution_result: &mut ExecutionResult,
+) {
     if call_trace.nested_calls.is_empty() {
         return;
     }
@@ -422,18 +437,22 @@ fn update_error_message(call_trace: &mut SimulationCallTrace, max_nested_error_l
                     CallFailure::Panic { panic_data } => {
                         match decode_felt252(panic_data.to_vec()) {
                             Ok(decoded) => {
-                                nested_trace.additional_info.error_message = Some(decoded);
+                                nested_trace.additional_info.error_message = Some(decoded.clone());
+                                *execution_result = ExecutionResult::Reverted { reason: decoded };
                             }
                             Err(_) => panic!("Failed to decode felt252"),
                         }
                     }
                     CallFailure::Error { msg } => {
                         nested_trace.additional_info.error_message = Some(msg.to_string());
+                        *execution_result = ExecutionResult::Reverted {
+                            reason: msg.to_string(),
+                        };
                     }
                 }
             }
         } else {
-            update_error_message(nested_trace, max_nested_error_level);
+            update_error_message(nested_trace, max_nested_error_level, execution_result);
         }
     }
 }
