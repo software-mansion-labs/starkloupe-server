@@ -386,6 +386,15 @@ fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddr
                     Calldata(calldata.into()),
                 ))
             }
+            InvokeTransaction::V3(tx) => {
+                let calldata: Vec<StarkFelt> =
+                    tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce(StarkFelt::from(tx.nonce)),
+                    contract_address!(tx.sender_address),
+                    Calldata(calldata.into()),
+                ))
+            }
             _ => None,
         },
         _ => None,
