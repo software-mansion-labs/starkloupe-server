@@ -7,6 +7,9 @@ pub struct AbiProcessor {
     pub entry_point_function_name: Option<String>,
     pub entry_point_interface_name: Option<String>,
     pub is_erc20_token: bool,
+    pub function_arguments_names: Option<Vec<String>>,
+    pub function_arguments_types: Option<Vec<String>>,
+    pub function_return_result_types: Option<Vec<String>>,
     view_and_external_fn_names: Vec<String>,
 }
 
@@ -17,6 +20,9 @@ impl AbiProcessor {
             entry_point_function_name: None,
             entry_point_interface_name: None,
             is_erc20_token: false,
+            function_arguments_names: None,
+            function_arguments_types: None,
+            function_return_result_types: None,
             view_and_external_fn_names: Vec::new(),
         }
     }
@@ -44,7 +50,10 @@ impl AbiProcessor {
                 if self.entry_point_function_name.is_none() {
                     let selector = selector_from_name(function_name.as_str());
                     if selector == self.entry_point_selector {
+                        dbg!("##### SET OBJ {:?}", obj.clone());
                         self.entry_point_function_name = Some(function_name.clone());
+                        self.process_function_arguments(obj);
+                        self.process_function_results(obj);
                     }
                 }
                 self.view_and_external_fn_names.push(function_name.clone());
@@ -52,6 +61,39 @@ impl AbiProcessor {
         } else if obj.get("state_mutability") == Some(&Value::String("view".to_string())) {
             if let Some(Value::String(function_name)) = obj.get("name") {
                 self.view_and_external_fn_names.push(function_name.clone());
+            }
+        }
+    }
+
+    fn process_function_arguments(&mut self, obj: &Map<String, Value>) {
+        if let Some(Value::Array(inputs)) = obj.get("inputs") {
+            for input in inputs {
+                if let Value::Object(input_obj) = input {
+                    if let Some(Value::String(name)) = input_obj.get("name") {
+                        self.function_arguments_names
+                            .get_or_insert(Vec::new())
+                            .push(name.clone());
+                    }
+                    if let Some(Value::String(arg_type)) = input_obj.get("type") {
+                        self.function_arguments_types
+                            .get_or_insert(Vec::new())
+                            .push(arg_type.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_function_results(&mut self, onj: &Map<String, Value>) {
+        if let Some(Value::Array(outputs)) = onj.get("outputs") {
+            for output in outputs {
+                if let Value::Object(output_obj) = output {
+                    if let Some(Value::String(arg_type)) = output_obj.get("type") {
+                        self.function_return_result_types
+                            .get_or_insert(Vec::new())
+                            .push(arg_type.clone());
+                    }
+                }
             }
         }
     }

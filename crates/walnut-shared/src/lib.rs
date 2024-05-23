@@ -1,5 +1,5 @@
 use cairo_felt::Felt252;
-use num_bigint::BigInt;
+use num_bigint::BigUint;
 use starknet_api::core::ChainId;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
@@ -43,6 +43,15 @@ pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
     Ok(text)
 }
 
+pub fn felt252_to_hex(felt_array: Vec<Felt252>) -> Result<Vec<String>, std::str::Utf8Error> {
+    let hex_representation = felt_array
+        .iter()
+        .map(|felt| format!("0x{}", felt.to_str_radix(16)))
+        .collect::<Vec<String>>();
+
+    Ok(hex_representation)
+}
+
 pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8Error> {
     //convert do decimal string representation
     let decimal_arrays = felt_array
@@ -51,8 +60,8 @@ pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8
         .collect::<Vec<String>>();
     let decimal_string = decimal_arrays.join(", ");
     //convert to hex representation
-    let hex_representation = BigInt::parse_bytes(decimal_string.as_bytes(), 10)
-        .unwrap()
+    let hex_representation = BigUint::parse_bytes(decimal_string.as_bytes(), 10)
+        .expect("Failed to parse BigUint")
         .to_str_radix(16);
     //conver it to bytes
     let bytes: Vec<u8> = hex_representation
