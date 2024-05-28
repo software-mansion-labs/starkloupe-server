@@ -37,37 +37,37 @@ pub struct SimulateTraceResponse {
     simulation: Option<Simulation>,
 }
 
-pub async fn simulate_trace(
-    State(state): State<Arc<AppState>>,
-    id: Path<String>,
-) -> Result<Json<SimulateTraceResponse>, StatusCode> {
-    // Implement your business logic here
-    let sim: Simulation = sqlx::query_as!(
-        Simulation,
-        "SELECT * FROM simulations WHERE id = $1",
-        Uuid::from_str(&id.0).unwrap()
-    )
-    .fetch_one(&state.db_pool)
-    .await
-    .unwrap();
+// pub async fn simulate_trace(
+//     State(state): State<Arc<AppState>>,
+//     id: Path<String>,
+// ) -> Result<Json<SimulateTraceResponse>, StatusCode> {
+//     // Implement your business logic here
+//     let sim: Simulation = sqlx::query_as!(
+//         Simulation,
+//         "SELECT * FROM simulations WHERE id = $1",
+//         Uuid::from_str(&id.0).unwrap()
+//     )
+//     .fetch_one(&state.db_pool)
+//     .await
+//     .unwrap();
 
-    // let simulation_info = simulate(SimulationArgs {
-    //     chain_id: sim.chain_id.clone(),
-    //     block_at: (sim.block_at as u64).clone(),
-    //     nonce: (sim.nonce as u64).clone(),
-    //     wallet_address: sim.wallet_address.clone(),
-    //     calldata: sim.calldata.clone().unwrap_or_default(),
-    // });
+//     // let simulation_info = simulate(SimulationArgs {
+//     //     chain_id: sim.chain_id.clone(),
+//     //     block_at: (sim.block_at as u64).clone(),
+//     //     nonce: (sim.nonce as u64).clone(),
+//     //     wallet_address: sim.wallet_address.clone(),
+//     //     calldata: sim.calldata.clone().unwrap_or_default(),
+//     // });
 
-    Err(StatusCode::EXPECTATION_FAILED)
-    // match tx_info {
-    //     Ok(tx_info) => Ok(Json(SimulateTraceResponse {
-    //         simulated_transaction: to_simulated_transaction(tx_info),
-    //         simulation: Some(sim),
-    //     })),
-    //     Err(_) => Err(StatusCode::EXPECTATION_FAILED),
-    // }
-}
+//     Err(StatusCode::EXPECTATION_FAILED)
+//     // match tx_info {
+//     //     Ok(tx_info) => Ok(Json(SimulateTraceResponse {
+//     //         simulated_transaction: to_simulated_transaction(tx_info),
+//     //         simulation: Some(sim),
+//     //     })),
+//     //     Err(_) => Err(StatusCode::EXPECTATION_FAILED),
+//     // }
+// }
 
 pub async fn simulate_transaction(
     Json(payload): Json<SimulationRawArgs>,

@@ -21,11 +21,11 @@ use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
-    auth::{cache_all_users_and_projects, user_auth_middleware},
-    common_errors::get_common_errors,
-    simulate::simulate_handler,
-    simulate_trace::{simulate_trace, simulate_transaction},
-    simulations::get_simulations,
+    // auth::{cache_all_users_and_projects, user_auth_middleware},
+    // common_errors::get_common_errors,
+    // simulate::simulate_handler,
+    simulate_trace::simulate_transaction,
+    // simulations::get_simulations,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -161,17 +161,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Schedule background task that runs refetch every 5 minutes
     // TODO: Cross task concurrency issues exist here, but it's fine for now.
-    tokio::spawn(async move {
-        loop {
-            let _ = cache_all_users_and_projects(
-                &redis_pool_for_background,
-                &db_pool_for_background,
-                60 * 5,
-            )
-            .await;
-            tokio::time::sleep(Duration::from_secs((60 * 5) - 30)).await;
-        }
-    });
+    // tokio::spawn(async move {
+    //     loop {
+    //         let _ = cache_all_users_and_projects(
+    //             &redis_pool_for_background,
+    //             &db_pool_for_background,
+    //             60 * 5,
+    //         )
+    //         .await;
+    //         tokio::time::sleep(Duration::from_secs((60 * 5) - 30)).await;
+    //     }
+    // });
 
     let shared_state = Arc::new(AppState {
         db_pool,
@@ -203,7 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/:chain_id/simulate-transaction/:tx_hash",
             get(simulate_transaction_by_hash_handler),
         )
-        .route("/v1/simulate-trace/:id", get(simulate_trace))
+        // .route("/v1/simulate-trace/:id", get(simulate_trace))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
