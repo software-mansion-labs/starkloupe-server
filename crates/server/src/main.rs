@@ -180,14 +180,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
-    let user_auth_routes = Router::new()
-        .route("/v1/simulations", get(get_simulations))
-        .route("/v1/simulations/common-errors", get(get_common_errors))
-        .layer(middleware::from_fn_with_state(
-            shared_state.clone(),
-            user_auth_middleware,
-        ))
-        .layer(CorsLayer::permissive());
+    // let user_auth_routes = Router::new()
+    //     .route("/v1/simulations", get(get_simulations))
+    //     .route("/v1/simulations/common-errors", get(get_common_errors))
+    //     .layer(middleware::from_fn_with_state(
+    //         shared_state.clone(),
+    //         user_auth_middleware,
+    //     ))
+    //     .layer(CorsLayer::permissive());
 
     let app = Router::new()
         // .route("/v1/simulate", post(simulate_handler))
@@ -195,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         //     shared_state.clone(),
         //     auth_middleware,
         // ))
-        .merge(user_auth_routes)
+        // .merge(user_auth_routes)
         // .route("/v1/verify/:chain_id/:class_hash", post(verify_handler))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-transaction", post(simulate_transaction))
