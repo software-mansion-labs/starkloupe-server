@@ -50,7 +50,6 @@ impl AbiProcessor {
                 if self.entry_point_function_name.is_none() {
                     let selector = selector_from_name(function_name.as_str());
                     if selector == self.entry_point_selector {
-                        dbg!("##### SET OBJ {:?}", obj.clone());
                         self.entry_point_function_name = Some(function_name.clone());
                         self.process_function_arguments(obj);
                         self.process_function_results(obj);

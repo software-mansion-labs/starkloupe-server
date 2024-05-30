@@ -94,9 +94,9 @@ impl From<SimulationRawArgs> for SimulationArgs {
 
 #[derive(Serialize, Debug)]
 pub struct SimulationInfo {
-    pub call_trace: SimulationCallTrace,
+    pub call_trace: Option<SimulationCallTrace>,
     pub max_nested_error_level: usize,
-    pub execution_result: ExecutionResult,
+    pub execution_result: Option<ExecutionResult>,
 }
 
 pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
@@ -115,10 +115,12 @@ pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
         cheatnet_state,
     );
 
-    ContractNamesFetcher::new(&chain_id)
-        .enhance_trace_with_contract_names(&mut simulation_info.call_trace)
-        .await;
-
+    if let Some(mut call_trace) = simulation_info.call_trace.take() {
+        ContractNamesFetcher::new(&chain_id)
+            .enhance_trace_with_contract_names(&mut call_trace)
+            .await;
+        simulation_info.call_trace = Some(call_trace);
+    }
     simulation_info
 }
 
@@ -236,12 +238,23 @@ fn get_simulation_info(
     cheatnet_state: CheatnetState,
 ) -> SimulationInfo {
     let mut max_nested_error_level: usize = 0;
+
+    let call_trace_ref: Ref<CallTrace> = cheatnet_state
+        .trace_data
+        .current_call_stack
+        .borrow_full_trace();
+
+    if call_trace_ref.nested_calls.is_empty() {
+        return SimulationInfo {
+            call_trace: None,
+            max_nested_error_level,
+            execution_result: None,
+        };
+    }
+
     let mut call_trace = get_simulation_call_trace(
         fork_state_reader,
-        cheatnet_state
-            .trace_data
-            .current_call_stack
-            .borrow_full_trace(),
+        call_trace_ref.nested_calls[0].borrow(),
         0,
         &mut max_nested_error_level,
     );
@@ -254,9 +267,9 @@ fn get_simulation_info(
     );
 
     SimulationInfo {
-        call_trace,
+        call_trace: Some(call_trace),
         max_nested_error_level,
-        execution_result,
+        execution_result: Some(execution_result),
     }
 }
 
@@ -426,7 +439,6 @@ fn get_additional_info(
         if let Some(contract_class) = contract_class {
             match contract_class {
                 ContractClass::Sierra(class) => {
-                    dbg!("Entry point selector {:?}", entry_point_selector);
                     let mut abi_processor = AbiProcessor::new(entry_point_selector);
                     abi_processor.process_abi(class.abi);
                     additional_info.entry_point_function_name =
