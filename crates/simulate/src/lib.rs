@@ -19,6 +19,7 @@ use blockifier::transaction::objects::CurrentTransactionInfo;
 use blockifier::transaction::objects::TransactionInfo;
 use blockifier::versioned_constants::VersionedConstants;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use calldata_decoder::decode_datas;
 use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
@@ -31,6 +32,7 @@ use contract_names::ContractNamesFetcher;
 use internal_tracing::InternalFnCallTraceEntryNode;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
 use serde_json::Value;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
@@ -56,7 +58,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use walnut_shared::felt252_to_hex;
-use walnut_shared::{create_rpc_client, decode_felt252};
+use walnut_shared::{create_rpc_client, decode_felt252, StructItems};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
     pub chain_id: String,
@@ -194,7 +196,7 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
-    let res = execute_call_entry_point(
+    let _res = execute_call_entry_point(
         &mut execute_call,
         cached_fork_state,
         &mut cheatnet_state,
@@ -213,11 +215,11 @@ pub struct SimulationCallTraceAdditionalInfo {
     erc20_token_name: Option<String>,
     erc20_token_symbol: Option<String>,
     error_message: Option<String>,
-    function_result: Option<Vec<String>>,
+    function_result: Option<Value>,
     function_return_result_types: Option<Vec<String>>,
-    function_arguments: Option<Vec<String>>,
     function_arguments_names: Option<Vec<String>>,
     function_arguments_types: Option<Vec<String>>,
+    calldata_decoded: Option<Value>,
 }
 
 #[derive(Serialize, Debug)]
@@ -428,12 +430,13 @@ fn get_additional_info(
         erc20_token_name: None,
         erc20_token_symbol: None,
         error_message: None,
-        function_result: None,
         function_return_result_types: None,
-        function_arguments: None,
+        function_result: None,
         function_arguments_names: None,
         function_arguments_types: None,
+        calldata_decoded: None,
     };
+    let mut struct_items: Vec<StructItems> = Vec::new();
     if let Some(class_hash) = class_hash {
         let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
         if let Some(contract_class) = contract_class {
@@ -452,22 +455,46 @@ fn get_additional_info(
                         abi_processor.function_arguments_types;
                     additional_info.function_return_result_types =
                         abi_processor.function_return_result_types;
+                    struct_items = abi_processor.struct_items;
                 }
                 _ => {}
             };
         }
     }
+
     if let CallResult::Success { ret_data } = result {
-        match felt252_to_hex(ret_data.to_vec()) {
-            Ok(hex) => {
-                additional_info.function_result = Some(hex);
+        if let Ok(ret_hex) = felt252_to_hex(ret_data.to_vec()) {
+            if let Some(function_return_result_types) =
+                additional_info.function_return_result_types.clone()
+            {
+                let decoded_result = decode_datas(
+                    &ret_hex,
+                    &function_return_result_types,
+                    &vec![],
+                    &struct_items,
+                    &mut 0,
+                );
+                additional_info.function_result = Some(json!(decoded_result));
             }
-            Err(_) => panic!("Failed to decode felt252"),
+        } else {
+            panic!("Failed to decode return data");
         }
     }
+    if let (Some(function_arguments_types), Some(function_arguments_names)) = (
+        additional_info.function_arguments_types.clone(),
+        additional_info.function_arguments_names.clone(),
+    ) {
+        let calldata_hex: Vec<String> = calldata.0.iter().map(|x| x.to_string()).collect();
+        let decoded_arguments = decode_datas(
+            &calldata_hex,
+            &function_arguments_types,
+            &function_arguments_names,
+            &struct_items,
+            &mut 0,
+        );
 
-    let calldata_hex: Vec<String> = calldata.0.iter().map(|x| x.to_string()).collect();
-    additional_info.function_arguments = Some(calldata_hex);
+        additional_info.calldata_decoded = Some(json!(decoded_arguments));
+    }
     additional_info
 }
 

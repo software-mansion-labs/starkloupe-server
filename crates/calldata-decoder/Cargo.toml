@@ -1,0 +1,9 @@
+[package]
+name = "calldata-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+starknet_api.workspace = true
+serde_json.workspace = true
+walnut-shared.workspace = true

@@ -4,6 +4,17 @@ use starknet_api::core::ChainId;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
 
+#[derive(Debug, Clone)]
+pub struct Datas {
+    pub names: String,
+    pub types: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructItems {
+    pub name: String,
+    pub members: Vec<Datas>,
+}
 const GOERLI_CHAIN_ID: &str = "0x534e5f474f45524c49";
 const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
 

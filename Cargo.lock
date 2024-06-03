@@ -1527,6 +1527,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "calldata-decoder"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "starknet_api",
+ "walnut-shared",
+]
+
+[[package]]
 name = "camino"
 version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4832,6 +4841,7 @@ version = "0.1.0"
 dependencies = [
  "blockifier",
  "cairo-vm",
+ "calldata-decoder",
  "cheatnet",
  "futures",
  "internal-tracing",

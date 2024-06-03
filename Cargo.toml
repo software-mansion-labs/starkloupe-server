@@ -1,10 +1,11 @@
 [workspace]
 members = [
-    "crates/server",
-    "crates/team-onboarding",
-    "crates/batch-sim",
-    "crates/internal-tracing",
-    "crates/walnut-shared",
+  "crates/server",
+  "crates/team-onboarding",
+  "crates/batch-sim",
+  "crates/internal-tracing",
+  "crates/walnut-shared",
+  "crates/calldata-decoder",
 ]
 resolver = "2"
 
@@ -17,11 +18,11 @@ edition = "2021"
 axum = "0.6.20"
 redis = { version = "0.23.3", features = ["tokio-comp"] }
 sqlx = { version = "0.7.2", features = [
-    "runtime-tokio",
-    "tls-native-tls",
-    "postgres",
-    "uuid",
-    "time",
+  "runtime-tokio",
+  "tls-native-tls",
+  "postgres",
+  "uuid",
+  "time",
 ] }
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors", "trace"] }
@@ -51,10 +52,10 @@ reqwest = { version = "0.11.22", features = ["json"] }
 starknet-providers = "0.10.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.17", features = [
-    "std",
-    "registry",
-    "env-filter",
-    "json",
+  "std",
+  "registry",
+  "env-filter",
+  "json",
 ] }
 cookie = { version = "0.18", features = ["percent-encode"] }
 jsonwebtoken = "9.2.0"
@@ -69,9 +70,10 @@ scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
 itertools = "0.12.1"
 internal-tracing = { path = "./crates/internal-tracing" }
 walnut-shared = { path = "./crates/walnut-shared" }
+calldata-decoder = { path = "./crates/calldata-decoder" }
 # cairo-lang-casm = "2.6.3"
 cairo-lang-casm = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df", features = [
-    "serde",
+  "serde",
 ] }
 cairo-lang-runner = "2.6.3"
 # cairo-lang-utils = "2.6.3"
