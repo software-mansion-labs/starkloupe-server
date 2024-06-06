@@ -4857,6 +4857,7 @@ dependencies = [
  "internal-tracing",
  "num-bigint",
  "num-traits 0.2.18",
+ "reqwest",
  "runtime",
  "serde",
  "serde_json",

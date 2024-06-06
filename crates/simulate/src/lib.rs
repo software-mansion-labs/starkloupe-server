@@ -221,6 +221,7 @@ fn run_simulation(
 
 #[derive(Serialize, Debug)]
 pub struct SimulationCallTraceAdditionalInfo {
+    contract_name: Option<String>,
     entry_point_function_name: Option<String>,
     entry_point_interface_name: Option<String>,
     is_erc20_token: bool,
@@ -445,6 +446,7 @@ fn get_additional_info(
     calldata: Calldata,
 ) -> SimulationCallTraceAdditionalInfo {
     let mut additional_info = SimulationCallTraceAdditionalInfo {
+        contract_name: None,
         entry_point_function_name: None,
         entry_point_interface_name: None,
         is_erc20_token: false,
@@ -494,11 +496,13 @@ fn get_function_name(
     additional_info: &mut SimulationCallTraceAdditionalInfo,
     entry_point_selector: &EntryPointSelector,
 ) {
-    let entry_point_selector_str = entry_point_selector.0.to_string();
-    let selector = get_selector(&entry_point_selector_str);
-    match selector {
-        Some(name) => additional_info.entry_point_function_name = Some(name.to_string()),
-        None => additional_info.entry_point_function_name = None,
+    if additional_info.entry_point_function_name.is_none() {
+        let entry_point_selector_str = entry_point_selector.0.to_string();
+        let selector = get_selector(&entry_point_selector_str);
+        match selector {
+            Some(name) => additional_info.entry_point_function_name = Some(name.to_string()),
+            None => additional_info.entry_point_function_name = None,
+        }
     }
 }
 

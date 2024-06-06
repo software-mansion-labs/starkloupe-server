@@ -34,6 +34,14 @@ pub fn rpc_url(chain_id: &ChainId) -> &str {
     }
 }
 
+pub fn voyager_api_url(chain_id: &ChainId) -> &str {
+    match chain_id.0.as_str() {
+        GOERLI_CHAIN_ID => "https://goerli-api.voyager.online/beta/",
+        MAIN_CHAIN_ID => "https://api.voyager.online/beta/",
+        _ => panic!("Invalid chain id"),
+    }
+}
+
 pub fn extract_chain_id(chain_id: &str) -> ChainId {
     let main = ChainId(MAIN_CHAIN_ID.to_string());
     let goerli = ChainId(GOERLI_CHAIN_ID.to_string());

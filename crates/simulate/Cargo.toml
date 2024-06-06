@@ -21,4 +21,5 @@ walnut-shared.workspace = true
 serde_json.workspace = true
 futures.workspace = true
 calldata-decoder.workspace = true
+reqwest.workspace = true
 starknet-selector-decoder.workspace = true
