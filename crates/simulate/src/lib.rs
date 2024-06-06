@@ -104,7 +104,7 @@ pub struct SimulationInfo {
 pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
     let mut cached_fork_state = create_fork_cached_state_at(
         &args.chain_id,
-        args.block_number.clone(),
+        BlockNumber(args.block_number.clone().0 - 1),
         "tmp/sn-debugger/cache",
     );
 
