@@ -67,6 +67,7 @@ pub struct SimulationRawArgs {
     pub nonce: u64,
     pub sender_address: String,
     pub calldata: Vec<String>,
+    pub transaction_version: usize,
 }
 
 #[derive(Debug)]
@@ -76,6 +77,7 @@ pub struct SimulationArgs {
     pub nonce: Nonce,
     pub sender_address: ContractAddress,
     pub calldata: Calldata,
+    pub transaction_version: TransactionVersion,
 }
 
 impl From<SimulationRawArgs> for SimulationArgs {
@@ -91,6 +93,15 @@ impl From<SimulationRawArgs> for SimulationArgs {
             nonce: Nonce(StarkFelt::from(raw_args.nonce)),
             sender_address: contract_address!(raw_args.sender_address.as_str()),
             calldata: Calldata(calldata.into()),
+            transaction_version: match raw_args.transaction_version {
+                0 => TransactionVersion::ZERO,
+                1 => TransactionVersion::ONE,
+                2 => TransactionVersion::TWO,
+                3 => TransactionVersion::THREE,
+                _ => {
+                    panic!("Invalid transaction version");
+                }
+            },
         }
     }
 }
@@ -330,6 +341,7 @@ pub struct TransactionSimulationResult {
     pub nonce: u64,
     pub sender_address: String,
     pub calldata: Vec<String>,
+    pub transaction_version: usize,
 }
 
 pub async fn simulate_transaction_by_hash(
@@ -342,7 +354,9 @@ pub async fn simulate_transaction_by_hash(
         .get_transaction_by_hash(transaction_hash)
         .await;
     if let Ok(transaction) = transaction {
-        if let Some((nonce, sender_address, calldata)) = extract_submitted_tx(transaction) {
+        if let Some((nonce, sender_address, calldata, transaction_version)) =
+            extract_submitted_tx(transaction)
+        {
             let transaction_receipt = provider_client
                 .get_transaction_receipt(transaction_hash)
                 .await;
@@ -354,6 +368,7 @@ pub async fn simulate_transaction_by_hash(
                         nonce,
                         sender_address,
                         calldata: calldata.clone(),
+                        transaction_version,
                     })
                     .await;
                     let calldata = calldata
@@ -368,6 +383,7 @@ pub async fn simulate_transaction_by_hash(
                         nonce: nonce.0.try_into().unwrap(),
                         sender_address: sender_address.0.to_string(),
                         calldata,
+                        transaction_version: transaction_version.0.try_into().unwrap(),
                     });
                 }
             }
@@ -390,7 +406,9 @@ fn extract_transaction_receipt(
     }
 }
 
-fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddress, Calldata)> {
+fn extract_submitted_tx(
+    transaction: Transaction,
+) -> Option<(Nonce, ContractAddress, Calldata, TransactionVersion)> {
     match transaction {
         Transaction::Invoke(invoke_transaction) => match invoke_transaction {
             InvokeTransaction::V1(tx) => {
@@ -400,6 +418,7 @@ fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddr
                     Nonce(StarkFelt::from(tx.nonce)),
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
+                    TransactionVersion::ONE,
                 ))
             }
             InvokeTransaction::V3(tx) => {
@@ -409,6 +428,7 @@ fn extract_submitted_tx(transaction: Transaction) -> Option<(Nonce, ContractAddr
                     Nonce(StarkFelt::from(tx.nonce)),
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
+                    TransactionVersion::THREE,
                 ))
             }
             _ => None,
