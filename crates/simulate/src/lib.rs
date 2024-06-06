@@ -53,6 +53,7 @@ use starknet_api::transaction::ResourceBoundsMapping;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::transaction::{Calldata, TransactionHash, TransactionSignature};
 use starknet_api::{contract_address, patricia_key, stark_felt};
+use starknet_selector_decoder::get_selector;
 use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -462,7 +463,31 @@ fn get_additional_info(
         }
     }
 
-    if let CallResult::Success { ret_data } = result {
+    get_function_name(&mut additional_info, &entry_point_selector);
+    get_function_result(&mut additional_info, &result, &struct_items);
+    get_function_arguments(&mut additional_info, &calldata, &struct_items);
+
+    additional_info
+}
+
+fn get_function_name(
+    additional_info: &mut SimulationCallTraceAdditionalInfo,
+    entry_point_selector: &EntryPointSelector,
+) {
+    let entry_point_selector_str = entry_point_selector.0.to_string();
+    let selector = get_selector(&entry_point_selector_str);
+    match selector {
+        Some(name) => additional_info.entry_point_function_name = Some(name.to_string()),
+        None => additional_info.entry_point_function_name = None,
+    }
+}
+
+fn get_function_result(
+    additional_info: &mut SimulationCallTraceAdditionalInfo,
+    call_result: &CallResult,
+    struct_items: &Vec<StructItems>,
+) {
+    if let CallResult::Success { ret_data } = call_result {
         if let Ok(ret_hex) = felt252_to_hex(ret_data.to_vec()) {
             if let Some(function_return_result_types) =
                 additional_info.function_return_result_types.clone()
@@ -471,7 +496,7 @@ fn get_additional_info(
                     &ret_hex,
                     &function_return_result_types,
                     &vec![],
-                    &struct_items,
+                    struct_items,
                     &mut 0,
                 );
                 additional_info.function_result = Some(json!(decoded_result));
@@ -480,6 +505,13 @@ fn get_additional_info(
             panic!("Failed to decode return data");
         }
     }
+}
+
+fn get_function_arguments(
+    additional_info: &mut SimulationCallTraceAdditionalInfo,
+    calldata: &Calldata,
+    struct_items: &Vec<StructItems>,
+) {
     if let (Some(function_arguments_types), Some(function_arguments_names)) = (
         additional_info.function_arguments_types.clone(),
         additional_info.function_arguments_names.clone(),
@@ -495,7 +527,6 @@ fn get_additional_info(
 
         additional_info.calldata_decoded = Some(json!(decoded_arguments));
     }
-    additional_info
 }
 
 fn update_error_message(

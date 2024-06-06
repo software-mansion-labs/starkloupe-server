@@ -87,3 +87,5 @@ cairo-lang-starknet-classes = { git = "https://github.com/walnuthq/cairo", rev =
 cairo-lang-sierra-to-casm = { git = "https://github.com/walnuthq/cairo", rev = "e27ee4aa794331cabee4a22768fe99d837b489df" }
 # blockifier = { path = "../walnut-blockifier/crates/blockifier" }
 blockifier = { git = "https://github.com/walnuthq/blockifier", rev = "8401ca0a1e0afc0e54fc6077bb9b90788923a0e3" }
+#starknet selector decoder for mainnet
+starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }
