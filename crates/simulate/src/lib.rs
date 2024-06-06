@@ -1,7 +1,6 @@
 pub mod abi_processor;
 pub mod contract_names;
 pub mod utils;
-use crate::utils::convert_to_hex;
 use crate::utils::create_fork_cached_state_at;
 use abi_processor::AbiProcessor;
 use blockifier::abi::abi_utils::selector_from_name;
@@ -58,13 +57,14 @@ use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
 use walnut_shared::{create_rpc_client, decode_felt252, StructItems};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
     pub chain_id: String,
     pub block_number: u64,
-    pub nonce: u64,
+    pub nonce: Option<u64>,
     pub sender_address: String,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
@@ -74,7 +74,7 @@ pub struct SimulationRawArgs {
 pub struct SimulationArgs {
     pub chain_id: ChainId,
     pub block_number: BlockNumber,
-    pub nonce: Nonce,
+    pub nonce: Option<Nonce>,
     pub sender_address: ContractAddress,
     pub calldata: Calldata,
     pub transaction_version: TransactionVersion,
@@ -85,12 +85,13 @@ impl From<SimulationRawArgs> for SimulationArgs {
         let calldata: Vec<StarkFelt> = raw_args
             .calldata
             .iter()
-            .map(|x| stark_felt!(convert_to_hex(x).as_str()))
+            .map(|x| stark_felt!(x.as_str()))
             .collect();
+        let chain_id = extract_chain_id(raw_args.chain_id.as_str());
         Self {
-            chain_id: ChainId(raw_args.chain_id.clone()),
+            chain_id,
             block_number: BlockNumber(raw_args.block_number),
-            nonce: Nonce(StarkFelt::from(raw_args.nonce)),
+            nonce: raw_args.nonce.map(|nonce| Nonce(StarkFelt::from(nonce))),
             sender_address: contract_address!(raw_args.sender_address.as_str()),
             calldata: Calldata(calldata.into()),
             transaction_version: match raw_args.transaction_version {
@@ -167,9 +168,9 @@ fn run_simulation(
         tx_info: TransactionInfo::Current(CurrentTransactionInfo {
             common_fields: CommonAccountFields {
                 transaction_hash: TransactionHash::default(),
-                version: TransactionVersion::ONE,
+                version: args.transaction_version,
                 signature: TransactionSignature::default(),
-                nonce: args.nonce,
+                nonce: args.nonce.unwrap_or(Nonce::default()),
                 sender_address: ContractAddress::default(),
                 only_query: false,
             },
@@ -366,7 +367,7 @@ pub async fn simulate_transaction_by_hash(
                     let simulation_result = simulate(SimulationArgs {
                         chain_id: chain_id.clone(),
                         block_number,
-                        nonce,
+                        nonce: Some(nonce),
                         sender_address,
                         calldata: calldata.clone(),
                         transaction_version,
