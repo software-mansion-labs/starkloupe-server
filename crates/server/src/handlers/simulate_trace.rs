@@ -9,8 +9,8 @@ use cheatnet::state::TraceData;
 use db::Simulation;
 use serde::Serialize;
 use simulate::{
-    simulate, simulate_transaction_by_hash, SimulationArgs, SimulationInfo, SimulationRawArgs,
-    TransactionSimulationResult,
+    simulate_by_data, simulate_transaction_by_hash, SimulationArgs, SimulationInfo,
+    SimulationRawArgs, TransactionSimulationResult,
 };
 use sqlx::types::Uuid;
 use starknet::core::types::{
@@ -71,8 +71,9 @@ pub struct SimulateTraceResponse {
 
 pub async fn simulate_transaction(
     Json(payload): Json<SimulationRawArgs>,
-) -> Result<Json<SimulationInfo>, StatusCode> {
-    let simulation_info = simulate(payload.into()).await;
+) -> Result<Json<TransactionSimulationResult>, StatusCode> {
+    //let simulation_info = simulate(payload.into()).await;
+    let simulation_info = simulate_by_data(payload.into()).await;
     Ok(Json(simulation_info))
 }
 

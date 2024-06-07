@@ -33,6 +33,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
+use starknet::core::chain_id;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::MaybePendingTransactionReceipt;
@@ -340,10 +341,42 @@ pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
     pub block_number: u64,
-    pub nonce: u64,
+    pub nonce: Option<u64>,
     pub sender_address: String,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
+}
+
+pub async fn simulate_by_data(args: SimulationArgs) -> TransactionSimulationResult {
+    let nonce: Option<u64> = match args.nonce {
+        Some(nonce) => match nonce.0.try_into() {
+            Ok(value) => Some(value),
+            Err(_) => None,
+        },
+        None => None,
+    };
+    let chain_id = args.chain_id.clone().0.to_string();
+    let block_number = args.block_number.0;
+    let sender_address = args.sender_address.0.to_string();
+    let calldata = args
+        .calldata
+        .0
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>();
+
+    let transaction_version: usize = args.transaction_version.0.try_into().unwrap();
+    let simulation_result = simulate(args).await;
+
+    TransactionSimulationResult {
+        simulation_result,
+        chain_id,
+        block_number,
+        nonce,
+        sender_address,
+        calldata,
+        transaction_version,
+    }
 }
 
 pub async fn simulate_transaction_by_hash(
@@ -378,11 +411,15 @@ pub async fn simulate_transaction_by_hash(
                         .iter()
                         .map(|x| x.to_string())
                         .collect::<Vec<String>>();
+                    let nonce = match nonce.0.try_into() {
+                        Ok(value) => Some(value),
+                        Err(_) => None,
+                    };
                     return Some(TransactionSimulationResult {
                         simulation_result,
                         chain_id: chain_id.0,
                         block_number: block_number.0,
-                        nonce: nonce.0.try_into().unwrap(),
+                        nonce,
                         sender_address: sender_address.0.to_string(),
                         calldata,
                         transaction_version: transaction_version.0.try_into().unwrap(),
