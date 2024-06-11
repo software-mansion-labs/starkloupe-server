@@ -22,22 +22,15 @@ pub fn decode_datas(
                 let data = &datas[*data_index];
                 *data_index += 1;
                 result.push(Value::Object(create_result_obj(
-                    &names,
+                    names,
                     index,
                     data_type,
                     ValueType::Single(data.to_string()),
                 )))
             }
             EDataType::Array(inner_type) => {
-                let array_length = usize::from_str_radix(
-                    datas
-                        .get(*data_index)
-                        .unwrap()
-                        .to_string()
-                        .trim_start_matches("0x"),
-                    16,
-                )
-                .unwrap();
+                let array_lenght_hex = datas.get(*data_index).unwrap().trim_start_matches("0x");
+                let array_length = usize::from_str_radix(array_lenght_hex, 16).unwrap();
                 *data_index += 1;
                 let mut decoded_array = Vec::new();
                 for _ in 0..array_length {
