@@ -4850,6 +4850,7 @@ name = "simulate"
 version = "0.1.0"
 dependencies = [
  "blockifier",
+ "cairo-felt",
  "cairo-vm",
  "calldata-decoder",
  "cheatnet",
@@ -6206,7 +6207,11 @@ name = "walnut-shared"
 version = "0.1.0"
 dependencies = [
  "cairo-felt",
+ "cairo-vm",
+ "cheatnet",
+ "conversions",
  "num-bigint",
+ "serde",
  "starknet-providers 0.10.0",
  "starknet_api",
  "url",

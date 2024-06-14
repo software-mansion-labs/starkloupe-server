@@ -17,12 +17,15 @@ use blockifier::transaction::objects::CommonAccountFields;
 use blockifier::transaction::objects::CurrentTransactionInfo;
 use blockifier::transaction::objects::TransactionInfo;
 use blockifier::versioned_constants::VersionedConstants;
+use cairo_felt::Felt252;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use calldata_decoder::decode_datas;
 use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::SpyTarget;
 use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CheatnetState;
@@ -33,7 +36,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
-use starknet::core::chain_id;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::MaybePendingTransactionReceipt;
@@ -60,7 +62,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
-use walnut_shared::{create_rpc_client, decode_felt252, StructItems};
+use walnut_shared::{
+    create_rpc_client, decode_felt252, felt_vec_to_event_vec, EventItems, StructItems,
+};
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
     pub chain_id: String,
@@ -111,6 +116,7 @@ impl From<SimulationRawArgs> for SimulationArgs {
 #[derive(Serialize, Debug)]
 pub struct SimulationInfo {
     pub call_trace: Option<SimulationCallTrace>,
+    pub events_trace: Option<Vec<EventTrace>>,
     pub max_nested_error_level: usize,
     pub execution_result: Option<ExecutionResult>,
 }
@@ -131,11 +137,15 @@ pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
         cheatnet_state,
     );
 
-    if let Some(mut call_trace) = simulation_info.call_trace.take() {
+    if let (Some(mut call_trace), Some(mut event_trace)) = (
+        simulation_info.call_trace.take(),
+        simulation_info.events_trace.take(),
+    ) {
         ContractNamesFetcher::new(&chain_id)
-            .enhance_trace_with_contract_names(&mut call_trace)
+            .enhance_trace_with_contract_names(&mut call_trace, &mut event_trace)
             .await;
         simulation_info.call_trace = Some(call_trace);
+        simulation_info.events_trace = Some(event_trace);
     }
     simulation_info
 }
@@ -205,6 +215,7 @@ fn run_simulation(
 
     let mut cheatnet_state = CheatnetState {
         block_info,
+        spies: vec![SpyTarget::All],
         ..Default::default()
     };
 
@@ -218,7 +229,19 @@ fn run_simulation(
         &mut context,
     );
 
+    let size = cheatnet_state.spy_events(SpyTarget::All);
+    let (_, events) = cheatnet_state.fetch_events(&Felt252::from(size));
+    let raw_events = felt_vec_to_event_vec(&events);
+    cheatnet_state.detected_events = raw_events;
+
     cheatnet_state
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct EventAbi {
+    event_name: String,
+    event_arguments_names: Vec<String>,
+    event_arguments_types: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -235,6 +258,16 @@ pub struct SimulationCallTraceAdditionalInfo {
     function_arguments_names: Option<Vec<String>>,
     function_arguments_types: Option<Vec<String>>,
     calldata_decoded: Option<Value>,
+    event_abi: Option<Vec<EventAbi>>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct EventTrace {
+    pub contract_name: String,
+    pub event_name: String,
+    pub event_arguments_names: Vec<String>,
+    pub event_keys: Vec<String>,
+    pub event_datas: Vec<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -264,6 +297,7 @@ fn get_simulation_info(
     if call_trace_ref.nested_calls.is_empty() {
         return SimulationInfo {
             call_trace: None,
+            events_trace: None,
             max_nested_error_level,
             execution_result: None,
         };
@@ -276,6 +310,8 @@ fn get_simulation_info(
         &mut max_nested_error_level,
     );
 
+    let events_trace = get_event_trace(&cheatnet_state.detected_events, &call_trace);
+
     let mut execution_result: ExecutionResult = ExecutionResult::Succeeded;
     update_error_message(
         &mut call_trace,
@@ -285,6 +321,7 @@ fn get_simulation_info(
 
     SimulationInfo {
         call_trace: Some(call_trace),
+        events_trace: Some(events_trace),
         max_nested_error_level,
         execution_result: Some(execution_result),
     }
@@ -334,6 +371,66 @@ fn get_simulation_call_trace(
             call_trace_ref.entry_point.calldata.clone(),
         ),
     }
+}
+
+fn get_event_trace(events: &Vec<Event>, call_trace: &SimulationCallTrace) -> Vec<EventTrace> {
+    let mut events_trace: Vec<EventTrace> = Vec::new();
+    for event in events {
+        let contract_name = event.from.to_string();
+
+        let keys_hex = felt252_to_hex(event.keys.to_vec()).unwrap();
+        let mut event_name = keys_hex[0].to_string();
+        let mut event_keys = Vec::new();
+        if keys_hex.len() > 1 {
+            event_keys = keys_hex[1..].to_vec();
+        }
+        let event_datas = felt252_to_hex(event.data.to_vec()).unwrap();
+        let event_abi = find_call_trace(call_trace, &contract_name);
+        let filtered_event_abi = event_abi.as_ref().and_then(|events| {
+            events
+                .iter()
+                .find(|abi| {
+                    let selector = selector_from_name(abi.event_name.as_str());
+                    selector.0.to_string() == event_name
+                })
+                .cloned()
+        });
+        let mut event_arguments_names: Vec<String> = Vec::new();
+        if filtered_event_abi.is_some() {
+            event_name = filtered_event_abi.as_ref().unwrap().event_name.clone();
+            event_arguments_names = filtered_event_abi
+                .as_ref()
+                .unwrap()
+                .event_arguments_names
+                .clone();
+        }
+        let event_trace = EventTrace {
+            contract_name,
+            event_name,
+            event_arguments_names,
+            event_keys,
+            event_datas,
+        };
+        events_trace.push(event_trace);
+    }
+
+    events_trace
+}
+
+fn find_call_trace(call_trace: &SimulationCallTrace, contract_name: &str) -> Option<Vec<EventAbi>> {
+    if call_trace.entry_point.storage_address.0.to_string() == contract_name {
+        return call_trace.additional_info.event_abi.clone();
+    }
+
+    if !call_trace.nested_calls.is_empty() {
+        for nested_call in &call_trace.nested_calls {
+            if let Some(found_trace) = find_call_trace(nested_call, contract_name) {
+                return Some(found_trace);
+            }
+        }
+    }
+
+    None
 }
 
 #[derive(Serialize, Debug)]
@@ -496,8 +593,10 @@ fn get_additional_info(
         function_arguments_names: None,
         function_arguments_types: None,
         calldata_decoded: None,
+        event_abi: None,
     };
     let mut struct_items: Vec<StructItems> = Vec::new();
+    let mut event_items: Vec<EventItems> = Vec::new();
     if let Some(class_hash) = class_hash {
         let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
         if let Some(contract_class) = contract_class {
@@ -517,17 +616,51 @@ fn get_additional_info(
                     additional_info.function_return_result_types =
                         abi_processor.function_return_result_types;
                     struct_items = abi_processor.struct_items;
+                    event_items = abi_processor.event_items;
                 }
                 _ => {}
             };
         }
     }
 
+    get_event_data(&mut additional_info, &event_items);
     get_function_name(&mut additional_info, &entry_point_selector);
     get_function_result(&mut additional_info, &result, &struct_items);
     get_function_arguments(&mut additional_info, &calldata, &struct_items);
 
     additional_info
+}
+
+//TODO better way to get event data do not include all in response - uneffecient
+fn get_event_data(
+    additional_info: &mut SimulationCallTraceAdditionalInfo,
+    event_items: &Vec<EventItems>,
+) {
+    if !event_items.is_empty() {
+        let mut event_abis: Vec<EventAbi> = Vec::new();
+        for event_item in event_items {
+            if !event_item.name.is_empty() {
+                let event_name = event_item.name.to_string();
+                let event_arguments_names: Vec<String> = event_item
+                    .members
+                    .iter()
+                    .map(|x| x.names.to_string())
+                    .collect();
+                let event_arguments_types: Vec<String> = event_item
+                    .members
+                    .iter()
+                    .map(|x| x.types.to_string())
+                    .collect();
+                let event_abi = EventAbi {
+                    event_name,
+                    event_arguments_names,
+                    event_arguments_types,
+                };
+                event_abis.push(event_abi);
+            }
+        }
+        additional_info.event_abi = Some(event_abis);
+    }
 }
 
 fn get_function_name(

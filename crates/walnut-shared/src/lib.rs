@@ -1,16 +1,26 @@
 use cairo_felt::Felt252;
+use cairo_vm::hint_processor::hint_processor_utils::felt_to_usize;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
+use conversions::IntoConv;
 use num_bigint::BigUint;
+use serde::Serialize;
 use starknet_api::core::ChainId;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
+pub struct EventItems {
+    pub name: String,
+    pub members: Vec<Datas>,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Datas {
     pub names: String,
     pub types: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct StructItems {
     pub name: String,
     pub members: Vec<Datas>,
@@ -65,7 +75,7 @@ pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
 pub fn felt252_to_hex(felt_array: Vec<Felt252>) -> Result<Vec<String>, std::str::Utf8Error> {
     let hex_representation = felt_array
         .iter()
-        .map(|felt| format!("0x{}", felt.to_str_radix(16)))
+        .map(|felt| format!("0x{:0>64}", felt.to_str_radix(16)))
         .collect::<Vec<String>>();
 
     Ok(hex_representation)
@@ -91,4 +101,30 @@ pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8
     //get human readable text
     let text = String::from_utf8_lossy(&bytes);
     Ok(text.to_string())
+}
+
+pub fn felt_vec_to_event_vec(felts: &[Felt252]) -> Vec<Event> {
+    let mut events = vec![];
+    let mut i = 0;
+    while i < felts.len() {
+        let from = felts[i].clone().into_();
+        let keys_length = &felts[i + 1];
+        let keys = &felts[i + 2..i + 2 + felt_to_usize(keys_length).unwrap()];
+        let data_length = &felts[i + 2 + felt_to_usize(keys_length).unwrap()];
+        let data = &felts[i + 2 + felt_to_usize(keys_length).unwrap() + 1
+            ..i + 2
+                + felt_to_usize(keys_length).unwrap()
+                + 1
+                + felt_to_usize(data_length).unwrap()];
+
+        events.push(Event {
+            from,
+            keys: Vec::from(keys),
+            data: Vec::from(data),
+        });
+
+        i = i + 2 + felt_to_usize(keys_length).unwrap() + 1 + felt_to_usize(data_length).unwrap();
+    }
+
+    events
 }

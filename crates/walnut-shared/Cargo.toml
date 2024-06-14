@@ -9,3 +9,7 @@ starknet-providers.workspace = true
 starknet_api.workspace = true
 num-bigint.workspace = true
 cairo-felt.workspace = true
+serde.workspace = true
+cairo-vm.workspace = true
+conversions.workspace = true
+cheatnet.workspace = true

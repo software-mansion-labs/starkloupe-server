@@ -1,3 +1,4 @@
+use crate::EventTrace;
 use crate::SimulationCallTrace;
 use futures::future::join_all;
 use serde_json::Value;
@@ -45,11 +46,15 @@ impl ContractNamesFetcher {
     pub async fn enhance_trace_with_contract_names(
         &mut self,
         simulation_call_trace: &mut SimulationCallTrace,
+        event_traces: &mut Vec<EventTrace>,
     ) {
         self.get_contract_addresses(simulation_call_trace);
         self.token_contract_names = self.fetch_token_contract_names().await;
         self.contract_names = self.fetch_contract_names().await;
         self.update_simulation_call_trace(simulation_call_trace);
+        for event_trace in &mut event_traces.iter_mut() {
+            self.update_event_trace_with_contract_names(simulation_call_trace, event_trace);
+        }
     }
 
     fn get_contract_addresses(&mut self, simulation_call_trace: &SimulationCallTrace) {
@@ -198,6 +203,49 @@ impl ContractNamesFetcher {
         }
         for nested_call in &mut simulation_call_trace.nested_calls {
             self.update_simulation_call_trace(nested_call);
+        }
+    }
+
+    fn update_event_trace_with_contract_names(
+        &self,
+        simulation_call_trace: &SimulationCallTrace,
+        event_trace: &mut EventTrace,
+    ) {
+        let storage_address_formatted = format!(
+            "0x{:0>64}",
+            simulation_call_trace
+                .entry_point
+                .storage_address
+                .0
+                .to_string()
+                .trim_start_matches("0x")
+        );
+        if storage_address_formatted == event_trace.contract_name {
+            let contract_name = simulation_call_trace.additional_info.contract_name.clone();
+            match contract_name {
+                Some(name) => {
+                    event_trace.contract_name = name;
+                }
+                None => {
+                    let token_name = simulation_call_trace
+                        .additional_info
+                        .erc20_token_name
+                        .clone()
+                        .unwrap_or_default();
+                    let token_symbol = simulation_call_trace
+                        .additional_info
+                        .erc20_token_symbol
+                        .clone()
+                        .unwrap_or_default();
+                    if !token_name.is_empty() && !token_symbol.is_empty() {
+                        event_trace.contract_name = format!("{} ({})", token_name, token_symbol);
+                    }
+                }
+            }
+        }
+
+        for nested_call in &simulation_call_trace.nested_calls {
+            self.update_event_trace_with_contract_names(nested_call, event_trace)
         }
     }
 }
