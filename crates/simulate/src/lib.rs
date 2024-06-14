@@ -3,6 +3,7 @@ pub mod contract_names;
 pub mod utils;
 use crate::utils::create_fork_cached_state_at;
 use abi_processor::AbiProcessor;
+use anyhow::anyhow;
 use blockifier::abi::abi_utils::selector_from_name;
 use blockifier::context::BlockContext;
 use blockifier::context::ChainInfo;
@@ -370,11 +371,16 @@ fn get_simulation_call_trace(
         nested_calls.push(nested_trace);
     }
 
-    let internal_fn_call_trace_result = get_internal_fn_call_trace(
-        call_trace_ref.entry_point.class_hash.unwrap(),
-        &call_trace_ref.relocated_memory.as_ref().unwrap(),
-        &call_trace_ref.vm_trace.as_ref().unwrap(),
-    );
+    let internal_fn_call_trace_result = match (
+        call_trace_ref.entry_point.class_hash,
+        call_trace_ref.relocated_memory.as_ref(),
+        call_trace_ref.vm_trace.as_ref(),
+    ) {
+        (Some(class_hash), Some(relocated_memory), Some(vm_trace)) => {
+            get_internal_fn_call_trace(class_hash, relocated_memory, vm_trace)
+        }
+        _ => Err(anyhow!("Not enough data to get internal fn call trace")),
+    };
 
     let internal_fn_call_trace = match internal_fn_call_trace_result {
         Ok((internal_fn_call_trace, new_used_source_files)) => {

@@ -4851,6 +4851,7 @@ dependencies = [
 name = "simulate"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "blockifier",
  "cairo-felt",
  "cairo-vm",
