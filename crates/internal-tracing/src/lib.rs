@@ -80,39 +80,39 @@ pub fn get_internal_fn_call_trace(
 
             // https://docs.cairo-lang.org/how_cairo_works/functions.html#argument
             // TODO: check if is algorithm is correct and fix if needed
-            for argument in call_entry.arguments.iter_mut().rev() {
-                let type_size = argument.type_size as usize;
-                let mut values: Vec<String> = Vec::new();
-                for i in 1..(type_size + 1) {
-                    let addr = trace_entry.ap - 2 - type_size + i;
-                    let value = mappings.common_debug_data.memory_map.get(&addr).unwrap();
-                    values.push(value.clone().to_string());
-                }
-                argument.value = values;
-            }
+            // for argument in call_entry.arguments.iter_mut().rev() {
+            //     let type_size = argument.type_size as usize;
+            //     let mut values: Vec<String> = Vec::new();
+            //     for i in 1..(type_size + 1) {
+            //         let addr = trace_entry.ap - 2 - type_size + i;
+            //         let value = mappings.common_debug_data.memory_map.get(&addr).unwrap();
+            //         values.push(value.clone().to_string());
+            //     }
+            //     argument.value = values;
+            // }
             tree.add_child(call_entry);
             current_fp = trace_entry.fp;
         } else if new_fp < current_fp {
             // return from function
-            let exit_function = tree.get_node_data(tree.current_node);
-            let mut result_values: Vec<Vec<String>> = Vec::new();
-            let mut offset = 0;
+            // let exit_function = tree.get_node_data(tree.current_node);
+            // let mut result_values: Vec<Vec<String>> = Vec::new();
+            // let mut offset = 0;
 
             // https://docs.cairo-lang.org/how_cairo_works/functions.html#return-values
             // TODO: check if is algorithm is correct and fix if needed
-            for result in exit_function.results.iter().rev() {
-                let type_size = result.type_size as usize;
-                let mut values: Vec<String> = Vec::new();
-                for i in 1..(type_size + 1) {
-                    let addr = trace_entry.ap - type_size + i - offset;
-                    let value = mappings.common_debug_data.memory_map.get(&addr).unwrap();
-                    values.push(value.clone().to_string());
-                }
-                result_values.push(values);
-                offset += type_size;
-            }
-            result_values.reverse();
-            tree.set_result_values_to_current_node(result_values);
+            // for result in exit_function.results.iter().rev() {
+            //     let type_size = result.type_size as usize;
+            //     let mut values: Vec<String> = Vec::new();
+            //     for i in 1..(type_size + 1) {
+            //         let addr = trace_entry.ap - type_size + i - offset;
+            //         let value = mappings.common_debug_data.memory_map.get(&addr).unwrap();
+            //         values.push(value.clone().to_string());
+            //     }
+            //     result_values.push(values);
+            //     offset += type_size;
+            // }
+            // result_values.reverse();
+            // tree.set_result_values_to_current_node(result_values);
             tree.move_to_parent();
             current_fp = trace_entry.fp;
         }
@@ -129,8 +129,8 @@ pub fn get_internal_fn_call_trace(
 pub struct InternalFnCallTraceEntry {
     pub fn_name: Option<String>,
     pub fp: usize,
-    pub results: Vec<InternalFnCallIO>,
-    pub arguments: Vec<InternalFnCallIO>,
+    // pub results: Vec<InternalFnCallIO>,
+    // pub arguments: Vec<InternalFnCallIO>,
     pub cairo_locations: Vec<CodeLocation>,
 }
 
@@ -179,14 +179,14 @@ impl InternalFnCallTraceTree {
         }
     }
 
-    fn set_result_values_to_current_node(&mut self, result_values: Vec<Vec<String>>) {
-        if let Some(node) = self.arena.get_mut(self.current_node) {
-            let data = node.get_mut();
-            for (i, result) in data.results.iter_mut().enumerate() {
-                result.value = result_values[i].clone();
-            }
-        }
-    }
+    // fn set_result_values_to_current_node(&mut self, result_values: Vec<Vec<String>>) {
+    //     if let Some(node) = self.arena.get_mut(self.current_node) {
+    //         let data = node.get_mut();
+    //         for (i, result) in data.results.iter_mut().enumerate() {
+    //             result.value = result_values[i].clone();
+    //         }
+    //     }
+    // }
 
     fn get_serializable(&self, node_id: NodeId) -> InternalFnCallTraceEntryNode {
         let mut nested_calls = Vec::new();
@@ -233,11 +233,16 @@ fn create_internal_fn_call_trace_entry(
             });
         });
     }
+    // InternalFnCallTraceEntry {
+    //     fn_name: function.map(|f| f.to_string()),
+    //     fp,
+    //     results,
+    //     arguments,
+    //     cairo_locations,
+    // }
     InternalFnCallTraceEntry {
         fn_name: function.map(|f| f.to_string()),
         fp,
-        results,
-        arguments,
         cairo_locations,
     }
 }

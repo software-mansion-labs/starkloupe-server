@@ -181,7 +181,8 @@ impl ContractNamesFetcher {
                 }
             }
             Err(e) => {
-                panic!("Failed to fetch contract details from voyager api: {}", e);
+                println!("Failed to fetch contract details from voyager api: {}", e);
+                None
             }
         }
     }
