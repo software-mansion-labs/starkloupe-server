@@ -1579,7 +1579,6 @@ dependencies = [
  "flatten-serde-json",
  "fs2",
  "indoc",
- "internal-tracing",
  "k256",
  "num-bigint",
  "num-traits 0.2.18",

@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
+use anyhow::{Error, Result};
 use byteorder::{ByteOrder, LittleEndian};
-use cairo_felt::Felt252;
+use cairo_felt::{Felt252, PRIME_STR};
 use cairo_lang_sierra::extensions::gas::CostTokenType;
 use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
@@ -11,10 +10,13 @@ use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
     felt252_serde::sierra_from_felt252s,
 };
-use cairo_vm::{types::instruction::{Instruction, Op1Addr}, vm::{decoding::decoder::decode_instruction, trace::trace_entry::TraceEntry}};
+use cairo_vm::{
+    types::instruction::{Instruction, Op1Addr},
+    vm::{decoding::decoder::decode_instruction, trace::trace_entry::TraceEntry},
+};
 use itertools::chain;
-
-use crate::get_instruction_encoding;
+use num_bigint::BigUint;
+use std::collections::HashMap;
 
 pub fn compile_sierra_contract_class(
     contract_class: ContractClass,
@@ -116,4 +118,22 @@ pub fn get_pc_mappings(
         casm_index += 1;
     }
     (pc_inst_map, pc_to_inst_indexes_map)
+}
+
+// Returns the encoded instruction (the value at pc) and the immediate value (the value at
+// pc + 1, if it exists in the memory).
+pub fn get_instruction_encoding(
+    pc: usize,
+    memory: &[Option<Felt252>],
+) -> Result<(Felt252, Option<Felt252>)> {
+    if memory[pc].is_none() {
+        return Err(Error::msg("Memory at pc is None"));
+    }
+    let instruction_encoding = memory[pc].clone().unwrap();
+    let prime = BigUint::parse_bytes(PRIME_STR[2..].as_bytes(), 16).unwrap();
+
+    let imm_addr = BigUint::from(pc + 1) % prime;
+    let imm_addr = usize::try_from(imm_addr.clone()).map_err(|_| Error::msg(""))?;
+    let optional_imm = memory[imm_addr].clone();
+    Ok((instruction_encoding, optional_imm))
 }
