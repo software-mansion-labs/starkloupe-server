@@ -22,6 +22,7 @@ use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
+    openapi::ApiDoc,
     simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
     verification::verify_handler,
 };
@@ -29,6 +30,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use utoipa::OpenApi;
 
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -178,6 +180,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/rpc/0x534e5f4d41494e",
             post(|req| forward_post_request(rpc_url("0x534e5f4d41494e"), req)),
+        )
+        .route_service(
+            "/",
+            axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),
         )
         .layer(prometheus_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
