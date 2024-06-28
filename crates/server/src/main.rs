@@ -8,28 +8,27 @@ use app_state::AppState;
 use aws_config::meta::region::RegionProviderChain;
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::State,
     http::{header, HeaderValue, Method, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
     routing::post,
-    Json, Router,
+    Router,
 };
 use axum_prometheus::PrometheusMetricLayer;
 use config::rpc_url;
 use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
-use handlers::{simulate_trace::simulate_transaction, verification::verify_handler};
+use handlers::{
+    simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
+    verification::verify_handler,
+};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::handlers::simulate_trace::simulate_transaction_by_hash_handler;
-
-// use crate::handlers::verification::verify_handler;
 
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -152,24 +151,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shared_config = aws_config::from_env().region(region_provider).load().await;
     let s3_client = aws_sdk_s3::Client::new(&shared_config);
 
-    // Set environment variable loading bucket name
-    // let bucket_name = std::env::var("BUCKET_NAME").expect("BUCKET_NAME not set in environment");
-
-    // Retrieve the bucket and list its objects
-    // match s3_client
-    //     .list_objects_v2()
-    //     .bucket("walnutserver-east-1-classes-verification")
-    //     .send()
-    //     .await
-    // {
-    //     Ok(output) => {
-    //         dbg!(output);
-    //     }
-    //     Err(error) => {
-    //         eprintln!("Got an error while listing objects in bucket: {:#?}", error);
-    //     }
-    // }
-
     // sqlx::migrate!().run(&db_pool).await?;
 
     let shared_state = Arc::new(AppState {
@@ -181,7 +162,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
     let app = Router::new()
-        .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-transaction", post(simulate_transaction))
         .route(
             "/v1/:chain_id/simulate-transaction/:tx_hash",
@@ -211,13 +191,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     Ok(())
-}
-
-async fn read_transaction(
-    State(_state): State<Arc<AppState>>,
-    path: Path<(String, String)>,
-) -> Result<Json<String>, StatusCode> {
-    // Implement your business logic here
-    dbg!(path);
-    Ok(Json("Hello, World!".to_string()))
 }
