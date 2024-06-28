@@ -11,11 +11,11 @@ use sqlx::{Pool, Postgres};
 use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, FieldElement};
 use starknet::providers::Provider;
 use starknet_api::core::ChainId;
-use std::fs;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
+use std::{env, fs};
 use uuid::Uuid;
 use walnut_shared::create_rpc_client;
 
@@ -172,6 +172,11 @@ async fn verify(
             let absolute_path = fs::canonicalize(&relative_path).unwrap();
             cmd.scarb_path(absolute_path);
             cmd.arg("build");
+            let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
+            let scarb_cache_dir_str = scarb_cache_dir
+                .to_str()
+                .ok_or(anyhow::anyhow!("Failed to convert cache dir to string"))?;
+            cmd.env("SCARB_CACHE", scarb_cache_dir_str);
             cmd.run()?;
         }
         _ => {
