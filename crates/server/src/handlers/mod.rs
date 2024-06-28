@@ -3,4 +3,4 @@
 // pub(crate) mod simulate;
 pub(crate) mod simulate_trace;
 // pub(crate) mod simulations;
-// pub(crate) mod verification;
+pub(crate) mod verification;

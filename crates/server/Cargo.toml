@@ -23,7 +23,7 @@ tracing-subscriber.workspace = true
 starknet.workspace = true
 starknet_api.workspace = true
 blockifier.workspace = true
-simulate = { path = "../simulate" }
+simulate.workspace = true
 db = { path = "../db" }
 axum-prometheus = "0.4.0"
 cookie.workspace = true
@@ -38,3 +38,6 @@ scarb-api.workspace = true
 cairo-lang-starknet-classes.workspace = true
 anyhow.workspace = true
 walnut-shared.workspace = true
+verification.workspace = true
+aws-sdk-s3.workspace = true
+aws-config.workspace = true

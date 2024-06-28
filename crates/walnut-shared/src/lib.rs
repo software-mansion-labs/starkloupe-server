@@ -1,5 +1,7 @@
 use cairo_felt::Felt252;
-use cairo_vm::hint_processor::hint_processor_utils::felt_to_usize;
+use cairo_vm::{
+    hint_processor::hint_processor_utils::felt_to_usize, vm::trace::trace_entry::TraceEntry,
+};
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use conversions::IntoConv;
 use num_bigint::BigUint;
@@ -127,4 +129,15 @@ pub fn felt_vec_to_event_vec(felts: &[Felt252]) -> Vec<Event> {
     }
 
     events
+}
+
+pub fn clone_vm_trace(vm_trace: &Vec<TraceEntry>) -> Vec<TraceEntry> {
+    vm_trace
+        .iter()
+        .map(|trace_entry| TraceEntry {
+            pc: trace_entry.pc,
+            fp: trace_entry.fp,
+            ap: trace_entry.ap,
+        })
+        .collect()
 }

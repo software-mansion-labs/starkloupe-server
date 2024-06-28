@@ -25,3 +25,4 @@ reqwest.workspace = true
 starknet-selector-decoder.workspace = true
 cairo-felt.workspace = true
 anyhow.workspace = true
+aws-sdk-s3.workspace = true

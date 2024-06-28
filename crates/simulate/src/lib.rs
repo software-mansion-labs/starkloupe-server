@@ -19,6 +19,7 @@ use blockifier::transaction::objects::TransactionInfo;
 use blockifier::versioned_constants::VersionedConstants;
 use cairo_felt::Felt252;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use cairo_vm::vm::trace::trace_entry::TraceEntry;
 use calldata_decoder::decode_datas;
 use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
@@ -42,6 +43,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
+use sqlx::Pool;
+use sqlx::Postgres;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::MaybePendingTransactionReceipt;
@@ -65,9 +68,9 @@ use starknet_selector_decoder::get_selector;
 use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
+use walnut_shared::clone_vm_trace;
 use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
 use walnut_shared::{
@@ -127,10 +130,14 @@ pub struct SimulationInfo {
     pub events_trace: Option<Vec<EventTrace>>,
     pub max_nested_error_level: usize,
     pub execution_result: Option<ExecutionResult>,
-    pub simulation_debugger_data: SimulationDebuggerData,
+    pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }
 
-pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
+pub async fn simulate(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    args: SimulationArgs,
+) -> SimulationInfo {
     let mut cached_fork_state = create_fork_cached_state_at(
         &args.chain_id,
         BlockNumber(args.block_number.clone().0 - 1),
@@ -141,10 +148,24 @@ pub async fn simulate(args: SimulationArgs) -> SimulationInfo {
 
     let cheatnet_state = run_simulation(args, &mut cached_fork_state);
 
-    let mut simulation_info = get_simulation_info(
+    let (mut simulation_info, class_hashes) = get_simulation_info(
         &cached_fork_state.state.fork_state_reader.unwrap(),
         cheatnet_state,
     );
+
+    let classes_debugger_data = fetch_classes_debugger_data(db_pool, s3_client, class_hashes).await;
+
+    if let Some(mut simulation_call_trace) = simulation_info.call_trace.take() {
+        enhance_call_trace_with_internal_trace_and_debugger_data(
+            &mut simulation_call_trace,
+            &classes_debugger_data,
+        );
+
+        simulation_info.simulation_debugger_data = Some(SimulationDebuggerData {
+            classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
+        });
+        simulation_info.call_trace = Some(simulation_call_trace);
+    }
 
     if let (Some(mut call_trace), Some(mut event_trace)) = (
         simulation_info.call_trace.take(),
@@ -292,12 +313,15 @@ pub struct SimulationCallTrace {
     pub result: CallResult,
     pub internal_fn_call_trace: Option<InternalFnCallTraceEntryNode>,
     pub additional_info: SimulationCallTraceAdditionalInfo,
+    pub _vm_trace: Option<Vec<TraceEntry>>,
+    pub _relocated_memory: Option<Vec<Option<Felt252>>>,
 }
 
 fn get_simulation_info(
     fork_state_reader: &ForkStateReader,
     cheatnet_state: CheatnetState,
-) -> SimulationInfo {
+) -> (SimulationInfo, Vec<String>) {
+    let mut class_hashes: Vec<String> = Vec::new();
     let mut max_nested_error_level: usize = 0;
 
     let call_trace_ref: Ref<CallTrace> = cheatnet_state
@@ -306,30 +330,28 @@ fn get_simulation_info(
         .borrow_full_trace();
 
     if call_trace_ref.nested_calls.is_empty() {
-        return SimulationInfo {
-            call_trace: None,
-            events_trace: None,
-            max_nested_error_level,
-            execution_result: None,
-            simulation_debugger_data: SimulationDebuggerData {
-                classes_debugger_data: HashMap::new(),
+        return (
+            SimulationInfo {
+                call_trace: None,
+                events_trace: None,
+                max_nested_error_level,
+                execution_result: None,
+                simulation_debugger_data: Some(SimulationDebuggerData {
+                    classes_debugger_data: HashMap::new(),
+                }),
             },
-        };
+            Vec::new(),
+        );
     }
-
-    let mut class_hashes: Vec<String> = Vec::new();
-    collect_class_hashes(call_trace_ref.nested_calls[0].borrow(), &mut class_hashes);
-    let classes_debugger_data = fetch_classes_debugger_data(&class_hashes);
 
     let mut call_trace = get_simulation_call_trace(
         fork_state_reader,
         call_trace_ref.nested_calls[0].borrow(),
         0,
         &mut max_nested_error_level,
-        &classes_debugger_data,
+        &mut class_hashes,
     );
 
-    // let source_code = fetch_source_code(used_source_files).ok();
     let events_trace = get_event_trace(&cheatnet_state.detected_events, &call_trace);
 
     let mut execution_result: ExecutionResult = ExecutionResult::Succeeded;
@@ -339,15 +361,16 @@ fn get_simulation_info(
         &mut execution_result,
     );
 
-    SimulationInfo {
-        call_trace: Some(call_trace),
-        events_trace: Some(events_trace),
-        max_nested_error_level,
-        execution_result: Some(execution_result),
-        simulation_debugger_data: SimulationDebuggerData {
-            classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
+    (
+        SimulationInfo {
+            call_trace: Some(call_trace),
+            events_trace: Some(events_trace),
+            max_nested_error_level,
+            execution_result: Some(execution_result),
+            simulation_debugger_data: None,
         },
-    }
+        class_hashes,
+    )
 }
 
 fn get_simulation_call_trace(
@@ -355,7 +378,7 @@ fn get_simulation_call_trace(
     call_trace_ref: Ref<CallTrace>,
     nested_level: usize,
     max_nested_error_level: &mut usize,
-    classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
+    class_hashes: &mut Vec<String>,
 ) -> SimulationCallTrace {
     let mut nested_calls = Vec::new();
     if call_trace_ref.nested_calls.is_empty()
@@ -376,43 +399,14 @@ fn get_simulation_call_trace(
             nested_call.borrow(),
             nested_level + 1,
             max_nested_error_level,
-            classes_debugger_data,
+            class_hashes,
         );
         nested_calls.push(nested_trace);
     }
-    let (internal_fn_call_trace, call_debugger_data) = match (
-        call_trace_ref.entry_point.class_hash,
-        call_trace_ref.relocated_memory.as_ref(),
-        call_trace_ref.vm_trace.as_ref(),
-    ) {
-        (Some(class_hash), Some(relocated_memory), Some(vm_trace)) => {
-            match classes_debugger_data.get(&class_hash.to_string()) {
-                Some(full_class_debugger_data) => {
-                    match get_internal_trace_and_debugger_data(
-                        relocated_memory,
-                        vm_trace,
-                        full_class_debugger_data,
-                    ) {
-                        Ok((internal_fn_call_trace, call_debugger_data)) => {
-                            (Some(internal_fn_call_trace), Some(call_debugger_data))
-                        }
-                        Err(_) => {
-                            println!("Failed to get internal fn call trace");
-                            (None, None)
-                        }
-                    }
-                }
-                None => {
-                    println!("Failed to get internal fn call trace");
-                    (None, None)
-                }
-            }
-        }
-        _ => {
-            println!("Not enough data to get internal fn call trace");
-            (None, None)
-        }
-    };
+
+    if let Some(class_hash) = call_trace_ref.entry_point.class_hash {
+        class_hashes.push(class_hash.to_string());
+    }
 
     SimulationCallTrace {
         entry_point: call_trace_ref.entry_point.clone(),
@@ -420,15 +414,19 @@ fn get_simulation_call_trace(
         nested_calls,
         nested_level,
         result: call_trace_ref.result.clone(),
-        internal_fn_call_trace,
+        internal_fn_call_trace: None,
         additional_info: get_additional_info(
             fork_state_reader,
             call_trace_ref.entry_point.class_hash,
             call_trace_ref.entry_point.entry_point_selector,
             call_trace_ref.result.clone(),
             call_trace_ref.entry_point.calldata.clone(),
-            call_debugger_data,
         ),
+        _vm_trace: call_trace_ref
+            .vm_trace
+            .as_ref()
+            .map(|vm_trace| clone_vm_trace(vm_trace)),
+        _relocated_memory: call_trace_ref.relocated_memory.clone(),
     }
 }
 
@@ -503,7 +501,11 @@ pub struct TransactionSimulationResult {
     pub transaction_version: usize,
 }
 
-pub async fn simulate_by_data(args: SimulationArgs) -> TransactionSimulationResult {
+pub async fn simulate_by_data(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    args: SimulationArgs,
+) -> TransactionSimulationResult {
     let nonce: Option<u64> = match args.nonce {
         Some(nonce) => match nonce.0.try_into() {
             Ok(value) => Some(value),
@@ -522,7 +524,7 @@ pub async fn simulate_by_data(args: SimulationArgs) -> TransactionSimulationResu
         .collect::<Vec<String>>();
 
     let transaction_version: usize = args.transaction_version.0.try_into().unwrap();
-    let simulation_result = simulate(args).await;
+    let simulation_result = simulate(db_pool, s3_client, args).await;
 
     TransactionSimulationResult {
         simulation_result,
@@ -536,6 +538,8 @@ pub async fn simulate_by_data(args: SimulationArgs) -> TransactionSimulationResu
 }
 
 pub async fn simulate_transaction_by_hash(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
     chain_id: ChainId,
     tx_hash: String,
 ) -> Option<TransactionSimulationResult> {
@@ -553,14 +557,18 @@ pub async fn simulate_transaction_by_hash(
                 .await;
             if let Ok(transaction_receipt) = transaction_receipt {
                 if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
-                    let simulation_result = simulate(SimulationArgs {
-                        chain_id: chain_id.clone(),
-                        block_number,
-                        nonce: Some(nonce),
-                        sender_address,
-                        calldata: calldata.clone(),
-                        transaction_version,
-                    })
+                    let simulation_result = simulate(
+                        db_pool,
+                        s3_client,
+                        SimulationArgs {
+                            chain_id: chain_id.clone(),
+                            block_number,
+                            nonce: Some(nonce),
+                            sender_address,
+                            calldata: calldata.clone(),
+                            transaction_version,
+                        },
+                    )
                     .await;
                     let calldata = calldata
                         .0
@@ -638,7 +646,6 @@ fn get_additional_info(
     entry_point_selector: EntryPointSelector,
     result: CallResult,
     calldata: Calldata,
-    call_debugger_data: Option<ContractCallDebuggerData>,
 ) -> SimulationCallTraceAdditionalInfo {
     let mut additional_info = SimulationCallTraceAdditionalInfo {
         contract_name: None,
@@ -654,7 +661,7 @@ fn get_additional_info(
         function_arguments_types: None,
         calldata_decoded: None,
         event_abi: None,
-        call_debugger_data,
+        call_debugger_data: None,
         class_hash: class_hash.map(|class_hash| class_hash.to_string()),
     };
     let mut struct_items: Vec<StructItems> = Vec::new();
@@ -823,11 +830,51 @@ fn update_error_message(
     }
 }
 
-fn collect_class_hashes(call_trace_ref: Ref<CallTrace>, class_hashes: &mut Vec<String>) {
-    if let Some(class_hash) = call_trace_ref.entry_point.class_hash {
-        class_hashes.push(class_hash.to_string());
-    }
-    for nested_call in &call_trace_ref.nested_calls {
-        collect_class_hashes(nested_call.borrow(), class_hashes);
+pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
+    simulation_call_trace: &mut SimulationCallTrace,
+    classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
+) {
+    let (internal_fn_call_trace, call_debugger_data) = match (
+        simulation_call_trace.entry_point.class_hash,
+        &simulation_call_trace._relocated_memory,
+        &simulation_call_trace._vm_trace,
+    ) {
+        (Some(class_hash), Some(relocated_memory), Some(vm_trace)) => {
+            match classes_debugger_data.get(&class_hash.to_string()) {
+                Some(full_class_debugger_data) => {
+                    match get_internal_trace_and_debugger_data(
+                        relocated_memory,
+                        vm_trace,
+                        full_class_debugger_data,
+                    ) {
+                        Ok((internal_fn_call_trace, call_debugger_data)) => {
+                            (Some(internal_fn_call_trace), Some(call_debugger_data))
+                        }
+                        Err(_) => {
+                            println!("Failed to get internal fn call trace");
+                            (None, None)
+                        }
+                    }
+                }
+                None => {
+                    println!("Failed to get internal fn call trace");
+                    (None, None)
+                }
+            }
+        }
+        _ => {
+            println!("Not enough data to get internal fn call trace");
+            (None, None)
+        }
+    };
+    simulation_call_trace.internal_fn_call_trace = internal_fn_call_trace;
+    simulation_call_trace.additional_info.call_debugger_data = call_debugger_data;
+    simulation_call_trace._vm_trace = None;
+    simulation_call_trace._relocated_memory = None;
+    for nested_call in &mut simulation_call_trace.nested_calls {
+        enhance_call_trace_with_internal_trace_and_debugger_data(
+            nested_call,
+            classes_debugger_data,
+        );
     }
 }

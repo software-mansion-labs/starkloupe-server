@@ -1,4 +1,4 @@
-use crate::mappings::{CodeLocation, Mappings, SierraStatementToCairoDebugInfo};
+use crate::mappings::Mappings;
 use anyhow::Result;
 use cairo_lang_sierra::{
     ids::ConcreteTypeId,
@@ -10,6 +10,7 @@ use indextree::{Arena, NodeId};
 use serde::Serialize;
 use smol_str::SmolStr;
 use std::collections::HashMap;
+use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
 
 pub fn get_internal_call_trace(
     mappings: &Mappings,

@@ -5,11 +5,12 @@ mod handlers;
 extern crate dotenv;
 
 use app_state::AppState;
+use aws_config::meta::region::RegionProviderChain;
 use axum::{
     body::Body,
     extract::{Path, State},
     http::{header, HeaderValue, Method, Request, StatusCode},
-    middleware::{self, Next},
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
     routing::post,
@@ -20,16 +21,9 @@ use config::rpc_url;
 use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
-use handlers::{
-    // auth::{cache_all_users_and_projects, user_auth_middleware},
-    // common_errors::get_common_errors,
-    // simulate::simulate_handler,
-    simulate_trace::simulate_transaction,
-    // simulations::get_simulations,
-};
+use handlers::{simulate_trace::simulate_transaction, verification::verify_handler};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
-use tokio::time::Duration;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -154,56 +148,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create_pool(Some(deadpool_redis::Runtime::Tokio1))
         .unwrap();
 
-    let db_pool_for_background = db_pool.clone();
-    let redis_pool_for_background = redis_pool.clone();
+    let region_provider = RegionProviderChain::default_provider();
+    let shared_config = aws_config::from_env().region(region_provider).load().await;
+    let s3_client = aws_sdk_s3::Client::new(&shared_config);
 
-    sqlx::migrate!().run(&db_pool).await?;
+    // Set environment variable loading bucket name
+    // let bucket_name = std::env::var("BUCKET_NAME").expect("BUCKET_NAME not set in environment");
 
-    // Schedule background task that runs refetch every 5 minutes
-    // TODO: Cross task concurrency issues exist here, but it's fine for now.
-    // tokio::spawn(async move {
-    //     loop {
-    //         let _ = cache_all_users_and_projects(
-    //             &redis_pool_for_background,
-    //             &db_pool_for_background,
-    //             60 * 5,
-    //         )
-    //         .await;
-    //         tokio::time::sleep(Duration::from_secs((60 * 5) - 30)).await;
+    // Retrieve the bucket and list its objects
+    // match s3_client
+    //     .list_objects_v2()
+    //     .bucket("walnutserver-east-1-classes-verification")
+    //     .send()
+    //     .await
+    // {
+    //     Ok(output) => {
+    //         dbg!(output);
     //     }
-    // });
+    //     Err(error) => {
+    //         eprintln!("Got an error while listing objects in bucket: {:#?}", error);
+    //     }
+    // }
+
+    // sqlx::migrate!().run(&db_pool).await?;
 
     let shared_state = Arc::new(AppState {
         db_pool,
         redis_pool,
+        s3_client,
     });
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
-    // let user_auth_routes = Router::new()
-    //     .route("/v1/simulations", get(get_simulations))
-    //     .route("/v1/simulations/common-errors", get(get_common_errors))
-    //     .layer(middleware::from_fn_with_state(
-    //         shared_state.clone(),
-    //         user_auth_middleware,
-    //     ))
-    //     .layer(CorsLayer::permissive());
-
     let app = Router::new()
-        // .route("/v1/simulate", post(simulate_handler))
-        // .route_layer(middleware::from_fn_with_state(
-        //     shared_state.clone(),
-        //     auth_middleware,
-        // ))
-        // .merge(user_auth_routes)
-        // .route("/v1/verify/:chain_id/:class_hash", post(verify_handler))
         .route("/v1/:chain/tx/:hash", get(read_transaction))
         .route("/v1/simulate-transaction", post(simulate_transaction))
         .route(
             "/v1/:chain_id/simulate-transaction/:tx_hash",
             get(simulate_transaction_by_hash_handler),
         )
-        // .route("/v1/simulate-trace/:id", get(simulate_trace))
+        .route("/v1/:chain_id/verify", post(verify_handler))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))

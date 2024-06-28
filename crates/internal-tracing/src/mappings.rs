@@ -13,29 +13,9 @@ use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
+use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
 
 use crate::utils::{compile_sierra_contract_class, get_pc_mappings, make_casm_to_sierra_map};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SierraStatementToCairoDebugInfo {
-    pub cairo_locations: Vec<CodeLocation>,
-}
-
-/// Human readable position inside a file, in lines and characters.
-#[derive(Debug, Serialize, Clone, Deserialize, Hash, Eq, PartialEq)]
-pub struct TextPosition {
-    /// Line index, 0 based.
-    pub line: usize,
-    /// Character index inside the line, 0 based.
-    pub col: usize,
-}
-
-#[derive(Debug, Serialize, Clone, Deserialize, Hash, Eq, PartialEq)]
-pub struct CodeLocation {
-    pub start: TextPosition,
-    pub end: TextPosition,
-    pub file_path: String,
-}
 
 pub struct Mappings {
     pub pc_to_inst_indexes_map: HashMap<usize, usize>,
