@@ -3478,6 +3478,7 @@ dependencies = [
  "aws-smithy-types",
  "byteorder",
  "cairo-felt",
+ "cairo-lang-casm 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-sierra 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-sierra-to-casm 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-sierra-type-size 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",

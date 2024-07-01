@@ -1,7 +1,7 @@
 use anyhow::{Error, Result};
 use byteorder::{ByteOrder, LittleEndian};
 use cairo_felt::{Felt252, PRIME_STR};
-use cairo_lang_sierra::extensions::gas::CostTokenType;
+use cairo_lang_sierra::{extensions::gas::CostTokenType, program::Program};
 use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
     metadata::{calc_metadata, MetadataComputationConfig},
@@ -16,6 +16,7 @@ use cairo_vm::{
 };
 use itertools::chain;
 use num_bigint::BigUint;
+use serde::Serialize;
 use std::collections::HashMap;
 
 pub fn compile_sierra_contract_class(
@@ -136,4 +137,38 @@ pub fn get_instruction_encoding(
     let imm_addr = usize::try_from(imm_addr.clone()).map_err(|_| Error::msg(""))?;
     let optional_imm = memory[imm_addr].clone();
     Ok((instruction_encoding, optional_imm))
+}
+
+#[derive(Serialize, Debug)]
+pub struct SierraFormattedProgram {
+    pub type_declarations: Vec<String>,
+    pub libfunc_declarations: Vec<String>,
+    pub statements: Vec<String>,
+    pub funcs: Vec<String>,
+}
+
+pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram {
+    SierraFormattedProgram {
+        type_declarations: sierra_program
+            .type_declarations
+            .iter()
+            .map(|type_decl| type_decl.to_string())
+            .collect(),
+        libfunc_declarations: sierra_program
+            .libfunc_declarations
+            .iter()
+            .map(|libfunc_decl| libfunc_decl.to_string())
+            .collect(),
+        statements: sierra_program
+            .statements
+            .iter()
+            .enumerate()
+            .map(|(index, statement)| format!("{} // {}", statement.to_string(), index))
+            .collect(),
+        funcs: sierra_program
+            .funcs
+            .iter()
+            .map(|func| func.to_string())
+            .collect(),
+    }
 }

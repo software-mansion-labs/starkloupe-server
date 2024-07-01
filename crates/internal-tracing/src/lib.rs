@@ -66,6 +66,7 @@ pub fn get_internal_trace_and_debugger_data(
 
     let internal_trace = get_internal_call_trace(
         &mappings,
+        relocated_memory,
         vm_trace,
         full_class_debugger_data
             .class_debugger_data
