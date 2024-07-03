@@ -22,6 +22,7 @@ use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
+    classes::get_class_handler,
     openapi::ApiDoc,
     simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
     verification::verify_handler,
@@ -170,6 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(simulate_transaction_by_hash_handler),
         )
         .route("/v1/:chain_id/verify", post(verify_handler))
+        .route("/v1/:chain_id/classes/:class_hash", get(get_class_handler))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))

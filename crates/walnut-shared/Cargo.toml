@@ -13,3 +13,5 @@ serde.workspace = true
 cairo-vm.workspace = true
 conversions.workspace = true
 cheatnet.workspace = true
+starknet.workspace = true
+hex.workspace = true

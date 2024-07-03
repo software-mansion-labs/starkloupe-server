@@ -6,6 +6,7 @@ use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_event
 use conversions::IntoConv;
 use num_bigint::BigUint;
 use serde::Serialize;
+use starknet::core::types::FieldElement;
 use starknet_api::core::ChainId;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
@@ -140,4 +141,12 @@ pub fn clone_vm_trace(vm_trace: &Vec<TraceEntry>) -> Vec<TraceEntry> {
             ap: trace_entry.ap,
         })
         .collect()
+}
+
+pub fn pad_field_element_to_hex_string_length66(field_element: FieldElement) -> String {
+    let mut hex_string = hex::encode(field_element.to_bytes_be());
+    while hex_string.len() < 64 {
+        hex_string.insert_str(0, "0");
+    }
+    format!("0x{}", hex_string)
 }

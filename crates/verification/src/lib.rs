@@ -1,6 +1,6 @@
 pub mod cairo_debug_info;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_smithy_types::body::SdkBody;
 use cairo_debug_info::SierraToCairoDebugInfo;
@@ -17,7 +17,7 @@ use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use std::{env, fs};
 use uuid::Uuid;
-use walnut_shared::create_rpc_client;
+use walnut_shared::{create_rpc_client, pad_field_element_to_hex_string_length66};
 
 #[derive(Debug)]
 pub struct VerifiedClassRow {
@@ -48,6 +48,43 @@ pub async fn fetch_verified_classes(
     Ok(verified_classes)
 }
 
+pub async fn fetch_verified_class(
+    db_pool: &Pool<Postgres>,
+    class_hash: String,
+) -> Result<VerifiedClassRow> {
+    let verified_class = sqlx::query_as!(
+        VerifiedClassRow,
+        r#"SELECT *
+        FROM contract_classes
+        WHERE hash = $1"#,
+        &class_hash
+    )
+    .fetch_one(db_pool)
+    .await?;
+
+    Ok(verified_class)
+}
+
+pub async fn fetch_verified_class_with_data(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    class_hash: String,
+) -> Result<(VerifiedClassRow, VerifiedClassData)> {
+    let verified_class = fetch_verified_class(db_pool, class_hash.clone()).await?;
+
+    let resp = s3_client
+        .get_object()
+        .bucket("walnutserver-east-1-classes-verification")
+        .key(key_for_class_hash(class_hash))
+        .send()
+        .await?;
+
+    let body = resp.body.collect().await?;
+    let parsed: VerifiedClassData = serde_json::from_slice(&body.into_bytes())?;
+
+    Ok((verified_class, parsed))
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct VerifiedClassData {
     pub contract_class: ContractClass,
@@ -70,14 +107,6 @@ async fn is_class_verified(db_pool: &Pool<Postgres>, class_hash: String) -> Resu
     Ok(false)
 }
 
-fn field_element_to_padded_hex_string(field_element: FieldElement) -> String {
-    let mut hex_string = hex::encode(field_element.to_bytes_be());
-    while hex_string.len() < 64 {
-        hex_string.insert_str(0, "0");
-    }
-    format!("0x{}", hex_string)
-}
-
 pub async fn verify_by_contract_address(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -87,13 +116,15 @@ pub async fn verify_by_contract_address(
     source_code: HashMap<String, String>,
 ) -> Result<()> {
     let provider_client = create_rpc_client(&chain_id);
-    let class_hash = field_element_to_padded_hex_string(
+    let class_hash = pad_field_element_to_hex_string_length66(
         provider_client
             .get_class_hash_at(
                 BlockId::Tag(BlockTag::Latest),
-                &FieldElement::from_str(contract_address.as_str())?,
+                &FieldElement::from_str(contract_address.as_str())
+                    .context("Contract address format is incorrect")?,
             )
-            .await?,
+            .await
+            .context("Can't find the contract class")?,
     );
 
     let is_verified = is_class_verified(db_pool, class_hash.clone()).await?;
