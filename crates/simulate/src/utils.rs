@@ -18,11 +18,11 @@ pub fn create_fork_cached_state_at(
     cache_dir: &str,
 ) -> CachedState<ExtendedStateReader> {
     let url = match chain_id.0.as_str() {
-        "0x534e5f474f45524c49" => {
-            "https://starknet-goerli.g.alchemy.com/v2/D2pgqj4yeZmmZyBY7tw-CMnO2nUL8n94"
-        }
         "0x534e5f4d41494e" => {
             "https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
+        }
+        "0x534e5f5345504f4c4941" => {
+            "https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
         }
         _ => panic!("Invalid chain id"),
     };
