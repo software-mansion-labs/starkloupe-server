@@ -168,7 +168,7 @@ async fn verify(
         (2, 6, _) => {
             let mut cmd = ScarbCommand::new_with_stdio();
             cmd.current_dir(&tmp_dir);
-            let relative_path = PathBuf::from("scarb/scarb_v_2_6_3");
+            let relative_path = PathBuf::from("scarb/scarb_v_2_6_5");
             let absolute_path = fs::canonicalize(&relative_path).unwrap();
             cmd.scarb_path(absolute_path);
             cmd.arg("build");
