@@ -8,7 +8,9 @@ use anyhow::Result;
 use cairo_felt::Felt252;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
-use call_trace::{get_internal_call_trace, InternalFnCallTraceEntryNode};
+use call_trace::{
+    get_internal_call_trace, DebuggerExecutionTraceEntry, InternalFnCallTraceEntryNode,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use verification::cairo_debug_info::SierraStatementToCairoDebugInfo;
@@ -36,7 +38,7 @@ pub struct ClassDebuggerData {
 /// Contains the debugger data for a contract call
 #[derive(Debug, Serialize)]
 pub struct ContractCallDebuggerData {
-    pub sierra_execution_trace: Vec<Vec<usize>>,
+    pub execution_trace: Vec<DebuggerExecutionTraceEntry>,
 }
 
 pub fn debugger_data_maps_full_class_to_class(
@@ -64,7 +66,7 @@ pub fn get_internal_trace_and_debugger_data(
         full_class_debugger_data.contract_class.clone(),
     )?;
 
-    let internal_trace = get_internal_call_trace(
+    let (internal_trace, execution_trace) = get_internal_call_trace(
         &mappings,
         relocated_memory,
         vm_trace,
@@ -74,12 +76,5 @@ pub fn get_internal_trace_and_debugger_data(
             .map(|class_debugger_data| &class_debugger_data.sierra_statements_to_cairo_info),
     )?;
 
-    let sierra_execution_trace = mappings.get_sierra_execution_trace(vm_trace);
-
-    Ok((
-        internal_trace,
-        ContractCallDebuggerData {
-            sierra_execution_trace,
-        },
-    ))
+    Ok((internal_trace, ContractCallDebuggerData { execution_trace }))
 }

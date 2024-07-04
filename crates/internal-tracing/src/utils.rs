@@ -60,19 +60,10 @@ pub fn compile_sierra_contract_class(
     .unwrap()
 }
 
-pub fn make_casm_to_sierra_map(
-    debug_info: &CairoProgramDebugInfo,
-    casm_headers_len: usize,
-) -> HashMap<usize, Vec<usize>> {
+pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<usize, Vec<usize>> {
     let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
-    let sierra_statement_info_len = debug_info.sierra_statement_info.len();
-    for (i, sierra_info) in debug_info
-        .sierra_statement_info
-        .iter()
-        .enumerate()
-        .take(sierra_statement_info_len - 1)
-    {
-        let key = sierra_info.instruction_idx + casm_headers_len;
+    for (i, sierra_info) in debug_info.sierra_statement_info.iter().enumerate() {
+        let key = sierra_info.instruction_idx;
         map.entry(key).or_insert_with(Vec::new).push(i);
     }
     map

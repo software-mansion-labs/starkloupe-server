@@ -43,13 +43,14 @@ impl Mappings {
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program()?;
+        // dbg!(format_sierra_program(sierra_program.clone()));
         let type_names = contract_class
             .sierra_program_debug_info
             .clone()
             .unwrap()
             .type_names;
         let casm_program = compile_sierra_contract_class(contract_class, usize::MAX);
-        let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info, 0);
+        let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
         let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace);
 
         let memory_map: HashMap<usize, BigInt> = relocated_memory
@@ -320,10 +321,11 @@ pub fn get_value_from_cell_expression(
                 Ok(cell_ref_value_felt) => {
                     let cell_ref_value_bytes_le = cell_ref_value_felt.to_bytes_be();
                     let cell_ref_value =
-                        LittleEndian::read_u128(&cell_ref_value_bytes_le[..]) as i128;
+                        LittleEndian::read_u128(&extend_to_16_bytes(cell_ref_value_bytes_le)[..])
+                            as i128;
                     let addr = cell_ref_value + offset.clone() as i128;
-                    let value = memory[addr as usize].clone();
-                    if let Some(value) = value {
+                    let value = memory.get(addr as usize).cloned();
+                    if let Some(Some(value)) = value {
                         Ok(value.to_string())
                     } else {
                         Err(GetCellRefValueError::MemoryAddressNotFound)
@@ -368,4 +370,11 @@ pub fn get_value_from_cell_expression(
             }
         }
     }
+}
+
+fn extend_to_16_bytes(mut buf: Vec<u8>) -> Vec<u8> {
+    if buf.len() < 16 {
+        buf.resize(16, 0);
+    }
+    buf
 }

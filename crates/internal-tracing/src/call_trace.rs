@@ -7,12 +7,22 @@ use serde::Serialize;
 use std::collections::HashMap;
 use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
 
+#[derive(Debug, Serialize)]
+pub struct DebuggerExecutionTraceEntry {
+    pub sierra_indexes: Vec<usize>,
+    pub results: Vec<InternalFnCallIO>,
+    pub arguments: Vec<InternalFnCallIO>,
+}
+
 pub fn get_internal_call_trace(
     mappings: &Mappings,
     relocated_memory: &Vec<Option<Felt252>>,
     vm_trace: &Vec<TraceEntry>,
     sierra_statements_to_cairo_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
-) -> Result<InternalFnCallTraceEntryNode> {
+) -> Result<(
+    InternalFnCallTraceEntryNode,
+    Vec<DebuggerExecutionTraceEntry>,
+)> {
     let first_vm_trace_entry = vm_trace.first().unwrap();
     let mut current_fp = first_vm_trace_entry.fp;
 
@@ -42,20 +52,25 @@ pub fn get_internal_call_trace(
         results: Vec::new(),
     });
 
+    let mut debugger_execution_trace: Vec<DebuggerExecutionTraceEntry> = Vec::new();
+
     for (i, trace_entry) in vm_trace.iter().enumerate() {
         let new_fp = trace_entry.fp;
+        let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
+        let first_sierra_index = sierra_indexes.as_ref().and_then(|indexes| indexes.first());
+
+        let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+        let mut results: Vec<InternalFnCallIO> = Vec::new();
+
         if new_fp > current_fp {
             // new function call
-            let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
-            let function = sierra_indexes
-                .as_ref()
-                .and_then(|indexes| indexes.first())
-                .and_then(|si| mappings.get_sierra_function_at_sierra_index(&si));
-            let cairo_locations = match (sierra_statements_to_cairo_info, sierra_indexes) {
+            let function =
+                first_sierra_index.and_then(|si| mappings.get_sierra_function_at_sierra_index(si));
+            let cairo_locations = match (sierra_statements_to_cairo_info, &sierra_indexes) {
                 (Some(sierra_statements_to_cairo_info), Some(sierra_indexes)) => mappings
                     .get_cairo_locations_at_sierra_indexes(
                         sierra_statements_to_cairo_info,
-                        &sierra_indexes,
+                        sierra_indexes,
                     ),
                 _ => Vec::new(),
             };
@@ -63,7 +78,7 @@ pub fn get_internal_call_trace(
             let prev_trace_entry = &vm_trace[i - 1];
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
-            let arguments = match prev_sierra_index {
+            arguments = match prev_sierra_index {
                 Some(prev_sierra_index) => mappings.get_arguments_at_trace_step(
                     relocated_memory,
                     prev_sierra_index,
@@ -78,7 +93,7 @@ pub fn get_internal_call_trace(
                     .and_then(|n| Some(n.to_string())),
                 fp: new_fp,
                 cairo_locations,
-                arguments,
+                arguments: arguments.clone(),
                 results: Vec::new(),
             };
 
@@ -100,15 +115,19 @@ pub fn get_internal_call_trace(
             // }
         } else if new_fp < current_fp {
             // return from function
-            let sierra_index = mappings.get_first_sierra_index_at_pc(&trace_entry.pc);
-            let results = match sierra_index {
-                Some(sierra_index) => {
-                    mappings.get_results_at_trace_step(relocated_memory, sierra_index, trace_entry)
-                }
+            let prev_trace_entry = &vm_trace[i - 1];
+            let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
+
+            results = match prev_sierra_index {
+                Some(sierra_index) => mappings.get_results_at_trace_step(
+                    relocated_memory,
+                    sierra_index.clone(),
+                    prev_trace_entry,
+                ),
                 None => Vec::new(),
             };
 
-            tree.set_results_to_current_node(results);
+            tree.set_results_to_current_node(results.clone());
             tree.move_to_parent();
             current_fp = trace_entry.fp;
 
@@ -128,9 +147,18 @@ pub fn get_internal_call_trace(
             // }
             // result_values.reverse();
         }
+        if let Some(sierra_indexes) = sierra_indexes {
+            if sierra_indexes.len() > 0 {
+                debugger_execution_trace.push(DebuggerExecutionTraceEntry {
+                    sierra_indexes,
+                    results,
+                    arguments,
+                });
+            }
+        }
     }
 
-    Ok(tree.get_root_serializable())
+    Ok((tree.get_root_serializable(), debugger_execution_trace))
 }
 
 #[derive(Debug, Clone, Serialize)]
