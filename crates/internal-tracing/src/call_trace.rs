@@ -59,6 +59,15 @@ pub fn get_internal_call_trace(
         let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
         let first_sierra_index = sierra_indexes.as_ref().and_then(|indexes| indexes.first());
 
+        let cairo_locations = match (sierra_statements_to_cairo_info, &sierra_indexes) {
+            (Some(sierra_statements_to_cairo_info), Some(sierra_indexes)) => mappings
+                .get_cairo_locations_at_sierra_indexes(
+                    sierra_statements_to_cairo_info,
+                    sierra_indexes,
+                ),
+            _ => Vec::new(),
+        };
+
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
         let mut results: Vec<InternalFnCallIO> = Vec::new();
 
@@ -66,14 +75,6 @@ pub fn get_internal_call_trace(
             // new function call
             let function =
                 first_sierra_index.and_then(|si| mappings.get_sierra_function_at_sierra_index(si));
-            let cairo_locations = match (sierra_statements_to_cairo_info, &sierra_indexes) {
-                (Some(sierra_statements_to_cairo_info), Some(sierra_indexes)) => mappings
-                    .get_cairo_locations_at_sierra_indexes(
-                        sierra_statements_to_cairo_info,
-                        sierra_indexes,
-                    ),
-                _ => Vec::new(),
-            };
 
             let prev_trace_entry = &vm_trace[i - 1];
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
@@ -146,7 +147,13 @@ pub fn get_internal_call_trace(
             //     offset += type_size;
             // }
             // result_values.reverse();
+        } else {
+            let current_function = tree.get_current_node_data();
+            if cairo_locations.len() > 0 && current_function.cairo_locations.len() == 0 {
+                tree.set_cairo_locations_to_current_node(cairo_locations);
+            }
         }
+
         if let Some(sierra_indexes) = sierra_indexes {
             if sierra_indexes.len() > 0 {
                 debugger_execution_trace.push(DebuggerExecutionTraceEntry {
@@ -234,5 +241,16 @@ impl InternalFnCallTraceTree {
 
     fn get_root_serializable(&self) -> InternalFnCallTraceEntryNode {
         self.get_serializable(self.root)
+    }
+
+    fn get_current_node_data(&self) -> &InternalFnCallTraceEntry {
+        &self.arena[self.current_node].get()
+    }
+
+    fn set_cairo_locations_to_current_node(&mut self, cairo_locations: Vec<CodeLocation>) {
+        if let Some(node) = self.arena.get_mut(self.current_node) {
+            let data = node.get_mut();
+            data.cairo_locations = cairo_locations;
+        }
     }
 }
