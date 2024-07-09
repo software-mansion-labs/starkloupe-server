@@ -211,7 +211,7 @@ async fn verify(
             cmd.run()?;
         }
         _ => {
-            return Err(anyhow::anyhow!("Unsupported starknet version"));
+            return Err(anyhow::anyhow!("Unsupported Starknet version. Currently, we support versions 2.6.* and will add support for more versions soon."));
         }
     };
 
@@ -290,7 +290,7 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
         .and_then(toml::Value::as_str);
 
     let starknet_version = match starknet_version_str {
-        None => Err(anyhow::anyhow!("No starknet version found")),
+        None => Err(anyhow::anyhow!("Starknet version not found. Please specify the Starknet version as a dependency in your Scarb.toml file.")),
         Some(version) => {
             let version_parts: Vec<usize> =
                 version.split('.').map(|s| s.parse().unwrap_or(0)).collect();
