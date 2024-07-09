@@ -23,8 +23,9 @@ pub fn get_internal_call_trace(
     InternalFnCallTraceEntryNode,
     Vec<DebuggerExecutionTraceEntry>,
 )> {
+    let vm_trace_length = vm_trace.len();
     let first_vm_trace_entry = vm_trace.first().unwrap();
-    let mut current_fp = first_vm_trace_entry.fp;
+    let mut prev_fp = first_vm_trace_entry.fp;
 
     let entrypoint_sierra_indexes = mappings.get_sierra_indexes_at_pc(&first_vm_trace_entry.pc);
     let entrypoint_function = entrypoint_sierra_indexes
@@ -46,19 +47,30 @@ pub fn get_internal_call_trace(
         fn_name: entrypoint_function
             .and_then(|f| f.id.debug_name.clone())
             .and_then(|n| Some(n.to_string())),
-        fp: current_fp,
+        fp: prev_fp,
         cairo_locations: entrypoint_cairo_locations,
         arguments: Vec::new(),
         results: Vec::new(),
     });
 
+    // Execution trace of the current contract call that contains data for the debugger
     let mut debugger_execution_trace: Vec<DebuggerExecutionTraceEntry> = Vec::new();
+    // Previous Cairo locations: we update this variable only with a non-empty Vec
+    let mut prev_cairo_locations: Vec<CodeLocation> = Vec::new();
+    // Accumulate arguments for the steps with the same Cairo locations
+    let mut arguments_accumulator: Vec<InternalFnCallIO> = Vec::new();
+    // Accumulate results for the steps with the same Cairo locations
+    let mut results_accumulator: Vec<InternalFnCallIO> = Vec::new();
+    // Sierra indexes of the previous step with Cairo locations
+    let mut prev_cairo_location_sierra_indexes: Vec<usize> = Vec::new();
 
     for (i, trace_entry) in vm_trace.iter().enumerate() {
         let new_fp = trace_entry.fp;
+        // Active Sierra indexes at the current step
         let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
         let first_sierra_index = sierra_indexes.as_ref().and_then(|indexes| indexes.first());
 
+        // Active Cairo locations at the current step (can be empty)
         let cairo_locations = match (sierra_statements_to_cairo_info, &sierra_indexes) {
             (Some(sierra_statements_to_cairo_info), Some(sierra_indexes)) => mappings
                 .get_cairo_locations_at_sierra_indexes(
@@ -68,17 +80,20 @@ pub fn get_internal_call_trace(
             _ => Vec::new(),
         };
 
+        // Arguments at the current step (can be empty)
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+        // Results at the current step (can be empty)
         let mut results: Vec<InternalFnCallIO> = Vec::new();
 
-        if new_fp > current_fp {
-            // new function call
+        if new_fp > prev_fp {
+            // If the FP register increases, that means we have entered a nested function call
             let function =
                 first_sierra_index.and_then(|si| mappings.get_sierra_function_at_sierra_index(si));
 
             let prev_trace_entry = &vm_trace[i - 1];
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
+            // Get the arguments of the new function call
             arguments = match prev_sierra_index {
                 Some(prev_sierra_index) => mappings.get_arguments_at_trace_step(
                     relocated_memory,
@@ -93,13 +108,13 @@ pub fn get_internal_call_trace(
                     .and_then(|f| f.id.debug_name.clone())
                     .and_then(|n| Some(n.to_string())),
                 fp: new_fp,
-                cairo_locations,
+                cairo_locations: cairo_locations.clone(),
                 arguments: arguments.clone(),
                 results: Vec::new(),
             };
 
+            // Add the nested call and set it as the current node
             tree.add_child(call_entry);
-            current_fp = trace_entry.fp;
 
             // Alternative implementation of get_arguments
             // https://docs.cairo-lang.org/how_cairo_works/functions.html#argument
@@ -114,11 +129,12 @@ pub fn get_internal_call_trace(
             //     }
             //     argument.value = values;
             // }
-        } else if new_fp < current_fp {
-            // return from function
+        } else if new_fp < prev_fp {
+            // If the FP register decreases, that means we have exited the function call
             let prev_trace_entry = &vm_trace[i - 1];
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
+            // Get the results of the function call from which we have just exited
             results = match prev_sierra_index {
                 Some(sierra_index) => mappings.get_results_at_trace_step(
                     relocated_memory,
@@ -129,8 +145,8 @@ pub fn get_internal_call_trace(
             };
 
             tree.set_results_to_current_node(results.clone());
+            // Return to the parent function call
             tree.move_to_parent();
-            current_fp = trace_entry.fp;
 
             // Alternative implementation of get_results
             // https://docs.cairo-lang.org/how_cairo_works/functions.html#return-values
@@ -150,20 +166,51 @@ pub fn get_internal_call_trace(
         } else {
             let current_function = tree.get_current_node_data();
             if cairo_locations.len() > 0 && current_function.cairo_locations.len() == 0 {
-                tree.set_cairo_locations_to_current_node(cairo_locations);
+                tree.set_cairo_locations_to_current_node(cairo_locations.clone());
             }
         }
+        prev_fp = trace_entry.fp;
 
         if let Some(sierra_indexes) = sierra_indexes {
-            if sierra_indexes.len() > 0 {
-                debugger_execution_trace.push(DebuggerExecutionTraceEntry {
-                    sierra_indexes,
-                    results,
-                    arguments,
-                });
+            // If current step contains Cairo locations
+            if cairo_locations.len() > 0 {
+                // If current step is the first step with Cairo locations
+                if prev_cairo_locations.len() == 0 {
+                    // Then accumulate arguments and results
+                    results_accumulator = results;
+                    arguments_accumulator = arguments;
+                // If current step has the same Cairo locations as the last step with Cairo locations
+                } else if cairo_locations == prev_cairo_locations {
+                    // If there are arguments or results
+                    if results.len() > 0 || arguments.len() > 0 {
+                        // Then accumulate arguments and results
+                        results_accumulator = results;
+                        arguments_accumulator = arguments;
+                    }
+                // If current step has different Cairo locations from previous step with Cairo locations
+                } else {
+                    // Then add debugger trace entry for the previous step with Cairo locations
+                    debugger_execution_trace.push(DebuggerExecutionTraceEntry {
+                        sierra_indexes: prev_cairo_location_sierra_indexes.clone(),
+                        results: results_accumulator.clone(),
+                        arguments: arguments_accumulator.clone(),
+                    });
+                    // And accumulate arguments and results
+                    results_accumulator = results;
+                    arguments_accumulator = arguments;
+                }
+                prev_cairo_location_sierra_indexes = sierra_indexes;
+                prev_cairo_locations = cairo_locations;
             }
         }
     }
+
+    // Add debugger trace entry for the last step with Cairo locations
+    debugger_execution_trace.push(DebuggerExecutionTraceEntry {
+        sierra_indexes: prev_cairo_location_sierra_indexes,
+        results: results_accumulator,
+        arguments: arguments_accumulator,
+    });
 
     Ok((tree.get_root_serializable(), debugger_execution_trace))
 }
