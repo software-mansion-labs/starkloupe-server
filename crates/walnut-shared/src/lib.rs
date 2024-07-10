@@ -69,6 +69,14 @@ pub fn extract_chain_id(chain_id: &str) -> ChainId {
     }
 }
 
+pub fn chain_id_to_readable_string(chain_id: ChainId) -> String {
+    match chain_id.0.as_str() {
+        MAIN_CHAIN_ID => String::from("sn_main"),
+        SEPOLIA_CHAIN_ID => String::from("sn_sepolia"),
+        _ => panic!("Invalid chain id"),
+    }
+}
+
 pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
     let mut text = std::str::from_utf8(&bytes)?.to_string();
     text.retain(|c| c != '\0');

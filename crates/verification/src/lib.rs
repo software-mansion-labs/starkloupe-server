@@ -114,7 +114,7 @@ pub async fn verify_by_contract_address(
     contract_address: String,
     class_name: String,
     source_code: HashMap<String, String>,
-) -> Result<()> {
+) -> Result<String> {
     let provider_client = create_rpc_client(&chain_id);
     let class_hash = pad_field_element_to_hex_string_length66(
         provider_client
@@ -180,7 +180,7 @@ pub async fn verify_by_contract_address(
     .execute(db_pool)
     .await?;
 
-    Ok(())
+    Ok(class_hash)
 }
 
 async fn verify(

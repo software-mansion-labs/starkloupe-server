@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
 use verification::verify_by_contract_address;
-use walnut_shared::extract_chain_id;
+use walnut_shared::{chain_id_to_readable_string, extract_chain_id};
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct VerificationPayload {
@@ -43,6 +43,7 @@ pub async fn verify_handler(
     Json(payload): Json<VerificationPayload>,
 ) -> (StatusCode, String) {
     let chain_id = extract_chain_id(chain_id.as_str());
+    let chain_id_readable_string = chain_id_to_readable_string(chain_id.clone());
     match verify_by_contract_address(
         &state.db_pool,
         &state.s3_client,
@@ -53,7 +54,7 @@ pub async fn verify_handler(
     )
     .await
     {
-        Ok(_) => (StatusCode::OK, "Contract verified".to_string()),
+        Ok(class_hash) => (StatusCode::OK, format!("Contract has been successfully verified. You can check the verification status at the following link: https://api.walnut.dev/v1/{chain_id_readable_string}/classes/{class_hash}.").to_string()),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()),
     }
 }
