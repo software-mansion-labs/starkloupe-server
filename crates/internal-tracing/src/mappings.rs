@@ -7,7 +7,10 @@ use cairo_lang_casm::{
     operand::{CellRef, DerefOrImmediate, Register},
 };
 use cairo_lang_sierra::{
-    extensions::core::{CoreLibfunc, CoreType},
+    extensions::{
+        core::{CoreLibfunc, CoreType},
+        felt252::Felt252Libfunc,
+    },
     ids::ConcreteTypeId,
     program::{GenFunction, Program, StatementIdx},
     program_registry::ProgramRegistry,
@@ -20,10 +23,13 @@ use num_bigint::BigInt;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
+use walnut_shared::decode_felt252;
 
 use crate::{
     call_trace::InternalFnCallIO,
-    utils::{compile_sierra_contract_class, get_pc_mappings, make_casm_to_sierra_map},
+    utils::{
+        compile_sierra_contract_class, get_pc_mappings, is_panic_result, make_casm_to_sierra_map,
+    },
 };
 
 pub struct Mappings {
@@ -222,18 +228,33 @@ impl Mappings {
                 StatementKindDebugInfo::Return(return_info) => {
                     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
                     {
-                        let values = get_values_from_cell_expressions(
+                        let mut values = get_values_from_cell_expressions(
                             relocated_memory,
                             trace_entry,
                             &return_ref.expression.cells,
                             &ApChange::Known(0),
                         );
-                        results.push(InternalFnCallIO {
-                            type_name: self
-                                .type_names
-                                .get(&return_ref.ty)
+
+                        let result_type = self
+                            .type_names
+                            .get(&return_ref.ty)
+                            .clone()
+                            .map(|n| n.to_string());
+
+                        if is_panic_result(&result_type) && values[0] == "1" {
+                            //if result is panic the first element is panic flag, and the second
+                            //and third are memory locations
+                            //https://github.com/lambdaclass/cairo-vm/blob/bb491f2a9ea0514bbeba92d858b28baaf41053e7/cairo1-run/src/cairo_run.rs#L1085
+                            let panic_reason: Felt252 = relocated_memory
+                                .get(values[1].parse::<usize>().unwrap())
+                                .unwrap()
                                 .clone()
-                                .map(|n| n.to_string()),
+                                .unwrap();
+                            let panic_reason_decoded = decode_felt252(vec![panic_reason]).unwrap();
+                            values = vec!["1".to_string(), panic_reason_decoded];
+                        }
+                        results.push(InternalFnCallIO {
+                            type_name: result_type,
                             value: values,
                         })
                     }

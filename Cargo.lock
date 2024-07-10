@@ -3494,6 +3494,7 @@ dependencies = [
  "sqlx",
  "starknet_api",
  "verification",
+ "walnut-shared",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use crate::mappings::Mappings;
+use crate::{mappings::Mappings, utils::is_panic_result};
 use anyhow::Result;
 use cairo_felt::Felt252;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
@@ -51,6 +51,7 @@ pub fn get_internal_call_trace(
         cairo_locations: entrypoint_cairo_locations,
         arguments: Vec::new(),
         results: Vec::new(),
+        is_panic_result: false,
     });
 
     // Execution trace of the current contract call that contains data for the debugger
@@ -111,6 +112,7 @@ pub fn get_internal_call_trace(
                 cairo_locations: cairo_locations.clone(),
                 arguments: arguments.clone(),
                 results: Vec::new(),
+                is_panic_result: false,
             };
 
             // Add the nested call and set it as the current node
@@ -205,6 +207,7 @@ pub fn get_internal_call_trace(
         }
     }
 
+    tree.set_deepest_panic_result();
     // Add debugger trace entry for the last step with Cairo locations
     debugger_execution_trace.push(DebuggerExecutionTraceEntry {
         sierra_indexes: prev_cairo_location_sierra_indexes,
@@ -222,6 +225,7 @@ pub struct InternalFnCallTraceEntry {
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
     pub cairo_locations: Vec<CodeLocation>,
+    pub is_panic_result: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,6 +256,56 @@ impl InternalFnCallTraceTree {
             current_node: root,
             root,
         }
+    }
+
+    fn find_max_panic_depth(&mut self, node_id: NodeId, depth: usize, max_depth: &mut usize) {
+        if let Some(node) = self.arena.get(node_id) {
+            let data = &node.get();
+
+            for result in data.results.iter() {
+                if is_panic_result(&result.type_name)
+                    && result.value[0] == "1"
+                    && depth > *max_depth
+                {
+                    *max_depth = depth;
+                }
+            }
+
+            let mut child_id = node.first_child();
+            while let Some(id) = child_id {
+                self.find_max_panic_depth(id, depth + 1, max_depth);
+                child_id = self.arena.get(id).and_then(|n| n.next_sibling());
+            }
+        }
+    }
+
+    fn mark_deepest_panic_node(&mut self, node_id: NodeId, depth: usize, max_depth: usize) {
+        if let Some(node) = self.arena.get_mut(node_id) {
+            let data = &mut node.get_mut();
+
+            data.is_panic_result = false;
+
+            for result in data.results.iter() {
+                if depth == max_depth
+                    && is_panic_result(&result.type_name)
+                    && result.value[0] == "1"
+                {
+                    data.is_panic_result = true;
+                }
+            }
+
+            let mut child_id = node.first_child();
+            while let Some(id) = child_id {
+                self.mark_deepest_panic_node(id, depth + 1, max_depth);
+                child_id = self.arena.get(id).and_then(|n| n.next_sibling());
+            }
+        }
+    }
+
+    fn set_deepest_panic_result(&mut self) {
+        let mut max_depth = 0;
+        self.find_max_panic_depth(self.root, 0, &mut max_depth);
+        self.mark_deepest_panic_node(self.root, 0, max_depth);
     }
 
     fn add_child(&mut self, entry: InternalFnCallTraceEntry) {

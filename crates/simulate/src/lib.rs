@@ -807,7 +807,6 @@ fn update_error_message(
             if let CallResult::Failure(failure) = &nested_trace.result {
                 match failure {
                     CallFailure::Panic { panic_data } => {
-                        // dbg!(&panic_data);
                         match decode_felt252(panic_data.to_vec()) {
                             Ok(decoded) => {
                                 nested_trace.additional_info.error_message = Some(decoded.clone());

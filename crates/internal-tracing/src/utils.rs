@@ -17,6 +17,7 @@ use cairo_vm::{
 use itertools::chain;
 use num_bigint::BigUint;
 use serde::Serialize;
+use starknet_api::hash::StarkFelt;
 use std::collections::HashMap;
 
 pub fn compile_sierra_contract_class(
@@ -162,4 +163,10 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
             .map(|func| func.to_string())
             .collect(),
     }
+}
+
+pub fn is_panic_result(return_type: &Option<String>) -> bool {
+    return_type
+        .as_ref()
+        .is_some_and(|result_type| result_type.starts_with("core::panics::PanicResult"))
 }
