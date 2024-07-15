@@ -614,6 +614,16 @@ fn extract_submitted_tx(
 ) -> Option<(Nonce, ContractAddress, Calldata, TransactionVersion)> {
     match transaction {
         Transaction::Invoke(invoke_transaction) => match invoke_transaction {
+            InvokeTransaction::V0(tx) => {
+                let calldata: Vec<StarkFelt> =
+                    tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce::default(),
+                    contract_address!(tx.contract_address),
+                    Calldata(calldata.into()),
+                    TransactionVersion::ONE,
+                ))
+            }
             InvokeTransaction::V1(tx) => {
                 let calldata: Vec<StarkFelt> =
                     tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
