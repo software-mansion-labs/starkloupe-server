@@ -52,6 +52,7 @@ pub fn get_internal_call_trace(
         arguments: Vec::new(),
         results: Vec::new(),
         is_panic_result: false,
+        debugger_execution_trace_step_index: 0,
     });
 
     // Execution trace of the current contract call that contains data for the debugger
@@ -113,6 +114,7 @@ pub fn get_internal_call_trace(
                 arguments: arguments.clone(),
                 results: Vec::new(),
                 is_panic_result: false,
+                debugger_execution_trace_step_index: debugger_execution_trace.len(),
             };
 
             // Add the nested call and set it as the current node
@@ -226,6 +228,7 @@ pub struct InternalFnCallTraceEntry {
     pub arguments: Vec<InternalFnCallIO>,
     pub cairo_locations: Vec<CodeLocation>,
     pub is_panic_result: bool,
+    pub debugger_execution_trace_step_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
