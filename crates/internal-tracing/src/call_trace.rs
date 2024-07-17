@@ -9,7 +9,7 @@ use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugIn
 
 #[derive(Debug, Serialize)]
 pub struct DebuggerExecutionTraceEntry {
-    pub sierra_indexes: Vec<usize>,
+    pub sierra_index: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
 }
@@ -23,7 +23,6 @@ pub fn get_internal_call_trace(
     InternalFnCallTraceEntryNode,
     Vec<DebuggerExecutionTraceEntry>,
 )> {
-    let vm_trace_length = vm_trace.len();
     let first_vm_trace_entry = vm_trace.first().unwrap();
     let mut prev_fp = first_vm_trace_entry.fp;
 
@@ -48,7 +47,7 @@ pub fn get_internal_call_trace(
             .and_then(|f| f.id.debug_name.clone())
             .and_then(|n| Some(n.to_string())),
         fp: prev_fp,
-        cairo_locations: entrypoint_cairo_locations,
+        cairo_location: entrypoint_cairo_locations.first().cloned(),
         arguments: Vec::new(),
         results: Vec::new(),
         is_panic_result: false,
@@ -57,14 +56,14 @@ pub fn get_internal_call_trace(
 
     // Execution trace of the current contract call that contains data for the debugger
     let mut debugger_execution_trace: Vec<DebuggerExecutionTraceEntry> = Vec::new();
-    // Previous Cairo locations: we update this variable only with a non-empty Vec
-    let mut prev_cairo_locations: Vec<CodeLocation> = Vec::new();
+    // Previous Cairo location: we update this variable only with a Some CodeLocation
+    let mut prev_cairo_location: Option<CodeLocation> = None;
     // Accumulate arguments for the steps with the same Cairo locations
     let mut arguments_accumulator: Vec<InternalFnCallIO> = Vec::new();
     // Accumulate results for the steps with the same Cairo locations
     let mut results_accumulator: Vec<InternalFnCallIO> = Vec::new();
-    // Sierra indexes of the previous step with Cairo locations
-    let mut prev_cairo_location_sierra_indexes: Vec<usize> = Vec::new();
+    // Sierra index of the previous step with Cairo location
+    let mut prev_cairo_location_sierra_index: Option<usize> = None;
 
     for (i, trace_entry) in vm_trace.iter().enumerate() {
         let new_fp = trace_entry.fp;
@@ -110,7 +109,7 @@ pub fn get_internal_call_trace(
                     .and_then(|f| f.id.debug_name.clone())
                     .and_then(|n| Some(n.to_string())),
                 fp: new_fp,
-                cairo_locations: cairo_locations.clone(),
+                cairo_location: cairo_locations.first().cloned(),
                 arguments: arguments.clone(),
                 results: Vec::new(),
                 is_panic_result: false,
@@ -169,42 +168,52 @@ pub fn get_internal_call_trace(
             // result_values.reverse();
         } else {
             let current_function = tree.get_current_node_data();
-            if cairo_locations.len() > 0 && current_function.cairo_locations.len() == 0 {
-                tree.set_cairo_locations_to_current_node(cairo_locations.clone());
+            if let Some(cairo_location) = cairo_locations.first() {
+                if current_function.cairo_location.is_none() {
+                    tree.set_cairo_location_to_current_node(cairo_location.clone());
+                }
             }
         }
         prev_fp = trace_entry.fp;
 
         if let Some(sierra_indexes) = sierra_indexes {
-            // If current step contains Cairo locations
-            if cairo_locations.len() > 0 {
-                // If current step is the first step with Cairo locations
-                if prev_cairo_locations.len() == 0 {
-                    // Then accumulate arguments and results
-                    results_accumulator = results;
-                    arguments_accumulator = arguments;
-                // If current step has the same Cairo locations as the last step with Cairo locations
-                } else if cairo_locations == prev_cairo_locations {
-                    // If there are arguments or results
-                    if results.len() > 0 || arguments.len() > 0 {
+            for sierra_index in sierra_indexes {
+                let cairo_locations = match sierra_statements_to_cairo_info {
+                    Some(sierra_statements_to_cairo_info) => mappings
+                        .get_cairo_locations_at_sierra_index(
+                            sierra_statements_to_cairo_info,
+                            sierra_index,
+                        ),
+                    _ => Vec::new(),
+                };
+                for cairo_location in cairo_locations {
+                    // If current step is the first step with Cairo location
+                    if prev_cairo_location.is_none() {
                         // Then accumulate arguments and results
-                        results_accumulator = results;
-                        arguments_accumulator = arguments;
+                        results_accumulator = results.clone();
+                        arguments_accumulator = arguments.clone();
+                    // If current step has the same Cairo location as the last step with Cairo location
+                    } else if cairo_location == prev_cairo_location.unwrap() {
+                        // If there are arguments or results
+                        if results.len() > 0 || arguments.len() > 0 {
+                            // Then accumulate arguments and results
+                            results_accumulator = results.clone();
+                            arguments_accumulator = arguments.clone();
+                        }
+                    } else {
+                        // Then add debugger trace entry for the previous step with Cairo location
+                        debugger_execution_trace.push(DebuggerExecutionTraceEntry {
+                            sierra_index: prev_cairo_location_sierra_index.unwrap(),
+                            results: results_accumulator.clone(),
+                            arguments: arguments_accumulator.clone(),
+                        });
+                        // And accumulate arguments and results
+                        results_accumulator = results.clone();
+                        arguments_accumulator = arguments.clone();
                     }
-                // If current step has different Cairo locations from previous step with Cairo locations
-                } else {
-                    // Then add debugger trace entry for the previous step with Cairo locations
-                    debugger_execution_trace.push(DebuggerExecutionTraceEntry {
-                        sierra_indexes: prev_cairo_location_sierra_indexes.clone(),
-                        results: results_accumulator.clone(),
-                        arguments: arguments_accumulator.clone(),
-                    });
-                    // And accumulate arguments and results
-                    results_accumulator = results;
-                    arguments_accumulator = arguments;
+                    prev_cairo_location_sierra_index = Some(sierra_index);
+                    prev_cairo_location = Some(cairo_location);
                 }
-                prev_cairo_location_sierra_indexes = sierra_indexes;
-                prev_cairo_locations = cairo_locations;
             }
         }
     }
@@ -212,7 +221,7 @@ pub fn get_internal_call_trace(
     tree.set_deepest_panic_result();
     // Add debugger trace entry for the last step with Cairo locations
     debugger_execution_trace.push(DebuggerExecutionTraceEntry {
-        sierra_indexes: prev_cairo_location_sierra_indexes,
+        sierra_index: prev_cairo_location_sierra_index.unwrap(),
         results: results_accumulator,
         arguments: arguments_accumulator,
     });
@@ -226,7 +235,7 @@ pub struct InternalFnCallTraceEntry {
     pub fp: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
-    pub cairo_locations: Vec<CodeLocation>,
+    pub cairo_location: Option<CodeLocation>,
     pub is_panic_result: bool,
     pub debugger_execution_trace_step_index: usize,
 }
@@ -351,10 +360,10 @@ impl InternalFnCallTraceTree {
         &self.arena[self.current_node].get()
     }
 
-    fn set_cairo_locations_to_current_node(&mut self, cairo_locations: Vec<CodeLocation>) {
+    fn set_cairo_location_to_current_node(&mut self, cairo_location: CodeLocation) {
         if let Some(node) = self.arena.get_mut(self.current_node) {
             let data = node.get_mut();
-            data.cairo_locations = cairo_locations;
+            data.cairo_location = Some(cairo_location);
         }
     }
 }

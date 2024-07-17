@@ -128,6 +128,19 @@ impl Mappings {
         return locations;
     }
 
+    pub fn get_cairo_locations_at_sierra_index(
+        &self,
+        sierra_statements_to_cairo_info: &HashMap<usize, SierraStatementToCairoDebugInfo>,
+        sierra_index: usize,
+    ) -> Vec<CodeLocation> {
+        let mut locations_set = HashSet::new();
+        if let Some(cairo_info) = sierra_statements_to_cairo_info.get(&sierra_index) {
+            locations_set.extend(cairo_info.cairo_locations.clone());
+        }
+        let locations: Vec<_> = locations_set.into_iter().collect();
+        return locations;
+    }
+
     pub fn get_sierra_execution_trace(&self, vm_trace: &Vec<TraceEntry>) -> Vec<Vec<usize>> {
         let mut sierra_trace: Vec<Vec<usize>> = vec![];
         for trace_entry in vm_trace {
