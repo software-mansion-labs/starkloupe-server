@@ -1,5 +1,4 @@
 mod app_state;
-mod config;
 mod handlers;
 
 extern crate dotenv;
@@ -17,7 +16,6 @@ use axum::{
     Router,
 };
 use axum_prometheus::PrometheusMetricLayer;
-use config::rpc_url;
 use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
@@ -175,14 +173,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
-        .route(
-            "/rpc/0x534e5f474f45524c49",
-            post(|req| forward_post_request(rpc_url("0x534e5f474f45524c49"), req)),
-        )
-        .route(
-            "/rpc/0x534e5f4d41494e",
-            post(|req| forward_post_request(rpc_url("0x534e5f4d41494e"), req)),
-        )
         .route_service(
             "/",
             axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),

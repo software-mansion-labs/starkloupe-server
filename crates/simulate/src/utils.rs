@@ -11,21 +11,14 @@ use num_traits::Num;
 use runtime::starknet::state::DictStateReader;
 use starknet_api::{block::BlockNumber, core::ChainId};
 use url::Url;
+use walnut_shared::rpc_url;
 
 pub fn create_fork_cached_state_at(
     chain_id: &ChainId,
     block_number: BlockNumber,
     cache_dir: &str,
 ) -> CachedState<ExtendedStateReader> {
-    let url = match chain_id.0.as_str() {
-        "0x534e5f4d41494e" => {
-            "https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
-        }
-        "0x534e5f5345504f4c4941" => {
-            "https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
-        }
-        _ => panic!("Invalid chain id"),
-    };
+    let url = rpc_url(chain_id);
     CachedState::new(
         ExtendedStateReader {
             dict_state_reader: DictStateReader::default(),
