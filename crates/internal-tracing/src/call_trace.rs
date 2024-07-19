@@ -219,12 +219,15 @@ pub fn get_internal_call_trace(
     }
 
     tree.set_deepest_panic_result();
-    // Add debugger trace entry for the last step with Cairo locations
-    debugger_execution_trace.push(DebuggerExecutionTraceEntry {
-        sierra_index: prev_cairo_location_sierra_index.unwrap(),
-        results: results_accumulator,
-        arguments: arguments_accumulator,
-    });
+
+    if let Some(prev_cairo_location_sierra_index) = prev_cairo_location_sierra_index {
+        // Add debugger trace entry for the last step with Cairo locations
+        debugger_execution_trace.push(DebuggerExecutionTraceEntry {
+            sierra_index: prev_cairo_location_sierra_index,
+            results: results_accumulator,
+            arguments: arguments_accumulator,
+        });
+    }
 
     Ok((tree.get_root_serializable(), debugger_execution_trace))
 }

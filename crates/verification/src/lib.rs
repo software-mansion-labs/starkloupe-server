@@ -196,19 +196,11 @@ async fn verify(
     let manifest = read_manifest(&scarb_config_file)?;
 
     match manifest.starknet_version {
+        (2, 6, 3) => {
+            run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
+        }
         (2, 6, _) => {
-            let mut cmd = ScarbCommand::new_with_stdio();
-            cmd.current_dir(&tmp_dir);
-            let relative_path = PathBuf::from("scarb/scarb_v_2_6_5");
-            let absolute_path = fs::canonicalize(&relative_path).unwrap();
-            cmd.scarb_path(absolute_path);
-            cmd.arg("build");
-            let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
-            let scarb_cache_dir_str = scarb_cache_dir
-                .to_str()
-                .ok_or(anyhow::anyhow!("Failed to convert cache dir to string"))?;
-            cmd.env("SCARB_CACHE", scarb_cache_dir_str);
-            cmd.run()?;
+            run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4")?;
         }
         _ => {
             return Err(anyhow::anyhow!("Unsupported Starknet version. Currently, we support versions 2.6.* and will add support for more versions soon."));
@@ -270,6 +262,21 @@ async fn verify(
     let cairo_debug_info = cairo_debug_info?;
 
     Ok((contract_class, cairo_debug_info))
+}
+
+fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
+    let mut cmd = ScarbCommand::new_with_stdio();
+    cmd.current_dir(tmp_dir);
+    let absolute_path = fs::canonicalize(scarb_path)?;
+    cmd.scarb_path(absolute_path);
+    cmd.arg("build");
+    let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
+    let scarb_cache_dir_str = scarb_cache_dir
+        .to_str()
+        .ok_or(anyhow::anyhow!("Failed to convert cache dir to string"))?;
+    cmd.env("SCARB_CACHE", scarb_cache_dir_str);
+    cmd.run()?;
+    Ok(())
 }
 
 struct Manifest {
