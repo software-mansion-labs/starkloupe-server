@@ -70,6 +70,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use walnut_shared::chain_id_to_readable_string;
 use walnut_shared::clone_vm_trace;
 use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
@@ -519,7 +520,7 @@ pub async fn simulate_by_data(
         },
         None => None,
     };
-    let chain_id = args.chain_id.clone().0.to_string();
+    let chain_id_readable = chain_id_to_readable_string(args.chain_id.clone());
     let block_number = args.block_number.0;
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
@@ -534,7 +535,7 @@ pub async fn simulate_by_data(
 
     TransactionSimulationResult {
         simulation_result,
-        chain_id,
+        chain_id: chain_id_readable,
         block_number,
         nonce,
         sender_address,
@@ -587,7 +588,7 @@ pub async fn simulate_transaction_by_hash(
                     };
                     return Some(TransactionSimulationResult {
                         simulation_result,
-                        chain_id: chain_id.0,
+                        chain_id: chain_id_to_readable_string(chain_id),
                         block_number: block_number.0,
                         nonce,
                         sender_address: sender_address.0.to_string(),
