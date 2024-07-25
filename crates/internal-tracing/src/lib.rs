@@ -59,6 +59,7 @@ pub fn get_internal_trace_and_debugger_data(
     relocated_memory: &Vec<Option<Felt252>>,
     vm_trace: &Vec<TraceEntry>,
     full_class_debugger_data: &ClassDebuggerDataWithContractClass,
+    parent_contract_call_id: &String,
 ) -> Result<(InternalFnCallTraceEntryNode, ContractCallDebuggerData)> {
     let mappings = Mappings::new(
         relocated_memory,
@@ -74,6 +75,7 @@ pub fn get_internal_trace_and_debugger_data(
             .class_debugger_data
             .as_ref()
             .map(|class_debugger_data| &class_debugger_data.sierra_statements_to_cairo_info),
+        parent_contract_call_id,
     )?;
 
     Ok((internal_trace, ContractCallDebuggerData { execution_trace }))

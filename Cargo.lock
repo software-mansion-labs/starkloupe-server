@@ -3476,6 +3476,7 @@ dependencies = [
  "anyhow",
  "aws-sdk-s3",
  "aws-smithy-types",
+ "blockifier",
  "byteorder",
  "cairo-felt",
  "cairo-lang-casm 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",

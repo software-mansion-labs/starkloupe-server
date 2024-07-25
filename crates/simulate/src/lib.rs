@@ -73,6 +73,7 @@ use std::sync::Arc;
 use walnut_shared::clone_vm_trace;
 use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
+use walnut_shared::get_contract_call_id;
 use walnut_shared::{
     create_rpc_client, decode_felt252, felt_vec_to_event_vec, EventItems, StructItems,
 };
@@ -278,6 +279,7 @@ pub struct EventAbi {
 pub struct SimulationCallTraceAdditionalInfo {
     contract_name: Option<String>,
     entry_point_function_name: Option<String>,
+    entry_point_function_selector: Option<String>,
     entry_point_interface_name: Option<String>,
     is_erc20_token: bool,
     erc20_token_name: Option<String>,
@@ -311,10 +313,11 @@ pub struct SimulationCallTrace {
     pub nested_calls: Vec<SimulationCallTrace>,
     pub nested_level: usize,
     pub result: CallResult,
-    pub internal_fn_call_trace: Option<InternalFnCallTraceEntryNode>,
+    pub fn_calls: Vec<InternalFnCallTraceEntryNode>,
     pub additional_info: SimulationCallTraceAdditionalInfo,
     pub _vm_trace: Option<Vec<TraceEntry>>,
     pub _relocated_memory: Option<Vec<Option<Felt252>>>,
+    pub contract_call_id: String,
 }
 
 fn get_simulation_info(
@@ -360,6 +363,8 @@ fn get_simulation_info(
         max_nested_error_level,
         &mut execution_result,
     );
+
+    enhance_call_trace_with_contract_call_index(&mut call_trace, None, 0);
 
     (
         SimulationInfo {
@@ -414,7 +419,7 @@ fn get_simulation_call_trace(
         nested_calls,
         nested_level,
         result: call_trace_ref.result.clone(),
-        internal_fn_call_trace: None,
+        fn_calls: Vec::new(),
         additional_info: get_additional_info(
             fork_state_reader,
             call_trace_ref.entry_point.class_hash,
@@ -427,6 +432,7 @@ fn get_simulation_call_trace(
             .as_ref()
             .map(|vm_trace| clone_vm_trace(vm_trace)),
         _relocated_memory: call_trace_ref.relocated_memory.clone(),
+        contract_call_id: String::new(),
     }
 }
 
@@ -660,6 +666,7 @@ fn get_additional_info(
     let mut additional_info = SimulationCallTraceAdditionalInfo {
         contract_name: None,
         entry_point_function_name: None,
+        entry_point_function_selector: None,
         entry_point_interface_name: None,
         is_erc20_token: false,
         erc20_token_name: None,
@@ -746,6 +753,7 @@ fn get_function_name(
     additional_info: &mut SimulationCallTraceAdditionalInfo,
     entry_point_selector: &EntryPointSelector,
 ) {
+    additional_info.entry_point_function_selector = Some(entry_point_selector.0.to_string());
     if additional_info.entry_point_function_name.is_none() {
         let entry_point_selector_str = entry_point_selector.0.to_string();
         let selector = get_selector(&entry_point_selector_str);
@@ -843,6 +851,7 @@ pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
     simulation_call_trace: &mut SimulationCallTrace,
     classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
 ) {
+    let parent_contract_call_id = simulation_call_trace.contract_call_id.clone();
     let (internal_fn_call_trace, call_debugger_data) = match (
         simulation_call_trace.entry_point.class_hash,
         &simulation_call_trace._relocated_memory,
@@ -855,6 +864,7 @@ pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
                         relocated_memory,
                         vm_trace,
                         full_class_debugger_data,
+                        &parent_contract_call_id,
                     ) {
                         Ok((internal_fn_call_trace, call_debugger_data)) => {
                             (Some(internal_fn_call_trace), Some(call_debugger_data))
@@ -876,7 +886,8 @@ pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
             (None, None)
         }
     };
-    simulation_call_trace.internal_fn_call_trace = internal_fn_call_trace;
+    simulation_call_trace.fn_calls =
+        internal_fn_call_trace.map_or_else(Vec::new, |trace| vec![trace]);
     simulation_call_trace.additional_info.call_debugger_data = call_debugger_data;
     simulation_call_trace._vm_trace = None;
     simulation_call_trace._relocated_memory = None;
@@ -884,6 +895,22 @@ pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
         enhance_call_trace_with_internal_trace_and_debugger_data(
             nested_call,
             classes_debugger_data,
+        );
+    }
+}
+
+fn enhance_call_trace_with_contract_call_index(
+    simulation_call_trace: &mut SimulationCallTrace,
+    parent_contract_call_index: Option<&str>,
+    current_contract_call_index: usize,
+) {
+    simulation_call_trace.contract_call_id =
+        get_contract_call_id(parent_contract_call_index, current_contract_call_index);
+    for (index, nested_call) in simulation_call_trace.nested_calls.iter_mut().enumerate() {
+        enhance_call_trace_with_contract_call_index(
+            nested_call,
+            Some(&simulation_call_trace.contract_call_id),
+            index,
         );
     }
 }

@@ -158,3 +158,19 @@ pub fn pad_field_element_to_hex_string_length66(field_element: FieldElement) -> 
     }
     format!("0x{}", hex_string)
 }
+
+pub fn get_contract_call_id(
+    parent_contract_call_id: Option<&str>,
+    contract_call_index: usize,
+) -> String {
+    match parent_contract_call_id {
+        Some(parent_contract_call_id) => {
+            format!("{}-{}", parent_contract_call_id, contract_call_index)
+        }
+        None => contract_call_index.to_string(),
+    }
+}
+
+pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> String {
+    format!("{}-fp-{}", contract_call_id, fp)
+}

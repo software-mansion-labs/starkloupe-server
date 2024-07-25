@@ -1,16 +1,16 @@
 use anyhow::Result;
+use blockifier::execution::{
+    deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
+};
 use byteorder::{ByteOrder, LittleEndian};
-use cairo_felt::Felt252;
+use cairo_felt::{felt_str, Felt252};
 use cairo_lang_casm::{
     ap_change::ApChange,
     cell_expression::{CellExpression, CellOperator},
     operand::{CellRef, DerefOrImmediate, Register},
 };
 use cairo_lang_sierra::{
-    extensions::{
-        core::{CoreLibfunc, CoreType},
-        felt252::Felt252Libfunc,
-    },
+    extensions::core::{CoreLibfunc, CoreType},
     ids::ConcreteTypeId,
     program::{GenFunction, Program, StatementIdx},
     program_registry::ProgramRegistry,
@@ -26,14 +26,16 @@ use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugIn
 use walnut_shared::decode_felt252;
 
 use crate::{
-    call_trace::InternalFnCallIO,
+    call_trace::{ContractCall, ESysCall, InternalFnCallIO},
     utils::{
-        compile_sierra_contract_class, get_pc_mappings, is_panic_result, make_casm_to_sierra_map,
+        compile_sierra_contract_class, felt_to_stark_felt, get_pc_mappings,
+        get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
     },
 };
 
 pub struct Mappings {
     pub pc_to_inst_indexes_map: HashMap<usize, usize>,
+    pub pc_to_ptr_sys_calls: HashMap<usize, CellExpression>,
     pub casm_to_sierra_map: HashMap<usize, Vec<usize>>,
     pub sierra_program: Program,
     pub memory_map: HashMap<usize, BigInt>,
@@ -49,7 +51,8 @@ impl Mappings {
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program()?;
-        // dbg!(format_sierra_program(sierra_program.clone()));
+        //dbg!(&sierra_program.libfunc_declarations);
+        //dbg!(format_sierra_program(sierra_program.clone()));
         let type_names = contract_class
             .sierra_program_debug_info
             .clone()
@@ -59,6 +62,8 @@ impl Mappings {
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
         let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace);
 
+        let pc_to_ptr_sys_calls =
+            get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
         let memory_map: HashMap<usize, BigInt> = relocated_memory
             .iter()
             .filter_map(|x| x.as_ref().map(|_| x.clone().unwrap()))
@@ -71,7 +76,6 @@ impl Mappings {
             ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).unwrap();
         let type_sizes =
             get_type_size_map(&sierra_program, &sierra_program_registry).unwrap_or_default();
-
         // // Print relocated memory
         // let mut ordered_map: BTreeMap<usize, BigInt> = BTreeMap::new();
         // for (k, v) in &memory_map {
@@ -86,6 +90,7 @@ impl Mappings {
 
         Ok(Mappings {
             pc_to_inst_indexes_map,
+            pc_to_ptr_sys_calls,
             casm_to_sierra_map,
             sierra_program,
             memory_map,
@@ -276,6 +281,64 @@ impl Mappings {
             }
         }
         results
+    }
+
+    pub fn get_system_call_at_trace_step(
+        &self,
+        relocated_memory: &Vec<Option<Felt252>>,
+        trace_entry: &TraceEntry,
+    ) -> Option<ESysCall> {
+        let pc = trace_entry.pc as usize;
+        let fp = trace_entry.fp as usize;
+        let ptr_sys_call = self.pc_to_ptr_sys_calls.get(&pc);
+        match ptr_sys_call {
+            Some(ptr_sys_call) => {
+                let value = get_value_from_cell_expression(
+                    relocated_memory,
+                    trace_entry,
+                    ptr_sys_call,
+                    &ApChange::Known(0),
+                )
+                .unwrap();
+                let mut ptr = value.parse::<usize>().unwrap();
+                let felt_value = relocated_memory.get(ptr).unwrap();
+                ptr += 1;
+                let starkfelt = felt_to_stark_felt(&felt_value.as_ref().unwrap());
+                let selector = SyscallSelector::try_from(starkfelt);
+                match selector {
+                    Ok(selector) => {
+                        match selector {
+                            DeprecatedSyscallSelector::CallContract => {
+                                // https://github.com/starkware-libs/blockifier/blob/9bfb3d4c8bf1b68a0c744d1249b32747c75a4d87/crates/blockifier/src/execution/syscalls/hint_processor.rs#L302C13-L306C15
+                                let _felt_value = relocated_memory.get(ptr).unwrap();
+                                ptr += 1;
+                                let felt_value: Felt252 =
+                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                let contract_address =
+                                    format!("0x{:0>64}", felt_value.to_str_radix(16));
+                                ptr += 1;
+                                let felt_value =
+                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                let function_selector =
+                                    format!("0x{:0>64}", felt_value.to_str_radix(16));
+                                let contract_call = ContractCall {
+                                    contract_address,
+                                    function_selector,
+                                };
+                                Some(ESysCall::ContractCall(contract_call))
+                            }
+                            _ => None,
+                        }
+                    }
+                    Err(e) => {
+                        dbg!(e);
+                        None
+                    }
+                }
+            }
+
+            None => None,
+        }
     }
 }
 
