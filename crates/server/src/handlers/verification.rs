@@ -97,7 +97,7 @@ pub struct VerificationPayloadWithRpc {
     path = "/v1/verify",
     request_body(
         content = VerificationPayloadWithRpc,
-        description = "Contract name, class hash, RPC URL, and source code to verify",
+        description = "Class name, class hash, RPC URL, and source code to verify",
         content_type = "application/json"
     ),
     responses(
