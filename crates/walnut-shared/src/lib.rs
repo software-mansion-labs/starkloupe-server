@@ -35,6 +35,11 @@ pub fn create_rpc_client(chain_id: &ChainId) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(chain_id)).unwrap()))
 }
 
+pub fn create_rpc_client_from_url(rpc_url: &str) -> anyhow::Result<JsonRpcClient<HttpTransport>> {
+    let url = Url::parse(rpc_url)?;
+    Ok(JsonRpcClient::new(HttpTransport::new(url)))
+}
+
 pub fn rpc_url(chain_id: &ChainId) -> &str {
     match chain_id.0.as_str() {
         MAIN_CHAIN_ID => {

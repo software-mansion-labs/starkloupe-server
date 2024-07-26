@@ -31,6 +31,10 @@ use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi;
 
+use crate::handlers::{
+    classes::get_class_handler_with_chain_id, verification::verify_handler_with_rpc,
+};
+
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
 // https://crates.io/crates/redis-macros
@@ -169,7 +173,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(simulate_transaction_by_hash_handler),
         )
         .route("/v1/:chain_id/verify", post(verify_handler))
-        .route("/v1/:chain_id/classes/:class_hash", get(get_class_handler))
+        .route("/v1/verify", post(verify_handler_with_rpc))
+        .route(
+            "/v1/:chain_id/classes/:class_hash",
+            get(get_class_handler_with_chain_id),
+        )
+        .route("/v1/classes/:class_hash", get(get_class_handler))
         .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))

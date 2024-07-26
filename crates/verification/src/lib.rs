@@ -9,7 +9,8 @@ use scarb_api::ScarbCommand;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, FieldElement};
-use starknet::providers::Provider;
+use starknet::providers::jsonrpc::HttpTransport;
+use starknet::providers::{JsonRpcClient, Provider};
 use starknet_api::core::ChainId;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use std::{env, fs};
 use uuid::Uuid;
-use walnut_shared::{create_rpc_client, pad_field_element_to_hex_string_length66};
+use walnut_shared::{chain_id_to_readable_string, pad_field_element_to_hex_string_length66};
 
 #[derive(Debug)]
 pub struct VerifiedClassRow {
@@ -25,6 +26,8 @@ pub struct VerifiedClassRow {
     pub is_sierra_debug_info: bool,
     pub is_cairo_debug_info: bool,
     pub is_source_code: bool,
+    pub chain_id: Option<String>,
+    pub project_id: Option<i32>,
 }
 
 pub fn key_for_class_hash(class_hash: String) -> String {
@@ -107,26 +110,16 @@ async fn is_class_verified(db_pool: &Pool<Postgres>, class_hash: String) -> Resu
     Ok(false)
 }
 
-pub async fn verify_by_contract_address(
+pub async fn verify_by_class_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    chain_id: ChainId,
-    contract_address: String,
+    provider_client: JsonRpcClient<HttpTransport>,
+    class_hash: String,
     class_name: String,
     source_code: HashMap<String, String>,
-) -> Result<String> {
-    let provider_client = create_rpc_client(&chain_id);
-    let class_hash = pad_field_element_to_hex_string_length66(
-        provider_client
-            .get_class_hash_at(
-                BlockId::Tag(BlockTag::Latest),
-                &FieldElement::from_str(contract_address.as_str())
-                    .context("Contract address format is incorrect")?,
-            )
-            .await
-            .context("Can't find the contract class")?,
-    );
-
+    chain_id: Option<ChainId>,
+    project_id: Option<i32>,
+) -> Result<()> {
     let is_verified = is_class_verified(db_pool, class_hash.clone()).await?;
     if is_verified {
         return Err(anyhow::anyhow!("Class is already verified"));
@@ -138,8 +131,8 @@ pub async fn verify_by_contract_address(
 
     let res = verify(
         &tmp_dir,
-        chain_id,
-        contract_address,
+        provider_client,
+        class_hash.clone(),
         class_name,
         &source_code,
     )
@@ -169,15 +162,53 @@ pub async fn verify_by_contract_address(
 
     let _rec = sqlx::query!(
         r#"
-    INSERT INTO contract_classes ( hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code )
-    VALUES ( $1, $2, $3, $4 )
+    INSERT INTO contract_classes ( hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code, chain_id, project_id )
+    VALUES ( $1, $2, $3, $4, $5, $6 )
             "#,
         class_hash,
         true,
         is_cairo_debug_info,
-        true
+        true,
+        chain_id.map_or(None, |id| Some(chain_id_to_readable_string(id))),
+        project_id
     )
     .execute(db_pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn verify_by_contract_address(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    provider_client: JsonRpcClient<HttpTransport>,
+    contract_address: String,
+    class_name: String,
+    source_code: HashMap<String, String>,
+    chain_id: Option<ChainId>,
+    project_id: Option<i32>,
+) -> Result<String> {
+    let class_hash = pad_field_element_to_hex_string_length66(
+        provider_client
+            .get_class_hash_at(
+                BlockId::Tag(BlockTag::Latest),
+                &FieldElement::from_str(contract_address.as_str())
+                    .context("Contract address format is incorrect")?,
+            )
+            .await
+            .context("Can't find the contract class")?,
+    );
+
+    verify_by_class_hash(
+        db_pool,
+        s3_client,
+        provider_client,
+        class_hash.clone(),
+        class_name,
+        source_code,
+        chain_id,
+        project_id,
+    )
     .await?;
 
     Ok(class_hash)
@@ -185,8 +216,8 @@ pub async fn verify_by_contract_address(
 
 async fn verify(
     tmp_dir: &PathBuf,
-    chain_id: ChainId,
-    contract_address: String,
+    provider_client: JsonRpcClient<HttpTransport>,
+    class_hash: String,
     class_name: String,
     source_code: &HashMap<String, String>,
 ) -> Result<(ContractClass, Option<SierraToCairoDebugInfo>)> {
@@ -215,11 +246,10 @@ async fn verify(
     let contract_class_reader = BufReader::new(contract_class_file);
     let contract_class: ContractClass = serde_json::from_reader(contract_class_reader)?;
 
-    let provider_client = create_rpc_client(&chain_id);
     let class_from_blockchain = provider_client
-        .get_class_at(
+        .get_class(
             BlockId::Tag(BlockTag::Latest),
-            &FieldElement::from_str(contract_address.as_str())?,
+            &FieldElement::from_str(class_hash.as_str())?,
         )
         .await?;
     let program_from_blockchain = match class_from_blockchain {
