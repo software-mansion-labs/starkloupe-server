@@ -56,7 +56,7 @@ pub struct GetClassResponse {
     pub verified: bool,
 }
 
-// TODO: Add includeSourceCode flag and return the source code if provided
+// TODO: Add include_source_code flag and return the source code if provided
 #[utoipa::path(
     post,
     path = "/v1/classes/{class_hash}",
