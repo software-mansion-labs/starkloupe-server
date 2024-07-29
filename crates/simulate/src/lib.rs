@@ -52,6 +52,7 @@ use starknet::core::types::TransactionReceipt;
 use starknet::core::types::{FieldElement, InvokeTransaction, Transaction};
 use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
+use starknet_api::block::BlockTimestamp;
 use starknet_api::core::ClassHash;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
@@ -139,7 +140,7 @@ pub async fn simulate(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
-) -> SimulationInfo {
+) -> (SimulationInfo, BlockTimestamp) {
     let mut cached_fork_state = create_fork_cached_state_at(
         &args.chain_id,
         BlockNumber(args.block_number.clone().0 - 1),
@@ -150,7 +151,7 @@ pub async fn simulate(
 
     let cheatnet_state = run_simulation(args, &mut cached_fork_state);
 
-    let (mut simulation_info, class_hashes) = get_simulation_info(
+    let (mut simulation_info, block_timestamp, class_hashes) = get_simulation_info(
         &cached_fork_state.state.fork_state_reader.unwrap(),
         cheatnet_state,
     );
@@ -179,7 +180,7 @@ pub async fn simulate(
         simulation_info.call_trace = Some(call_trace);
         simulation_info.events_trace = Some(event_trace);
     }
-    simulation_info
+    (simulation_info, block_timestamp)
 }
 
 fn run_simulation(
@@ -324,7 +325,7 @@ pub struct SimulationCallTrace {
 fn get_simulation_info(
     fork_state_reader: &ForkStateReader,
     cheatnet_state: CheatnetState,
-) -> (SimulationInfo, Vec<String>) {
+) -> (SimulationInfo, BlockTimestamp, Vec<String>) {
     let mut class_hashes: Vec<String> = Vec::new();
     let mut max_nested_error_level: usize = 0;
 
@@ -344,6 +345,7 @@ fn get_simulation_info(
                     classes_debugger_data: HashMap::new(),
                 }),
             },
+            BlockTimestamp::default(),
             Vec::new(),
         );
     }
@@ -375,6 +377,7 @@ fn get_simulation_info(
             execution_result: Some(execution_result),
             simulation_debugger_data: None,
         },
+        cheatnet_state.block_info.block_timestamp,
         class_hashes,
     )
 }
@@ -502,6 +505,7 @@ pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
     pub block_number: u64,
+    pub block_timestamp: u64,
     pub nonce: Option<u64>,
     pub sender_address: String,
     pub calldata: Vec<String>,
@@ -531,12 +535,13 @@ pub async fn simulate_by_data(
         .collect::<Vec<String>>();
 
     let transaction_version: usize = args.transaction_version.0.try_into().unwrap();
-    let simulation_result = simulate(db_pool, s3_client, args).await;
+    let (simulation_result, block_timestamp) = simulate(db_pool, s3_client, args).await;
 
     TransactionSimulationResult {
         simulation_result,
         chain_id: chain_id_readable,
         block_number,
+        block_timestamp: block_timestamp.0,
         nonce,
         sender_address,
         calldata,
@@ -564,7 +569,7 @@ pub async fn simulate_transaction_by_hash(
                 .await;
             if let Ok(transaction_receipt) = transaction_receipt {
                 if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
-                    let simulation_result = simulate(
+                    let (simulation_result, block_timestamp) = simulate(
                         db_pool,
                         s3_client,
                         SimulationArgs {
@@ -590,6 +595,7 @@ pub async fn simulate_transaction_by_hash(
                         simulation_result,
                         chain_id: chain_id_to_readable_string(chain_id),
                         block_number: block_number.0,
+                        block_timestamp: block_timestamp.0,
                         nonce,
                         sender_address: sender_address.0.to_string(),
                         calldata,
