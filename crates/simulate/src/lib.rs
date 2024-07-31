@@ -12,7 +12,9 @@ use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
 use blockifier::state::cached_state::CachedState;
+use blockifier::state::errors::StateError;
 use blockifier::transaction::constants;
+use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::CommonAccountFields;
 use blockifier::transaction::objects::CurrentTransactionInfo;
 use blockifier::transaction::objects::TransactionInfo;
@@ -71,6 +73,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use thiserror::Error;
 use walnut_shared::chain_id_to_readable_string;
 use walnut_shared::clone_vm_trace;
 use walnut_shared::extract_chain_id;
@@ -140,7 +143,7 @@ pub async fn simulate(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
-) -> (SimulationInfo, BlockTimestamp) {
+) -> Result<(SimulationInfo, BlockTimestamp), TransactionSimulationError> {
     let mut cached_fork_state = create_fork_cached_state_at(
         &args.chain_id,
         BlockNumber(args.block_number.clone().0 - 1),
@@ -149,7 +152,7 @@ pub async fn simulate(
 
     let chain_id = args.chain_id.clone();
 
-    let cheatnet_state = run_simulation(args, &mut cached_fork_state);
+    let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
 
     let (mut simulation_info, block_timestamp, class_hashes) = get_simulation_info(
         &cached_fork_state.state.fork_state_reader.unwrap(),
@@ -180,13 +183,14 @@ pub async fn simulate(
         simulation_info.call_trace = Some(call_trace);
         simulation_info.events_trace = Some(event_trace);
     }
-    (simulation_info, block_timestamp)
+
+    Ok((simulation_info, block_timestamp))
 }
 
 fn run_simulation(
     args: SimulationArgs,
     cached_fork_state: &mut CachedState<ExtendedStateReader>,
-) -> CheatnetState {
+) -> Result<CheatnetState, TransactionSimulationError> {
     let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
     let mut execute_call = CallEntryPoint {
@@ -201,7 +205,7 @@ fn run_simulation(
         initial_gas: u64::MAX,
     };
 
-    let block_info = cached_fork_state.state.get_block_info().unwrap();
+    let block_info = cached_fork_state.state.get_block_info()?;
 
     let transaction_context = Arc::new(TransactionContext {
         block_context: BlockContext::new_unchecked(
@@ -243,8 +247,7 @@ fn run_simulation(
     });
 
     let mut context =
-        EntryPointExecutionContext::new(transaction_context, ExecutionMode::Execute, false)
-            .unwrap();
+        EntryPointExecutionContext::new(transaction_context, ExecutionMode::Execute, false)?;
 
     let mut cheatnet_state = CheatnetState {
         block_info,
@@ -267,7 +270,7 @@ fn run_simulation(
     let raw_events = felt_vec_to_event_vec(&events);
     cheatnet_state.detected_events = raw_events;
 
-    cheatnet_state
+    Ok(cheatnet_state)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -512,11 +515,21 @@ pub struct TransactionSimulationResult {
     pub transaction_version: usize,
 }
 
+#[derive(Error, Debug)]
+pub enum TransactionSimulationError {
+    #[error("{0}")]
+    StateError(#[from] StateError),
+    #[error("{0}")]
+    TransactionExecutionError(#[from] TransactionExecutionError),
+    #[error("Transaction hash not found")]
+    TransactionHashNotFound,
+}
+
 pub async fn simulate_by_data(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
-) -> TransactionSimulationResult {
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let nonce: Option<u64> = match args.nonce {
         Some(nonce) => match nonce.0.try_into() {
             Ok(value) => Some(value),
@@ -535,9 +548,9 @@ pub async fn simulate_by_data(
         .collect::<Vec<String>>();
 
     let transaction_version: usize = args.transaction_version.0.try_into().unwrap();
-    let (simulation_result, block_timestamp) = simulate(db_pool, s3_client, args).await;
+    let (simulation_result, block_timestamp) = simulate(db_pool, s3_client, args).await?;
 
-    TransactionSimulationResult {
+    Ok(TransactionSimulationResult {
         simulation_result,
         chain_id: chain_id_readable,
         block_number,
@@ -546,7 +559,7 @@ pub async fn simulate_by_data(
         sender_address,
         calldata,
         transaction_version,
-    }
+    })
 }
 
 pub async fn simulate_transaction_by_hash(
@@ -554,9 +567,9 @@ pub async fn simulate_transaction_by_hash(
     s3_client: &aws_sdk_s3::Client,
     chain_id: ChainId,
     tx_hash: String,
-) -> Option<TransactionSimulationResult> {
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let provider_client = create_rpc_client(&chain_id);
-    let transaction_hash = FieldElement::from_str(&tx_hash.as_str()).unwrap();
+    let transaction_hash = FieldElement::from_str(tx_hash.as_str()).unwrap();
     let transaction = provider_client
         .get_transaction_by_hash(transaction_hash)
         .await;
@@ -581,7 +594,7 @@ pub async fn simulate_transaction_by_hash(
                             transaction_version,
                         },
                     )
-                    .await;
+                    .await?;
                     let calldata = calldata
                         .0
                         .iter()
@@ -591,7 +604,7 @@ pub async fn simulate_transaction_by_hash(
                         Ok(value) => Some(value),
                         Err(_) => None,
                     };
-                    return Some(TransactionSimulationResult {
+                    return Ok(TransactionSimulationResult {
                         simulation_result,
                         chain_id: chain_id_to_readable_string(chain_id),
                         block_number: block_number.0,
@@ -605,7 +618,7 @@ pub async fn simulate_transaction_by_hash(
             }
         }
     }
-    None
+    Err(TransactionSimulationError::TransactionHashNotFound)
 }
 
 fn extract_transaction_receipt(

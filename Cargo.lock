@@ -5508,6 +5508,7 @@ dependencies = [
  "starknet 0.10.0",
  "starknet-selector-decoder",
  "starknet_api",
+ "thiserror",
  "tokio",
  "url",
  "walnut-shared",
