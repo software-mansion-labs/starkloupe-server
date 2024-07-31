@@ -29,8 +29,8 @@ pub fn decode_datas(
                 )))
             }
             EDataType::Array(inner_type) => {
-                let array_lenght_hex = datas.get(*data_index).unwrap().trim_start_matches("0x");
-                let array_length = usize::from_str_radix(array_lenght_hex, 16).unwrap();
+                let array_length_hex = datas.get(*data_index).unwrap().trim_start_matches("0x");
+                let array_length = usize::from_str_radix(array_length_hex, 16).unwrap();
                 *data_index += 1;
                 let mut decoded_array = Vec::new();
                 for _ in 0..array_length {

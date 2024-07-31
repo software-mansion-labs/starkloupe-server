@@ -18,6 +18,7 @@ use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::CommonAccountFields;
 use blockifier::transaction::objects::CurrentTransactionInfo;
 use blockifier::transaction::objects::TransactionInfo;
+use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
 use cairo_felt::Felt252;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
@@ -51,7 +52,7 @@ use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
-use starknet::core::types::{FieldElement, InvokeTransaction, Transaction};
+use starknet::core::types::{DeclareTransaction, FieldElement, InvokeTransaction, Transaction};
 use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
@@ -74,6 +75,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
+use utils::transaction_type_to_string;
 use walnut_shared::chain_id_to_readable_string;
 use walnut_shared::clone_vm_trace;
 use walnut_shared::extract_chain_id;
@@ -513,6 +515,7 @@ pub struct TransactionSimulationResult {
     pub sender_address: String,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
+    pub transaction_type: String,
 }
 
 #[derive(Error, Debug)]
@@ -559,6 +562,7 @@ pub async fn simulate_by_data(
         sender_address,
         calldata,
         transaction_version,
+        transaction_type: transaction_type_to_string(TransactionType::InvokeFunction),
     })
 }
 
@@ -574,7 +578,7 @@ pub async fn simulate_transaction_by_hash(
         .get_transaction_by_hash(transaction_hash)
         .await;
     if let Ok(transaction) = transaction {
-        if let Some((nonce, sender_address, calldata, transaction_version)) =
+        if let Some((nonce, sender_address, calldata, transaction_version, transaction_type)) =
             extract_submitted_tx(transaction)
         {
             let transaction_receipt = provider_client
@@ -613,6 +617,7 @@ pub async fn simulate_transaction_by_hash(
                         sender_address: sender_address.0.to_string(),
                         calldata,
                         transaction_version: transaction_version.0.try_into().unwrap(),
+                        transaction_type: transaction_type_to_string(transaction_type),
                     });
                 }
             }
@@ -629,6 +634,9 @@ fn extract_transaction_receipt(
             TransactionReceipt::Invoke(invoke_receipt) => {
                 Some(BlockNumber(invoke_receipt.block_number))
             }
+            TransactionReceipt::Declare(declare_receipt) => {
+                Some(BlockNumber(declare_receipt.block_number))
+            }
             _ => None,
         },
         _ => None,
@@ -637,7 +645,13 @@ fn extract_transaction_receipt(
 
 fn extract_submitted_tx(
     transaction: Transaction,
-) -> Option<(Nonce, ContractAddress, Calldata, TransactionVersion)> {
+) -> Option<(
+    Nonce,
+    ContractAddress,
+    Calldata,
+    TransactionVersion,
+    TransactionType,
+)> {
     match transaction {
         Transaction::Invoke(invoke_transaction) => match invoke_transaction {
             InvokeTransaction::V0(tx) => {
@@ -647,7 +661,8 @@ fn extract_submitted_tx(
                     Nonce::default(),
                     contract_address!(tx.contract_address),
                     Calldata(calldata.into()),
-                    TransactionVersion::ONE,
+                    TransactionVersion::ONE, //FIXME change to ZERO ?
+                    TransactionType::InvokeFunction,
                 ))
             }
             InvokeTransaction::V1(tx) => {
@@ -658,6 +673,7 @@ fn extract_submitted_tx(
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
                     TransactionVersion::ONE,
+                    TransactionType::InvokeFunction,
                 ))
             }
             InvokeTransaction::V3(tx) => {
@@ -668,8 +684,41 @@ fn extract_submitted_tx(
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
                     TransactionVersion::THREE,
+                    TransactionType::InvokeFunction,
                 ))
             }
+            _ => None,
+        },
+        Transaction::Declare(declare_transaction) => match declare_transaction {
+            //dbg!(declare_transaction);
+            DeclareTransaction::V0(tx) => Some((
+                Nonce::default(),
+                contract_address!(tx.sender_address),
+                Calldata::default(),
+                TransactionVersion::ZERO,
+                TransactionType::Declare,
+            )),
+            DeclareTransaction::V1(tx) => Some((
+                Nonce(StarkFelt::from(tx.nonce)),
+                contract_address!(tx.sender_address),
+                Calldata::default(),
+                TransactionVersion::ONE,
+                TransactionType::Declare,
+            )),
+            DeclareTransaction::V2(tx) => Some((
+                Nonce(StarkFelt::from(tx.nonce)),
+                contract_address!(tx.sender_address),
+                Calldata::default(),
+                TransactionVersion::TWO,
+                TransactionType::Declare,
+            )),
+            DeclareTransaction::V3(tx) => Some((
+                Nonce(StarkFelt::from(tx.nonce)),
+                contract_address!(tx.sender_address),
+                Calldata::default(),
+                TransactionVersion::THREE,
+                TransactionType::Declare,
+            )),
             _ => None,
         },
         _ => None,
