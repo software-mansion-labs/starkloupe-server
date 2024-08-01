@@ -690,7 +690,6 @@ fn extract_submitted_tx(
             _ => None,
         },
         Transaction::Declare(declare_transaction) => match declare_transaction {
-            //dbg!(declare_transaction);
             DeclareTransaction::V0(tx) => Some((
                 Nonce::default(),
                 contract_address!(tx.sender_address),
