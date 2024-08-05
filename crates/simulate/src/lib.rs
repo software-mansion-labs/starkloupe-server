@@ -300,6 +300,8 @@ pub struct SimulationCallTraceAdditionalInfo {
     event_abi: Option<Vec<EventAbi>>,
     call_debugger_data: Option<ContractCallDebuggerData>,
     class_hash: Option<String>,
+    sierra_version: Option<String>,
+    cairo_version: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -748,6 +750,8 @@ fn get_additional_info(
         event_abi: None,
         call_debugger_data: None,
         class_hash: class_hash.map(|class_hash| class_hash.to_string()),
+        sierra_version: None,
+        cairo_version: None,
     };
     let mut struct_items: Vec<StructItems> = Vec::new();
     let mut event_items: Vec<EventItems> = Vec::new();
@@ -771,6 +775,9 @@ fn get_additional_info(
                         abi_processor.function_return_result_types;
                     struct_items = abi_processor.struct_items;
                     event_items = abi_processor.event_items;
+                    let (sierra_version, cairo_version) = extract_version(&class.sierra_program);
+                    additional_info.sierra_version = sierra_version;
+                    additional_info.cairo_version = cairo_version;
                 }
                 _ => {}
             };
@@ -783,6 +790,25 @@ fn get_additional_info(
     get_function_arguments(&mut additional_info, &calldata, &struct_items);
 
     additional_info
+}
+
+fn extract_version(
+    sierra_program: &[starknet::core::types::FieldElement],
+) -> (Option<String>, Option<String>) {
+    if sierra_program.len() < 6 {
+        return (None, None);
+    }
+    let sierra_version = format!(
+        "{}.{}.{}",
+        sierra_program[0], sierra_program[1], sierra_program[2]
+    );
+
+    let cairo_version = format!(
+        "{}.{}.{}",
+        sierra_program[3], sierra_program[4], sierra_program[5]
+    );
+
+    (Some(sierra_version), Some(cairo_version))
 }
 
 //TODO better way to get event data do not include all in response - uneffecient
