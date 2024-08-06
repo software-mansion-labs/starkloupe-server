@@ -236,7 +236,7 @@ async fn verify(
                 run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
             }
         }
-        (2, 6, 4) => {
+        (2, 6, _) => {
             if is_arm64 {
                 run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4_arm")?;
             } else {
@@ -248,7 +248,7 @@ async fn verify(
                 "Unsupported Cairo version. {}",
                 manifest.starknet_version_str
             );
-            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
+            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.* and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
         }
     };
 
@@ -297,7 +297,8 @@ async fn verify(
     for (e1, e2) in contract_class
         .sierra_program
         .iter()
-        .zip(program_from_blockchain.iter())
+        .skip(6)
+        .zip(program_from_blockchain.iter().skip(6))
     {
         if e1.value.to_string() != e2.to_string() {
             let err = anyhow::anyhow!("Contract class does not match");
