@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use std::{env, fs};
+use tracing::error;
 use uuid::Uuid;
 use walnut_shared::{chain_id_to_readable_string, pad_field_element_to_hex_string_length66};
 
@@ -196,7 +197,7 @@ pub async fn verify_by_contract_address(
                     .context("Contract address format is incorrect")?,
             )
             .await
-            .context("Can't find the contract class")?,
+            .context("Can't find the contract class on the network")?,
     );
 
     verify_by_class_hash(
@@ -226,15 +227,28 @@ async fn verify(
     let scarb_config_file = tmp_dir.join("Scarb.toml");
     let manifest = read_manifest(&scarb_config_file)?;
 
+    let is_arm64 = cfg!(target_arch = "aarch64");
     match manifest.starknet_version {
         (2, 6, 3) => {
-            run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
+            if is_arm64 {
+                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3_arm")?;
+            } else {
+                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
+            }
         }
-        (2, 6, _) => {
-            run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4")?;
+        (2, 6, 4) => {
+            if is_arm64 {
+                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4_arm")?;
+            } else {
+                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4")?;
+            }
         }
         _ => {
-            return Err(anyhow::anyhow!("Unsupported Starknet version. Currently, we support versions 2.6.* and will add support for more versions soon."));
+            error!(
+                "Unsupported Cairo version. {}",
+                manifest.starknet_version_str
+            );
+            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
         }
     };
 
@@ -242,27 +256,42 @@ async fn verify(
         "{}_{}.contract_class.json",
         manifest.package_name, class_name
     ));
-    let contract_class_file = File::open(contract_class_path)?;
+    let contract_class_file = File::open(&contract_class_path).map_err(|e| {
+        error!("Failed to open contract class file: {:?}", e);
+        e
+    })?;
     let contract_class_reader = BufReader::new(contract_class_file);
-    let contract_class: ContractClass = serde_json::from_reader(contract_class_reader)?;
+    let contract_class: ContractClass =
+        serde_json::from_reader(contract_class_reader).map_err(|e| {
+            error!("Failed to deserialize contract class: {:?}", e);
+            e
+        })?;
 
     let class_from_blockchain = provider_client
         .get_class(
             BlockId::Tag(BlockTag::Latest),
             &FieldElement::from_str(class_hash.as_str())?,
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("Failed to get class from the network: {:?}", e);
+            e
+        })?;
     let program_from_blockchain = match class_from_blockchain {
         CoreContractClass::Sierra(flattened_sierra_class) => {
             Ok(flattened_sierra_class.sierra_program)
         }
-        _ => Err(anyhow::anyhow!("Contract class is not a Sierra class")),
+        _ => {
+            let err = anyhow::anyhow!("Contract class is not a Sierra class");
+            error!("{:?}", err);
+            Err(err)
+        }
     }?;
 
     if contract_class.sierra_program.len() != program_from_blockchain.len() {
-        return Err(anyhow::anyhow!(
-            "Contract class programs lengths don't match"
-        ));
+        let err = anyhow::anyhow!("Contract class does not match");
+        error!("Contract class programs lengths don't match");
+        return Err(err);
     }
 
     for (e1, e2) in contract_class
@@ -271,7 +300,9 @@ async fn verify(
         .zip(program_from_blockchain.iter())
     {
         if e1.value.to_string() != e2.to_string() {
-            return Err(anyhow::anyhow!("Contract class does not match"));
+            let err = anyhow::anyhow!("Contract class does not match");
+            error!("{:?}", err);
+            return Err(err);
         }
     }
 
@@ -281,74 +312,135 @@ async fn verify(
                 "{}_{}.contract_class_debug.json",
                 manifest.package_name, class_name
             ));
-            let cairo_debug_info_file = File::open(cairo_debug_info_path)?;
+            let cairo_debug_info_file = File::open(&cairo_debug_info_path).map_err(|e| {
+                error!(
+                    "Failed to open debug info file {}: {:?}",
+                    cairo_debug_info_path.display(),
+                    e
+                );
+                e
+            })?;
             let cairo_debug_info_reader = BufReader::new(cairo_debug_info_file);
             let cairo_debug_info: SierraToCairoDebugInfo =
-                serde_json::from_reader(cairo_debug_info_reader)?;
+                serde_json::from_reader(cairo_debug_info_reader).map_err(|e| {
+                    error!("Failed to deserialize debug info: {:?}", e);
+                    e
+                })?;
             Ok(Some(cairo_debug_info))
         }
         _ => Ok(None),
     };
-    let cairo_debug_info = cairo_debug_info?;
+    let cairo_debug_info = cairo_debug_info.map_err(|e| {
+        error!("Failed to process debug info: {:?}", e);
+        e
+    })?;
 
     Ok((contract_class, cairo_debug_info))
 }
 
 fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
-    let mut cmd = ScarbCommand::new_with_stdio();
+    let mut cmd = ScarbCommand::new();
     cmd.current_dir(tmp_dir);
     let absolute_path = fs::canonicalize(scarb_path)?;
     cmd.scarb_path(absolute_path);
     cmd.arg("build");
     let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
-    let scarb_cache_dir_str = scarb_cache_dir
-        .to_str()
-        .ok_or(anyhow::anyhow!("Failed to convert cache dir to string"))?;
+    let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
+        error!("Error converting cache directory to string");
+        anyhow::anyhow!("Failed to convert cache dir to string")
+    })?;
     cmd.env("SCARB_CACHE", scarb_cache_dir_str);
-    cmd.run()?;
-    Ok(())
+    let mut process_cmd = cmd.command();
+    if process_cmd.status()?.success() {
+        Ok(())
+    } else {
+        let output = match process_cmd.output() {
+            Ok(output) => output,
+            Err(e) => {
+                error!("Failed to execute `scarb`, failed to get output: {:?}", e);
+                return Err(anyhow::anyhow!("Failed to compile the contract class"));
+            }
+        };
+        error!("`scarb` exited with error: {:?}", output);
+        Err(anyhow::anyhow!("Failed to compile the contract class"))
+    }
 }
 
 struct Manifest {
     package_name: String,
     starknet_version: (usize, usize, usize),
+    starknet_version_str: String,
 }
 
 fn read_manifest(path: &Path) -> Result<Manifest> {
-    let contents = fs::read_to_string(path)?;
+    let contents = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to read Scarb.toml: {}", e);
+            return Err(anyhow::anyhow!("Failed to read Scarb.toml: {}", e));
+        }
+    };
 
     // Parse the string as TOML
-    let toml = contents.parse::<toml::Value>()?;
+    let toml = match contents.parse::<toml::Value>() {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            error!("Failed to parse Scarb.toml: {}", e);
+            return Err(anyhow::anyhow!("Failed to parse Scarb.toml: {}", e));
+        }
+    };
 
     // Navigate to the "dependencies" table and get the "starknet" value
-    let starknet_version_str = toml
+    let starknet_version_str = match toml
         .get("dependencies")
         .and_then(|deps| deps.get("starknet"))
-        .and_then(toml::Value::as_str);
-
-    let starknet_version = match starknet_version_str {
-        None => Err(anyhow::anyhow!("Starknet version not found. Please specify the Starknet version as a dependency in your Scarb.toml file.")),
-        Some(version) => {
-            let version_parts: Vec<usize> =
-                version.split('.').map(|s| s.parse().unwrap_or(0)).collect();
-
-            if version_parts.len() != 3 {
-                Err(anyhow::anyhow!("Version should have 3 parts"))
-            } else {
-                Ok((version_parts[0], version_parts[1], version_parts[2]))
-            }
+        .and_then(toml::Value::as_str)
+    {
+        Some(version) => version,
+        None => {
+            error!("Starknet version not found in Scarb.toml");
+            return Err(anyhow::anyhow!("Starknet version not found. Please specify the Starknet version as a dependency in your Scarb.toml file."));
         }
-    }?;
+    };
 
-    let package_name = toml
+    let version_parts: Vec<usize> = starknet_version_str
+        .split('.')
+        .map(|s| {
+            s.parse().unwrap_or_else(|e| {
+                error!("Failed to parse version part '{}': {}", s, e);
+                0
+            })
+        })
+        .collect();
+
+    let starknet_version = {
+        if version_parts.len() != 3 {
+            error!(
+                "Invalid Starknet version format: {}. Expected 3 parts.",
+                starknet_version_str
+            );
+            return Err(anyhow::anyhow!("Version should have 3 parts"));
+        } else {
+            (version_parts[0], version_parts[1], version_parts[2])
+        }
+    };
+
+    let package_name = match toml
         .get("package")
         .and_then(|p| p.get("name"))
         .and_then(toml::Value::as_str)
-        .ok_or(anyhow::anyhow!("No package name found"))?;
+    {
+        Some(name) => name,
+        None => {
+            error!("Package name not found in Scarb.toml");
+            return Err(anyhow::anyhow!("No package name found"));
+        }
+    };
 
     Ok(Manifest {
         package_name: package_name.to_string(),
         starknet_version,
+        starknet_version_str: starknet_version_str.to_string(),
     })
 }
 
