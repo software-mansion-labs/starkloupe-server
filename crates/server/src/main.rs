@@ -179,7 +179,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_class_handler_with_chain_id),
         )
         .route("/v1/classes/:class_hash", get(get_class_handler))
-        .route("/_ah/warmup", get(|| async { "OK" }))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .route_service(
@@ -188,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .layer(prometheus_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        .route("/_ah/warmup", get(|| async { "OK" }))
         .layer(CorsLayer::permissive());
 
     println!("Listening on 0.0.0.0:3000");
