@@ -542,7 +542,7 @@ pub async fn simulate_by_data(
         },
         None => None,
     };
-    let chain_id_readable = chain_id_to_readable_string(args.chain_id.clone());
+    let chain_id_readable = chain_id_to_readable_string(&args.chain_id);
     let block_number = args.block_number.0;
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
@@ -612,7 +612,7 @@ pub async fn simulate_transaction_by_hash(
                     };
                     return Ok(TransactionSimulationResult {
                         simulation_result,
-                        chain_id: chain_id_to_readable_string(chain_id),
+                        chain_id: chain_id_to_readable_string(&chain_id),
                         block_number: block_number.0,
                         block_timestamp: block_timestamp.0,
                         nonce,

@@ -170,7 +170,7 @@ pub async fn verify_by_class_hash(
         true,
         is_cairo_debug_info,
         true,
-        chain_id.map_or(None, |id| Some(chain_id_to_readable_string(id))),
+        chain_id.map_or(None, |id| Some(chain_id_to_readable_string(&id))),
         project_id
     )
     .execute(db_pool)

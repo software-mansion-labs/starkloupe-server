@@ -46,7 +46,7 @@ pub async fn verify_handler(
     Json(payload): Json<VerificationPayload>,
 ) -> (StatusCode, String) {
     let chain_id = extract_chain_id(chain_id.as_str());
-    let chain_id_readable_string = chain_id_to_readable_string(chain_id.clone());
+    let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
     match verify_by_contract_address(
         &state.db_pool,
