@@ -227,8 +227,37 @@ async fn verify(
     let scarb_config_file = tmp_dir.join("Scarb.toml");
     let manifest = read_manifest(&scarb_config_file)?;
 
+    let class_from_blockchain = provider_client
+        .get_class(
+            BlockId::Tag(BlockTag::Latest),
+            &FieldElement::from_str(class_hash.as_str())?,
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to get class from the network: {:?}", e);
+            e
+        })?;
+
+    let program_from_blockchain = match class_from_blockchain {
+        CoreContractClass::Sierra(flattened_sierra_class) => {
+            Ok(flattened_sierra_class.sierra_program)
+        }
+        _ => {
+            let err = anyhow::anyhow!("Contract class is not a Sierra class");
+            error!("{:?}", err);
+            Err(err)
+        }
+    }?;
+
+    // Extract Cairo version from Sierra program
+    let starknet_version: (u32, u32, u32) = (
+        program_from_blockchain[3].try_into()?,
+        program_from_blockchain[4].try_into()?,
+        program_from_blockchain[5].try_into()?,
+    );
+
     let is_arm64 = cfg!(target_arch = "aarch64");
-    match manifest.starknet_version {
+    match starknet_version {
         (2, 6, 3) => {
             if is_arm64 {
                 run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3_arm")?;
@@ -236,7 +265,7 @@ async fn verify(
                 run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
             }
         }
-        (2, 6, _) => {
+        (2, 6, 4) => {
             if is_arm64 {
                 run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4_arm")?;
             } else {
@@ -245,10 +274,10 @@ async fn verify(
         }
         _ => {
             error!(
-                "Unsupported Cairo version. {}",
-                manifest.starknet_version_str
+                "Unsupported Cairo version {}.{}.{}",
+                starknet_version.0, starknet_version.1, starknet_version.2
             );
-            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.* and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
+            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
         }
     };
 
@@ -266,27 +295,6 @@ async fn verify(
             error!("Failed to deserialize contract class: {:?}", e);
             e
         })?;
-
-    let class_from_blockchain = provider_client
-        .get_class(
-            BlockId::Tag(BlockTag::Latest),
-            &FieldElement::from_str(class_hash.as_str())?,
-        )
-        .await
-        .map_err(|e| {
-            error!("Failed to get class from the network: {:?}", e);
-            e
-        })?;
-    let program_from_blockchain = match class_from_blockchain {
-        CoreContractClass::Sierra(flattened_sierra_class) => {
-            Ok(flattened_sierra_class.sierra_program)
-        }
-        _ => {
-            let err = anyhow::anyhow!("Contract class is not a Sierra class");
-            error!("{:?}", err);
-            Err(err)
-        }
-    }?;
 
     if contract_class.sierra_program.len() != program_from_blockchain.len() {
         let err = anyhow::anyhow!("Contract class does not match");
@@ -307,7 +315,7 @@ async fn verify(
         }
     }
 
-    let cairo_debug_info: Result<Option<SierraToCairoDebugInfo>> = match manifest.starknet_version {
+    let cairo_debug_info: Result<Option<SierraToCairoDebugInfo>> = match starknet_version {
         (2, 6, _) => {
             let cairo_debug_info_path = tmp_dir.join("target/dev").join(format!(
                 "{}_{}.contract_class_debug.json",
@@ -369,8 +377,6 @@ fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
 
 struct Manifest {
     package_name: String,
-    starknet_version: (usize, usize, usize),
-    starknet_version_str: String,
 }
 
 fn read_manifest(path: &Path) -> Result<Manifest> {
@@ -391,41 +397,6 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
         }
     };
 
-    // Navigate to the "dependencies" table and get the "starknet" value
-    let starknet_version_str = match toml
-        .get("dependencies")
-        .and_then(|deps| deps.get("starknet"))
-        .and_then(toml::Value::as_str)
-    {
-        Some(version) => version,
-        None => {
-            error!("Starknet version not found in Scarb.toml");
-            return Err(anyhow::anyhow!("Starknet version not found. Please specify the Starknet version as a dependency in your Scarb.toml file."));
-        }
-    };
-
-    let version_parts: Vec<usize> = starknet_version_str
-        .split('.')
-        .map(|s| {
-            s.parse().unwrap_or_else(|e| {
-                error!("Failed to parse version part '{}': {}", s, e);
-                0
-            })
-        })
-        .collect();
-
-    let starknet_version = {
-        if version_parts.len() != 3 {
-            error!(
-                "Invalid Starknet version format: {}. Expected 3 parts.",
-                starknet_version_str
-            );
-            return Err(anyhow::anyhow!("Version should have 3 parts"));
-        } else {
-            (version_parts[0], version_parts[1], version_parts[2])
-        }
-    };
-
     let package_name = match toml
         .get("package")
         .and_then(|p| p.get("name"))
@@ -440,8 +411,6 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
 
     Ok(Manifest {
         package_name: package_name.to_string(),
-        starknet_version,
-        starknet_version_str: starknet_version_str.to_string(),
     })
 }
 
