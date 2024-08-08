@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use anyhow::Context;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -13,7 +13,7 @@ use starknet_api::core::ChainId;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
-use verification::{fetch_verified_class, fetch_verified_class_with_data};
+use verification::fetch_verified_class_with_data;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, pad_field_element_to_hex_string_length66,
     MAIN_CHAIN_ID, SEPOLIA_CHAIN_ID,
@@ -26,6 +26,11 @@ pub struct GetContractResponseWithSourceCode {
     pub source_code: Option<HashMap<String, String>>,
 }
 
+#[derive(Deserialize)]
+pub struct QueryParams {
+    include_source_code: Option<bool>,
+}
+
 #[utoipa::path(
     post,
     path = "/v1/contracts/{contract_address}",
@@ -35,12 +40,14 @@ pub struct GetContractResponseWithSourceCode {
     ),
     params(
         ("contract_address" = String, Path, description = "Contract address"),
+        ("include_source_code" = bool, Query, description = "Whether to include the source code in the response")
     ),
     tag = "Contract details"
 )]
 pub async fn get_contract_handler(
     State(state): State<Arc<AppState>>,
     Path(contract_address): Path<String>,
+    Query(query_params): Query<QueryParams>,
 ) -> Response {
     let main_chain_id = ChainId(MAIN_CHAIN_ID.to_string());
     let sepolia_chain_id = ChainId(SEPOLIA_CHAIN_ID.to_string());
@@ -48,6 +55,7 @@ pub async fn get_contract_handler(
     let contracts = fetch_contracts(
         &state,
         &contract_address,
+        &query_params,
         &[&main_chain_id, &sepolia_chain_id],
     )
     .await;
@@ -62,11 +70,14 @@ pub async fn get_contract_handler(
 async fn fetch_contracts(
     state: &Arc<AppState>,
     contract_address: &str,
+    query_params: &QueryParams,
     chain_ids: &[&ChainId],
 ) -> Vec<GetContractResponseWithSourceCode> {
     let mut contracts = Vec::new();
     for &chain_id in chain_ids {
-        if let Some(contract_data) = fetch_contract_data(state, contract_address, chain_id).await {
+        if let Some(contract_data) =
+            fetch_contract_data(state, contract_address, query_params, chain_id).await
+        {
             contracts.push(contract_data);
         }
     }
@@ -76,6 +87,7 @@ async fn fetch_contracts(
 async fn fetch_contract_data(
     state: &Arc<AppState>,
     contract_address: &str,
+    query_params: &QueryParams,
     chain_id: &ChainId,
 ) -> Option<GetContractResponseWithSourceCode> {
     let provider_client = create_rpc_client(chain_id);
@@ -88,20 +100,30 @@ async fn fetch_contract_data(
         .ok()?;
     let class_hash_str = pad_field_element_to_hex_string_length66(class_hash);
 
-    let contract_data =
-        fetch_verified_class_with_data(&state.db_pool, &state.s3_client, class_hash_str.clone())
-            .await;
+    if query_params.include_source_code.unwrap_or(false) {
+        return match fetch_verified_class_with_data(
+            &state.db_pool,
+            &state.s3_client,
+            class_hash_str.clone(),
+        )
+        .await
+        {
+            Ok((_, verified_class_data)) => Some(GetContractResponseWithSourceCode {
+                chain_id: chain_id_to_readable_string(chain_id),
+                class_hash: class_hash_str,
+                source_code: Some(verified_class_data.source_code),
+            }),
+            Err(_) => Some(GetContractResponseWithSourceCode {
+                chain_id: chain_id_to_readable_string(chain_id),
+                class_hash: class_hash_str,
+                source_code: None,
+            }),
+        };
+    }
 
-    Some(match contract_data {
-        Ok((_verified_class_row, verified_class_data)) => GetContractResponseWithSourceCode {
-            chain_id: chain_id_to_readable_string(chain_id),
-            class_hash: class_hash_str,
-            source_code: Some(verified_class_data.source_code),
-        },
-        Err(_) => GetContractResponseWithSourceCode {
-            chain_id: chain_id_to_readable_string(chain_id),
-            class_hash: class_hash_str,
-            source_code: None,
-        },
+    Some(GetContractResponseWithSourceCode {
+        chain_id: chain_id_to_readable_string(chain_id),
+        class_hash: class_hash_str,
+        source_code: None,
     })
 }
