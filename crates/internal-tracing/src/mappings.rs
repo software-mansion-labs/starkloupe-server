@@ -19,6 +19,7 @@ use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKin
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
+use indexmap::IndexSet;
 use num_bigint::BigInt;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
@@ -138,7 +139,7 @@ impl Mappings {
         sierra_statements_to_cairo_info: &HashMap<usize, SierraStatementToCairoDebugInfo>,
         sierra_index: usize,
     ) -> Vec<CodeLocation> {
-        let mut locations_set = HashSet::new();
+        let mut locations_set = IndexSet::new();
         if let Some(cairo_info) = sierra_statements_to_cairo_info.get(&sierra_index) {
             locations_set.extend(cairo_info.cairo_locations.clone());
         }

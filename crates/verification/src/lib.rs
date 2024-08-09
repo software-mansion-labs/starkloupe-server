@@ -215,6 +215,8 @@ pub async fn verify_by_contract_address(
     Ok(class_hash)
 }
 
+const SUPPORTED_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0)];
+
 async fn verify(
     tmp_dir: &PathBuf,
     provider_client: JsonRpcClient<HttpTransport>,
@@ -258,26 +260,39 @@ async fn verify(
 
     let is_arm64 = cfg!(target_arch = "aarch64");
     match starknet_version {
-        (2, 6, 3) => {
-            if is_arm64 {
-                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3_arm")?;
-            } else {
-                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_3")?;
-            }
-        }
-        (2, 6, 4) => {
-            if is_arm64 {
-                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4_arm")?;
-            } else {
-                run_scarb_build(&tmp_dir, "scarb/scarb_cairo_v_2_6_4")?;
-            }
+        version if SUPPORTED_VERSIONS.contains(&version) => {
+            let scarb_path = match version {
+                (2, 6, 3) => {
+                    if is_arm64 {
+                        "scarb/scarb_cairo_v_2_6_3_arm"
+                    } else {
+                        "scarb/scarb_cairo_v_2_6_3"
+                    }
+                }
+                (2, 6, 4) => {
+                    if is_arm64 {
+                        "scarb/scarb_cairo_v_2_6_4_arm"
+                    } else {
+                        "scarb/scarb_cairo_v_2_6_4"
+                    }
+                }
+                (2, 7, 0) => {
+                    if is_arm64 {
+                        "scarb/scarb_cairo_v_2_7_0_arm"
+                    } else {
+                        "scarb/scarb_cairo_v_2_7_0"
+                    }
+                }
+                _ => unreachable!(),
+            };
+            run_scarb_build(&tmp_dir, scarb_path)?;
         }
         _ => {
             error!(
                 "Unsupported Cairo version {}.{}.{}",
                 starknet_version.0, starknet_version.1, starknet_version.2
             );
-            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
+            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4, 2.7.0 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
         }
     };
 
@@ -316,7 +331,7 @@ async fn verify(
     }
 
     let cairo_debug_info: Result<Option<SierraToCairoDebugInfo>> = match starknet_version {
-        (2, 6, _) => {
+        version if SUPPORTED_VERSIONS.contains(&version) => {
             let cairo_debug_info_path = tmp_dir.join("target/dev").join(format!(
                 "{}_{}.contract_class_debug.json",
                 manifest.package_name, class_name

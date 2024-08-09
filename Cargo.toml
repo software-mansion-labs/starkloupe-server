@@ -105,3 +105,4 @@ aws-sdk-s3 = { version = "1.38.0", features = ["rt-tokio"] }
 aws-config = { version = "1.5.3", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.2.0"
 hex = "0.4.3"
+indexmap = "2.3.0"

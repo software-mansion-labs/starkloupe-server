@@ -947,7 +947,7 @@ dependencies = [
  "cairo-lang-utils 2.6.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "cairo-vm",
  "derive_more",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "itertools 0.10.5",
  "keccak",
  "log",
@@ -1885,7 +1885,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf733a7cdc4166d0baf0ed8a98d9ada827daee6653b37d9326e334e53481c6d3"
 dependencies = [
  "hashbrown 0.14.3",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "itertools 0.11.0",
  "num-bigint",
  "num-traits 0.2.19",
@@ -1899,7 +1899,7 @@ version = "2.6.3"
 source = "git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df#e27ee4aa794331cabee4a22768fe99d837b489df"
 dependencies = [
  "hashbrown 0.14.3",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "itertools 0.12.1",
  "num-bigint",
  "num-traits 0.2.19",
@@ -3417,9 +3417,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.1.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f"
+checksum = "de3fc2e30ba82dd1b3911c8de1ffc143c74a914a14e99514d7637e3099df5ea0"
 dependencies = [
  "equivalent",
  "hashbrown 0.14.3",
@@ -3486,6 +3486,7 @@ dependencies = [
  "cairo-lang-starknet-classes 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
  "futures",
+ "indexmap 2.3.0",
  "indextree",
  "itertools 0.12.1",
  "num-bigint",
@@ -4323,7 +4324,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1d3afd2628e69da2be385eb6f2fd57c8ac7977ceeff6dc166ff1657b0e386a9"
 dependencies = [
  "fixedbitset",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
 ]
 
 [[package]]
@@ -5684,7 +5685,7 @@ dependencies = [
  "futures-util",
  "hashlink",
  "hex",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "log",
  "memchr",
  "native-tls",
@@ -6180,7 +6181,7 @@ dependencies = [
  "cairo-lang-starknet-classes 2.6.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more",
  "hex",
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "itertools 0.12.1",
  "once_cell",
  "primitive-types",
@@ -6551,7 +6552,7 @@ version = "0.19.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
 dependencies = [
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "toml_datetime",
  "winnow 0.5.19",
 ]
@@ -6562,7 +6563,7 @@ version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f21c7aaf97f1bd9ca9d4f9e73b0a6c74bd5afef56f2bc931943a6e1c37e04e38"
 dependencies = [
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "serde",
  "serde_spanned",
  "toml_datetime",
@@ -6828,7 +6829,7 @@ version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c5afb1a60e207dca502682537fefcfd9921e71d0b83e9576060f09abc6efab23"
 dependencies = [
- "indexmap 2.1.0",
+ "indexmap 2.3.0",
  "serde",
  "serde_json",
  "utoipa-gen",
