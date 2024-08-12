@@ -32,7 +32,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi;
 
 use crate::handlers::{
-    classes::get_class_handler_with_chain_id, verification::verify_handler_with_rpc,
+    classes::get_class_handler_with_chain_id, contracts::get_contract_handler_with_chain_id,
+    verification::verify_handler_with_rpc,
 };
 
 // Resources
@@ -179,6 +180,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_class_handler_with_chain_id),
         )
         .route("/v1/classes/:class_hash", get(get_class_handler))
+        .route(
+            "/v1/:chain_id/contracts/:contract_address",
+            get(get_contract_handler_with_chain_id),
+        )
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .route_service(

@@ -28,8 +28,9 @@ pub struct StructItems {
     pub name: String,
     pub members: Vec<Datas>,
 }
-const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
-const SEPOLIA_CHAIN_ID: &str = "0x534e5f5345504f4c4941";
+
+pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
+pub const SEPOLIA_CHAIN_ID: &str = "0x534e5f5345504f4c4941";
 
 pub fn create_rpc_client(chain_id: &ChainId) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(chain_id)).unwrap()))
@@ -74,7 +75,7 @@ pub fn extract_chain_id(chain_id: &str) -> ChainId {
     }
 }
 
-pub fn chain_id_to_readable_string(chain_id: ChainId) -> String {
+pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
     match chain_id.0.as_str() {
         MAIN_CHAIN_ID => String::from("sn_main"),
         SEPOLIA_CHAIN_ID => String::from("sn_sepolia"),
@@ -157,11 +158,8 @@ pub fn clone_vm_trace(vm_trace: &Vec<TraceEntry>) -> Vec<TraceEntry> {
 }
 
 pub fn pad_field_element_to_hex_string_length66(field_element: FieldElement) -> String {
-    let mut hex_string = hex::encode(field_element.to_bytes_be());
-    while hex_string.len() < 64 {
-        hex_string.insert_str(0, "0");
-    }
-    format!("0x{}", hex_string)
+    let hex_string = hex::encode(field_element.to_bytes_be());
+    format!("0x{:0>64}", hex_string)
 }
 
 pub fn get_contract_call_id(
