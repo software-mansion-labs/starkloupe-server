@@ -1,5 +1,4 @@
 use crate::app_state::AppState;
-use anyhow::Context;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -13,75 +12,53 @@ use starknet_api::core::ChainId;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
-use verification::fetch_verified_class_with_data;
+use verification::{fetch_verified_class, fetch_verified_class_with_data};
+use walnut_shared::extract_chain_id;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, pad_field_element_to_hex_string_length66,
-    MAIN_CHAIN_ID, SEPOLIA_CHAIN_ID,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
-pub struct GetContractResponseWithSourceCode {
+pub struct ContractResponseWithSourceCode {
     pub chain_id: String,
     pub class_hash: String,
+    pub is_class_verified: bool,
     pub source_code: Option<HashMap<String, String>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct QueryParams {
     include_source_code: Option<bool>,
 }
 
 #[utoipa::path(
     post,
-    path = "/v1/contracts/{contract_address}",
+    path = "/v1/{chain_id}/contracts/{contract_address}",
     responses(
-        (status = 200, description = "Returns the contract data", body = GetContractResponseWithSourceCode),
+        (status = 200, description = "Returns the contract data", body = ContractResponseWithSourceCode),
         (status = 404, description = "Contract not found for contract address", body = String)
     ),
     params(
+        ("chain_id" = ChainId, Path, description = "Chain identifier"),
         ("contract_address" = String, Path, description = "Contract address"),
-        ("include_source_code" = bool, Query, description = "Whether to include the source code in the response")
+        ("include_source_code" = Option<bool>, Query, description = "Whether to include the source code in the response")
     ),
     tag = "Contract details"
 )]
-pub async fn get_contract_handler(
+pub async fn get_contract_handler_with_chain_id(
     State(state): State<Arc<AppState>>,
-    Path(contract_address): Path<String>,
+    Path((chain_id, contract_address)): Path<(String, String)>,
     Query(query_params): Query<QueryParams>,
 ) -> Response {
-    let main_chain_id = ChainId(MAIN_CHAIN_ID.to_string());
-    let sepolia_chain_id = ChainId(SEPOLIA_CHAIN_ID.to_string());
+    let chain_id = extract_chain_id(chain_id.as_str());
 
-    let contracts = fetch_contracts(
-        &state,
-        &contract_address,
-        &query_params,
-        &[&main_chain_id, &sepolia_chain_id],
-    )
-    .await;
+    let contracts = fetch_contract_data(&state, &contract_address, &query_params, &chain_id).await;
 
-    if contracts.is_empty() {
+    if contracts.is_none() {
         (StatusCode::NOT_FOUND, "Contract not found").into_response()
     } else {
-        (StatusCode::OK, Json(contracts)).into_response()
+        (StatusCode::OK, Json(Some(contracts))).into_response()
     }
-}
-
-async fn fetch_contracts(
-    state: &Arc<AppState>,
-    contract_address: &str,
-    query_params: &QueryParams,
-    chain_ids: &[&ChainId],
-) -> Vec<GetContractResponseWithSourceCode> {
-    let mut contracts = Vec::new();
-    for &chain_id in chain_ids {
-        if let Some(contract_data) =
-            fetch_contract_data(state, contract_address, query_params, chain_id).await
-        {
-            contracts.push(contract_data);
-        }
-    }
-    contracts
 }
 
 async fn fetch_contract_data(
@@ -89,7 +66,7 @@ async fn fetch_contract_data(
     contract_address: &str,
     query_params: &QueryParams,
     chain_id: &ChainId,
-) -> Option<GetContractResponseWithSourceCode> {
+) -> Option<ContractResponseWithSourceCode> {
     let provider_client = create_rpc_client(chain_id);
     let class_hash = provider_client
         .get_class_hash_at(
@@ -100,30 +77,34 @@ async fn fetch_contract_data(
         .ok()?;
     let class_hash_str = pad_field_element_to_hex_string_length66(class_hash);
 
-    if query_params.include_source_code.unwrap_or(false) {
-        return match fetch_verified_class_with_data(
-            &state.db_pool,
-            &state.s3_client,
-            class_hash_str.clone(),
-        )
-        .await
-        {
-            Ok((_, verified_class_data)) => Some(GetContractResponseWithSourceCode {
-                chain_id: chain_id_to_readable_string(chain_id),
-                class_hash: class_hash_str,
-                source_code: Some(verified_class_data.source_code),
-            }),
-            Err(_) => Some(GetContractResponseWithSourceCode {
-                chain_id: chain_id_to_readable_string(chain_id),
-                class_hash: class_hash_str,
-                source_code: None,
-            }),
+    if let Ok(_is_verified) = fetch_verified_class(&state.db_pool, class_hash_str.clone()).await {
+        let source_code = if query_params.include_source_code.unwrap_or(false) {
+            match fetch_verified_class_with_data(
+                &state.db_pool,
+                &state.s3_client,
+                class_hash_str.clone(),
+            )
+            .await
+            {
+                Ok((_, verified_class_data)) => Some(verified_class_data.source_code),
+                Err(_) => None,
+            }
+        } else {
+            None
         };
-    }
 
-    Some(GetContractResponseWithSourceCode {
-        chain_id: chain_id_to_readable_string(chain_id),
-        class_hash: class_hash_str,
-        source_code: None,
-    })
+        Some(ContractResponseWithSourceCode {
+            chain_id: chain_id_to_readable_string(chain_id),
+            class_hash: class_hash_str,
+            is_class_verified: true,
+            source_code,
+        })
+    } else {
+        Some(ContractResponseWithSourceCode {
+            chain_id: chain_id_to_readable_string(chain_id),
+            class_hash: class_hash_str,
+            is_class_verified: false,
+            source_code: None,
+        })
+    }
 }
