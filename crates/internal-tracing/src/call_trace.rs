@@ -5,7 +5,7 @@ use cairo_vm::vm::trace::trace_entry::TraceEntry;
 use indextree::{Arena, NodeId};
 use serde::Serialize;
 use std::collections::HashMap;
-use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
+use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::{get_contract_call_id, get_internal_function_call_id};
 
 #[derive(Debug, Serialize, Clone)]

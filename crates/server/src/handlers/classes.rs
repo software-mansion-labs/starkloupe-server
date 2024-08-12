@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
-use verification::{fetch_verified_class, fetch_verified_class_with_data};
+use verification::{db::fetch_verified_class, s3::fetch_verified_class_with_data};
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponseWithSourceCode {

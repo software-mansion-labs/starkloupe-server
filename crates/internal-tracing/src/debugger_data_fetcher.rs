@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::future;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
-use verification::{fetch_verified_classes, key_for_class_hash, VerifiedClassData};
+use verification::{db::fetch_verified_classes, s3::key_for_class_hash, VerifiedClassData};
 
 use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass};
 

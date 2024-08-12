@@ -13,7 +13,7 @@ use call_trace::{
 };
 use serde::Serialize;
 use std::collections::HashMap;
-use verification::cairo_debug_info::SierraStatementToCairoDebugInfo;
+use verification::SierraStatementToCairoDebugInfo;
 
 /// Contains the debugger data for all classes in a simulation
 #[derive(Debug, Serialize)]

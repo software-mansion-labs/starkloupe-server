@@ -12,7 +12,7 @@ use starknet_api::core::ChainId;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
-use verification::{fetch_verified_class, fetch_verified_class_with_data};
+use verification::{db::fetch_verified_class, s3::fetch_verified_class_with_data};
 use walnut_shared::extract_chain_id;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, pad_field_element_to_hex_string_length66,

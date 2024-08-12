@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
-use verification::{verify_by_class_hash, verify_by_contract_address};
+use verification::verification::{verify_by_class_hash, verify_by_contract_address};
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
 };

@@ -23,7 +23,7 @@ use indexmap::IndexSet;
 use num_bigint::BigInt;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
-use verification::cairo_debug_info::{CodeLocation, SierraStatementToCairoDebugInfo};
+use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::decode_felt252;
 
 use crate::{
