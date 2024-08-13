@@ -33,7 +33,7 @@ use utoipa::OpenApi;
 
 use crate::handlers::{
     classes::get_class_handler_with_chain_id, contracts::get_contract_handler_with_chain_id,
-    verification::verify_handler_with_rpc,
+    search::get_search_handler, verification::verify_handler_with_rpc,
 };
 
 // Resources
@@ -184,6 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/:chain_id/contracts/:contract_address",
             get(get_contract_handler_with_chain_id),
         )
+        .route("/v1/search/:search_hash", get(get_search_handler))
         .with_state(shared_state)
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .route_service(
