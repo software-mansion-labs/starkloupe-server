@@ -34,6 +34,7 @@ pub struct DebuggerExecutionTraceEntryWithContractCall {
 #[derive(Debug, Serialize)]
 pub struct DebuggerExecutionTraceEntryWithLocation {
     pub sierra_index: usize,
+    pub location_index: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
 }
@@ -88,6 +89,8 @@ pub fn get_internal_call_trace(
     let mut debugger_execution_trace: Vec<DebuggerExecutionTraceEntry> = Vec::new();
     // Previous Cairo location: we update this variable only with a Some CodeLocation
     let mut prev_cairo_location: Option<CodeLocation> = None;
+
+    let mut prev_cairo_locations: Vec<CodeLocation> = Vec::new();
 
     let mut contract_call_index = 0;
 
@@ -189,49 +192,48 @@ pub fn get_internal_call_trace(
                         ),
                     _ => Vec::new(),
                 };
-                match cairo_locations.first().cloned() {
-                    Some(cairo_location) => {
-                        // If current step is the first step with Cairo location
-                        if prev_cairo_location.is_none() {
-                            debugger_execution_trace.push(
-                                DebuggerExecutionTraceEntry::WithLocation(
-                                    DebuggerExecutionTraceEntryWithLocation {
-                                        sierra_index,
-                                        results: results.clone(),
-                                        arguments: arguments.clone(),
-                                    },
-                                ),
-                            );
-                            // If current step has the same Cairo location as the last step with Cairo location
-                        } else if cairo_location == prev_cairo_location.unwrap() {
-                            // If there are arguments or results
-                            if results.len() > 0 || arguments.len() > 0 {
-                                // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
-                                if let Some(DebuggerExecutionTraceEntry::WithLocation(
-                                    last_with_location,
-                                )) = debugger_execution_trace.iter_mut().rev().find(|entry| {
-                                    matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
-                                }) {
-                                    last_with_location.results = results.clone();
-                                    last_with_location.arguments = arguments.clone();
-                                }
+                for (location_index, cairo_location) in cairo_locations.iter().enumerate() {
+                    // If current step is the first step with Cairo location
+                    if prev_cairo_location.is_none() {
+                        debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
+                            DebuggerExecutionTraceEntryWithLocation {
+                                sierra_index,
+                                results: results.clone(),
+                                arguments: arguments.clone(),
+                                location_index,
+                            },
+                        ));
+                        // If current step has the same Cairo location as the last step with Cairo location
+                    } else if cairo_location == &prev_cairo_location.unwrap()
+                        || cairo_locations == prev_cairo_locations
+                    {
+                        // If there are arguments or results
+                        if results.len() > 0 || arguments.len() > 0 {
+                            // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
+                            if let Some(DebuggerExecutionTraceEntry::WithLocation(
+                                last_with_location,
+                            )) = debugger_execution_trace.iter_mut().rev().find(|entry| {
+                                matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
+                            }) {
+                                last_with_location.results = results.clone();
+                                last_with_location.arguments = arguments.clone();
                             }
-                        // If current step has a different Cairo location than the last step with Cairo location
-                        } else {
-                            debugger_execution_trace.push(
-                                DebuggerExecutionTraceEntry::WithLocation(
-                                    DebuggerExecutionTraceEntryWithLocation {
-                                        sierra_index,
-                                        results: results.clone(),
-                                        arguments: arguments.clone(),
-                                    },
-                                ),
-                            );
                         }
-                        prev_cairo_location = Some(cairo_location);
+                    // If current step has a different Cairo location than the last step with Cairo location
+                    } else {
+                        debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
+                            DebuggerExecutionTraceEntryWithLocation {
+                                sierra_index,
+                                results: results.clone(),
+                                arguments: arguments.clone(),
+                                location_index,
+                            },
+                        ));
                     }
-                    None => {}
+
+                    prev_cairo_location = Some(cairo_location.clone());
                 }
+                prev_cairo_locations = cairo_locations.clone();
             }
         }
 
