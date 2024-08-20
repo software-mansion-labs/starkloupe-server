@@ -48,12 +48,15 @@ use serde_json::json;
 use serde_json::Value;
 use sqlx::Pool;
 use sqlx::Postgres;
+use starknet::core::types::BlockId;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
+use starknet::core::types::MaybePendingBlockWithTxHashes;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
 use starknet::core::types::{DeclareTransaction, FieldElement, InvokeTransaction, Transaction};
 use starknet::providers::Provider;
+use starknet::providers::ProviderError;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::core::ClassHash;
@@ -146,17 +149,19 @@ pub async fn simulate(
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
 ) -> Result<(SimulationInfo, BlockTimestamp), TransactionSimulationError> {
+    let chain_id = args.chain_id.clone();
+    let block_timestamp =
+        get_block_timestamp(&chain_id, BlockId::Number(args.block_number.0)).await?;
+
     let mut cached_fork_state = create_fork_cached_state_at(
-        &args.chain_id,
-        BlockNumber(args.block_number.clone().0 - 1),
+        &chain_id,
+        BlockNumber(args.block_number.0 - 1),
         "tmp/sn-debugger/cache",
     );
 
-    let chain_id = args.chain_id.clone();
-
     let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
 
-    let (mut simulation_info, block_timestamp, class_hashes) = get_simulation_info(
+    let (mut simulation_info, class_hashes) = get_simulation_info(
         &cached_fork_state.state.fork_state_reader.unwrap(),
         cheatnet_state,
     );
@@ -187,6 +192,24 @@ pub async fn simulate(
     }
 
     Ok((simulation_info, block_timestamp))
+}
+
+async fn get_block_timestamp(
+    chain_id: &ChainId,
+    block_id: BlockId,
+) -> Result<BlockTimestamp, TransactionSimulationError> {
+    let provider_client = create_rpc_client(chain_id);
+    let block_with_tx_hashes = provider_client.get_block_with_tx_hashes(block_id).await;
+
+    match block_with_tx_hashes {
+        Ok(MaybePendingBlockWithTxHashes::Block(block)) => Ok(BlockTimestamp(block.timestamp)),
+        Ok(MaybePendingBlockWithTxHashes::PendingBlock(_)) => {
+            Err(TransactionSimulationError::PendingBlock(
+                "Pending block is not be allowed at the configuration level".to_string(),
+            ))
+        }
+        Err(err) => Err(TransactionSimulationError::ProviderError(err)),
+    }
 }
 
 fn run_simulation(
@@ -332,7 +355,7 @@ pub struct SimulationCallTrace {
 fn get_simulation_info(
     fork_state_reader: &ForkStateReader,
     cheatnet_state: CheatnetState,
-) -> (SimulationInfo, BlockTimestamp, Vec<String>) {
+) -> (SimulationInfo, Vec<String>) {
     let mut class_hashes: Vec<String> = Vec::new();
     let mut max_nested_error_level: usize = 0;
 
@@ -352,7 +375,6 @@ fn get_simulation_info(
                     classes_debugger_data: HashMap::new(),
                 }),
             },
-            BlockTimestamp::default(),
             Vec::new(),
         );
     }
@@ -384,7 +406,6 @@ fn get_simulation_info(
             execution_result: Some(execution_result),
             simulation_debugger_data: None,
         },
-        cheatnet_state.block_info.block_timestamp,
         class_hashes,
     )
 }
@@ -524,6 +545,10 @@ pub struct TransactionSimulationResult {
 pub enum TransactionSimulationError {
     #[error("{0}")]
     StateError(#[from] StateError),
+    #[error("{0}")]
+    ProviderError(#[from] ProviderError),
+    #[error("{0}")]
+    PendingBlock(String),
     #[error("{0}")]
     TransactionExecutionError(#[from] TransactionExecutionError),
     #[error("Transaction hash not found")]
