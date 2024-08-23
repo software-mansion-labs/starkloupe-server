@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use cairo_felt::Felt252;
 use cairo_vm::{
     hint_processor::hint_processor_utils::felt_to_usize, vm::trace::trace_entry::TraceEntry,
@@ -33,27 +34,28 @@ pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
 pub const SEPOLIA_CHAIN_ID: &str = "0x534e5f5345504f4c4941";
 
 pub fn create_rpc_client(chain_id: &ChainId) -> JsonRpcClient<HttpTransport> {
-    JsonRpcClient::new(HttpTransport::new(Url::parse(rpc_url(chain_id)).unwrap()))
+    JsonRpcClient::new(HttpTransport::new(rpc_url(chain_id)))
 }
 
-pub fn create_rpc_client_from_url(rpc_url: &str) -> anyhow::Result<JsonRpcClient<HttpTransport>> {
-    let url = Url::parse(rpc_url)?;
-    Ok(JsonRpcClient::new(HttpTransport::new(url)))
+pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> {
+    JsonRpcClient::new(HttpTransport::new(rpc_url))
 }
 
-pub fn rpc_url(chain_id: &ChainId) -> &str {
+pub fn rpc_url(chain_id: &ChainId) -> Url {
     match chain_id.0.as_str() {
         MAIN_CHAIN_ID => {
-            "https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
+            Url::parse("https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
+                .unwrap()
         }
         SEPOLIA_CHAIN_ID => {
-            "https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58"
+            Url::parse("https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
+                .unwrap()
         }
         _ => panic!("Invalid chain id"),
     }
 }
 
-pub fn voyager_api_url(chain_id: &ChainId) -> &str {
+pub fn get_voyager_api_url(chain_id: &ChainId) -> &str {
     match chain_id.0.as_str() {
         MAIN_CHAIN_ID => "https://api.voyager.online/beta/",
         SEPOLIA_CHAIN_ID => "https://sepolia-api.voyager.online/beta ",
@@ -61,17 +63,17 @@ pub fn voyager_api_url(chain_id: &ChainId) -> &str {
     }
 }
 
-pub fn extract_chain_id(chain_id: &str) -> ChainId {
+pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<ChainId> {
     let main = ChainId(MAIN_CHAIN_ID.to_string());
     let sepolia = ChainId(SEPOLIA_CHAIN_ID.to_string());
     match chain_id {
-        "0x534e5f4d41494e" => main,
-        "SN_MAIN" => main,
-        "sn_main" => main,
-        "0x534e5f5345504f4c4941" => sepolia,
-        "SN_SEPOLIA" => sepolia,
-        "sn_sepolia" => sepolia,
-        _ => panic!("Invalid chain id"),
+        "0x534e5f4d41494e" => Ok(main),
+        "SN_MAIN" => Ok(main),
+        "sn_main" => Ok(main),
+        "0x534e5f5345504f4c4941" => Ok(sepolia),
+        "SN_SEPOLIA" => Ok(sepolia),
+        "sn_sepolia" => Ok(sepolia),
+        _ => Err(anyhow!("Invalid chain id")),
     }
 }
 

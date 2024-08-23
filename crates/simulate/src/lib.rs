@@ -55,6 +55,8 @@ use starknet::core::types::MaybePendingBlockWithTxHashes;
 use starknet::core::types::MaybePendingTransactionReceipt;
 use starknet::core::types::TransactionReceipt;
 use starknet::core::types::{DeclareTransaction, FieldElement, InvokeTransaction, Transaction};
+use starknet::providers::jsonrpc::HttpTransport;
+use starknet::providers::JsonRpcClient;
 use starknet::providers::Provider;
 use starknet::providers::ProviderError;
 use starknet_api::block::BlockNumber;
@@ -78,19 +80,21 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
+use url::Url;
 use utils::transaction_type_to_string;
 use walnut_shared::chain_id_to_readable_string;
 use walnut_shared::clone_vm_trace;
+use walnut_shared::create_rpc_client_from_url;
 use walnut_shared::extract_chain_id;
 use walnut_shared::felt252_to_hex;
 use walnut_shared::get_contract_call_id;
-use walnut_shared::{
-    create_rpc_client, decode_felt252, felt_vec_to_event_vec, EventItems, StructItems,
-};
+use walnut_shared::rpc_url;
+use walnut_shared::{decode_felt252, felt_vec_to_event_vec, EventItems, StructItems};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
-    pub chain_id: String,
+    pub chain_id: Option<String>,
+    pub rpc_url: Option<String>,
     pub block_number: u64,
     pub nonce: Option<u64>,
     pub sender_address: String,
@@ -100,7 +104,8 @@ pub struct SimulationRawArgs {
 
 #[derive(Debug)]
 pub struct SimulationArgs {
-    pub chain_id: ChainId,
+    pub chain_id: Option<ChainId>,
+    pub rpc_url: Url,
     pub block_number: BlockNumber,
     pub nonce: Option<Nonce>,
     pub sender_address: ContractAddress,
@@ -108,16 +113,67 @@ pub struct SimulationArgs {
     pub transaction_version: TransactionVersion,
 }
 
-impl From<SimulationRawArgs> for SimulationArgs {
-    fn from(raw_args: SimulationRawArgs) -> Self {
+#[derive(Serialize, Debug)]
+pub struct TransactionSimulationResult {
+    pub simulation_result: SimulationInfo,
+    pub chain_id: Option<String>,
+    pub block_number: u64,
+    pub block_timestamp: u64,
+    pub nonce: Option<u64>,
+    pub sender_address: String,
+    pub calldata: Vec<String>,
+    pub transaction_version: usize,
+    pub transaction_type: String,
+}
+
+#[derive(Error, Debug)]
+pub enum TransactionSimulationError {
+    #[error("{0}")]
+    StateError(#[from] StateError),
+    #[error("{0}")]
+    ProviderError(#[from] ProviderError),
+    #[error("{0}")]
+    PendingBlock(String),
+    #[error("{0}")]
+    TransactionExecutionError(#[from] TransactionExecutionError),
+    #[error("Transaction hash not found")]
+    TransactionHashNotFound,
+    #[error("Invalid chain id")]
+    InvalidChainId,
+    #[error("Invalid RPC URL")]
+    InvalidRpcUrl,
+    #[error("Either chain_id or rpc_url must be provided")]
+    MissingChainIdOrRpcUrl,
+    #[error("Invalid transaction version")]
+    InvalidTransactionVersion,
+}
+
+impl TryFrom<SimulationRawArgs> for SimulationArgs {
+    type Error = TransactionSimulationError;
+
+    fn try_from(raw_args: SimulationRawArgs) -> Result<Self, Self::Error> {
+        let mut chain_id: Option<ChainId> = None;
+
+        let rpc_url = if let Some(chain_id_str) = raw_args.chain_id {
+            let extracted_chain_id = extract_chain_id(chain_id_str.as_str())
+                .map_err(|_| TransactionSimulationError::InvalidChainId)?;
+            chain_id = Some(extracted_chain_id.clone());
+            rpc_url(&extracted_chain_id)
+        } else if let Some(rpc_url) = raw_args.rpc_url {
+            Url::parse(&rpc_url).map_err(|_| TransactionSimulationError::InvalidRpcUrl)?
+        } else {
+            return Err(TransactionSimulationError::MissingChainIdOrRpcUrl);
+        };
+
         let calldata: Vec<StarkFelt> = raw_args
             .calldata
             .iter()
             .map(|x| stark_felt!(x.as_str()))
             .collect();
-        let chain_id = extract_chain_id(raw_args.chain_id.as_str());
-        Self {
+
+        Ok(Self {
             chain_id,
+            rpc_url,
             block_number: BlockNumber(raw_args.block_number),
             nonce: raw_args.nonce.map(|nonce| Nonce(StarkFelt::from(nonce))),
             sender_address: contract_address!(raw_args.sender_address.as_str()),
@@ -128,10 +184,10 @@ impl From<SimulationRawArgs> for SimulationArgs {
                 2 => TransactionVersion::TWO,
                 3 => TransactionVersion::THREE,
                 _ => {
-                    panic!("Invalid transaction version");
+                    return Err(TransactionSimulationError::InvalidTransactionVersion);
                 }
             },
-        }
+        })
     }
 }
 
@@ -149,12 +205,14 @@ pub async fn simulate(
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
 ) -> Result<(SimulationInfo, BlockTimestamp), TransactionSimulationError> {
+    let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
+
     let block_timestamp =
-        get_block_timestamp(&chain_id, BlockId::Number(args.block_number.0)).await?;
+        get_block_timestamp(&provider_client, BlockId::Number(args.block_number.0)).await?;
 
     let mut cached_fork_state = create_fork_cached_state_at(
-        &chain_id,
+        args.rpc_url.clone(),
         BlockNumber(args.block_number.0 - 1),
         "tmp/sn-debugger/cache",
     );
@@ -184,7 +242,7 @@ pub async fn simulate(
         simulation_info.call_trace.take(),
         simulation_info.events_trace.take(),
     ) {
-        ContractNamesFetcher::new(&chain_id)
+        ContractNamesFetcher::new(provider_client, chain_id.as_ref())
             .enhance_trace_with_contract_names(&mut call_trace, &mut event_trace)
             .await;
         simulation_info.call_trace = Some(call_trace);
@@ -195,10 +253,9 @@ pub async fn simulate(
 }
 
 async fn get_block_timestamp(
-    chain_id: &ChainId,
+    provider_client: &JsonRpcClient<HttpTransport>,
     block_id: BlockId,
 ) -> Result<BlockTimestamp, TransactionSimulationError> {
-    let provider_client = create_rpc_client(chain_id);
     let block_with_tx_hashes = provider_client.get_block_with_tx_hashes(block_id).await;
 
     match block_with_tx_hashes {
@@ -528,33 +585,6 @@ fn find_call_trace(call_trace: &SimulationCallTrace, contract_name: &str) -> Opt
     None
 }
 
-#[derive(Serialize, Debug)]
-pub struct TransactionSimulationResult {
-    pub simulation_result: SimulationInfo,
-    pub chain_id: String,
-    pub block_number: u64,
-    pub block_timestamp: u64,
-    pub nonce: Option<u64>,
-    pub sender_address: String,
-    pub calldata: Vec<String>,
-    pub transaction_version: usize,
-    pub transaction_type: String,
-}
-
-#[derive(Error, Debug)]
-pub enum TransactionSimulationError {
-    #[error("{0}")]
-    StateError(#[from] StateError),
-    #[error("{0}")]
-    ProviderError(#[from] ProviderError),
-    #[error("{0}")]
-    PendingBlock(String),
-    #[error("{0}")]
-    TransactionExecutionError(#[from] TransactionExecutionError),
-    #[error("Transaction hash not found")]
-    TransactionHashNotFound,
-}
-
 pub async fn simulate_by_data(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -567,7 +597,10 @@ pub async fn simulate_by_data(
         },
         None => None,
     };
-    let chain_id_readable = chain_id_to_readable_string(&args.chain_id);
+    let readable_chain_id = args
+        .chain_id
+        .clone()
+        .map(|chain_id| chain_id_to_readable_string(&chain_id));
     let block_number = args.block_number.0;
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
@@ -582,7 +615,7 @@ pub async fn simulate_by_data(
 
     Ok(TransactionSimulationResult {
         simulation_result,
-        chain_id: chain_id_readable,
+        chain_id: readable_chain_id,
         block_number,
         block_timestamp: block_timestamp.0,
         nonce,
@@ -596,10 +629,11 @@ pub async fn simulate_by_data(
 pub async fn simulate_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    chain_id: ChainId,
+    rpc_url: Url,
     tx_hash: String,
+    chain_id: Option<ChainId>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
-    let provider_client = create_rpc_client(&chain_id);
+    let provider_client = create_rpc_client_from_url(rpc_url.clone());
     let transaction_hash = FieldElement::from_str(tx_hash.as_str()).unwrap();
     let transaction = provider_client
         .get_transaction_by_hash(transaction_hash)
@@ -617,6 +651,7 @@ pub async fn simulate_transaction_by_hash(
                         db_pool,
                         s3_client,
                         SimulationArgs {
+                            rpc_url,
                             chain_id: chain_id.clone(),
                             block_number,
                             nonce: Some(nonce),
@@ -637,7 +672,7 @@ pub async fn simulate_transaction_by_hash(
                     };
                     return Ok(TransactionSimulationResult {
                         simulation_result,
-                        chain_id: chain_id_to_readable_string(&chain_id),
+                        chain_id: chain_id.map(|id| chain_id_to_readable_string(&id)),
                         block_number: block_number.0,
                         block_timestamp: block_timestamp.0,
                         nonce,
@@ -688,7 +723,7 @@ fn extract_submitted_tx(
                     Nonce::default(),
                     contract_address!(tx.contract_address),
                     Calldata(calldata.into()),
-                    TransactionVersion::ONE, //FIXME change to ZERO ?
+                    TransactionVersion::ZERO,
                     TransactionType::InvokeFunction,
                 ))
             }
@@ -714,7 +749,6 @@ fn extract_submitted_tx(
                     TransactionType::InvokeFunction,
                 ))
             }
-            _ => None,
         },
         Transaction::Declare(declare_transaction) => match declare_transaction {
             DeclareTransaction::V0(tx) => Some((
@@ -745,7 +779,6 @@ fn extract_submitted_tx(
                 TransactionVersion::THREE,
                 TransactionType::Declare,
             )),
-            _ => None,
         },
         _ => None,
     }

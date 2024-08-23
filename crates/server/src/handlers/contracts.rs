@@ -50,7 +50,10 @@ pub async fn get_contract_handler_with_chain_id(
     Path((chain_id, contract_address)): Path<(String, String)>,
     Query(query_params): Query<QueryParams>,
 ) -> Response {
-    let chain_id = extract_chain_id(chain_id.as_str());
+    let chain_id = match extract_chain_id(chain_id.as_str()) {
+        Ok(chain_id) => chain_id,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid chain ID").into_response(),
+    };
 
     let contracts = fetch_contract_data(&state, &contract_address, &query_params, &chain_id).await;
 

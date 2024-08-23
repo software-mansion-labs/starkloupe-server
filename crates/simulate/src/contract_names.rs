@@ -12,11 +12,11 @@ use starknet_api::{
     hash::StarkFelt,
 };
 use std::collections::{HashMap, HashSet};
-use walnut_shared::{bytes_to_text, create_rpc_client, voyager_api_url};
+use walnut_shared::{bytes_to_text, get_voyager_api_url};
 
 pub struct ContractNamesFetcher {
     provider_client: JsonRpcClient<HttpTransport>,
-    voyager_api: String,
+    voyager_api_url: Option<String>,
     pub contract_addresses: HashSet<ContractAddress>,
     pub token_addresses: HashSet<ContractAddress>,
     pub token_contract_names: HashMap<ContractAddress, ContractName>,
@@ -30,12 +30,11 @@ pub struct ContractName {
 }
 
 impl ContractNamesFetcher {
-    pub fn new(chain_id: &ChainId) -> Self {
-        let provider_client = create_rpc_client(chain_id);
-        let voyager_api = voyager_api_url(chain_id).to_string();
+    pub fn new(provider_client: JsonRpcClient<HttpTransport>, chain_id: Option<&ChainId>) -> Self {
+        let voyager_api_url = chain_id.map(|id| get_voyager_api_url(id).to_string());
         ContractNamesFetcher {
             provider_client,
-            voyager_api,
+            voyager_api_url,
             contract_addresses: HashSet::new(),
             token_addresses: HashSet::new(),
             token_contract_names: HashMap::new(),
@@ -50,7 +49,9 @@ impl ContractNamesFetcher {
     ) {
         self.get_contract_addresses(simulation_call_trace);
         self.token_contract_names = self.fetch_token_contract_names().await;
-        self.contract_names = self.fetch_contract_names().await;
+        if let Some(voyager_api_url) = &self.voyager_api_url {
+            self.contract_names = self.fetch_contract_names(voyager_api_url.clone()).await;
+        }
         self.update_simulation_call_trace(simulation_call_trace);
         for event_trace in &mut event_traces.iter_mut() {
             self.update_event_trace_with_contract_names(simulation_call_trace, event_trace);
@@ -108,12 +109,17 @@ impl ContractNamesFetcher {
         contract_names
     }
 
-    async fn fetch_contract_names(&self) -> HashMap<ContractAddress, ContractName> {
+    async fn fetch_contract_names(
+        &self,
+        voyager_api_url: String,
+    ) -> HashMap<ContractAddress, ContractName> {
         let futures = self.contract_addresses.iter().map(|contract_address| {
             let contract_address_felt: StarkFelt = (*contract_address).into();
             let contract_address_string: String = contract_address_felt.to_string();
+            let voyager_api_url = voyager_api_url.clone();
             async move {
-                let contract_name_future = self.query_voyager_and_decode(contract_address_string);
+                let contract_name_future =
+                    self.query_voyager_and_decode(&voyager_api_url, contract_address_string);
                 let (contract_name,) = futures::join!(contract_name_future);
                 (
                     *contract_address,
@@ -156,9 +162,13 @@ impl ContractNamesFetcher {
         None
     }
 
-    async fn query_voyager_and_decode(&self, contract_address: String) -> Option<String> {
+    async fn query_voyager_and_decode(
+        &self,
+        voyager_api_url: &str,
+        contract_address: String,
+    ) -> Option<String> {
         let client = reqwest::Client::new();
-        let url = format!("{}contracts/{}", self.voyager_api, contract_address);
+        let url = format!("{}contracts/{}", voyager_api_url, contract_address);
         let call_result = client
             .get(&url)
             .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")

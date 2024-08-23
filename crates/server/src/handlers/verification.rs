@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
+use url::Url;
 use utoipa::ToSchema;
 use verification::verification::{verify_by_class_hash, verify_by_contract_address};
 use walnut_shared::{
@@ -45,7 +46,10 @@ pub async fn verify_handler(
     chain_id: extract::Path<String>,
     Json(payload): Json<VerificationPayload>,
 ) -> (StatusCode, String) {
-    let chain_id = extract_chain_id(chain_id.as_str());
+    let chain_id = match extract_chain_id(chain_id.as_str()) {
+        Ok(chain_id) => chain_id,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()),
+    };
     let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
     match verify_by_contract_address(
@@ -125,10 +129,12 @@ pub async fn verify_handler_with_rpc(
         Err(e) => return (StatusCode::UNAUTHORIZED, e.to_string()),
     };
 
-    let provider_client = match create_rpc_client_from_url(&payload.rpc_url) {
-        Ok(client) => client,
+    let rpc_url = match Url::parse(&payload.rpc_url) {
+        Ok(url) => url,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()),
     };
+
+    let provider_client = create_rpc_client_from_url(rpc_url);
 
     match verify_by_class_hash(
         &state.db_pool,
