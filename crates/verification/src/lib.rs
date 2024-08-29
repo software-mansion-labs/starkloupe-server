@@ -5,9 +5,42 @@ pub mod verification;
 
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
+use sqlx::Type;
 use std::collections::HashMap;
+use std::fmt;
+use time::PrimitiveDateTime;
+use uuid::Uuid;
 
 pub const SUPPORTED_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0)];
+
+#[derive(Debug, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[sqlx(type_name = "verification_status", rename_all = "lowercase")] // Assuming PostgreSQL
+pub enum EVerificationStatus {
+    Pending,
+    Success,
+    Failed,
+}
+
+impl fmt::Display for EVerificationStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EVerificationStatus::Pending => write!(f, "pending"),
+            EVerificationStatus::Success => write!(f, "success"),
+            EVerificationStatus::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct VerificationStatusRow {
+    pub id: Uuid,
+    pub network: Option<String>,
+    pub class_hash: Option<String>,
+    pub status: EVerificationStatus,
+    pub error_message: Option<String>,
+    pub created_at: PrimitiveDateTime,
+    pub updated_at: PrimitiveDateTime,
+}
 
 #[derive(Debug)]
 pub struct VerifiedClassRow {

@@ -5372,6 +5372,7 @@ dependencies = [
  "url",
  "urlencoding",
  "utoipa",
+ "uuid 1.6.1",
  "verification",
  "walnut-shared",
 ]
@@ -6907,6 +6908,7 @@ dependencies = [
  "starknet 0.10.0",
  "starknet-selector-decoder",
  "starknet_api",
+ "time",
  "tokio",
  "toml",
  "tracing",

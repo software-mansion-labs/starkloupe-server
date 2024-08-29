@@ -27,6 +27,7 @@ cairo-felt.workspace = true
 
 anyhow.workspace = true
 uuid.workspace = true
+time.workspace = true
 scarb-api.workspace = true
 toml.workspace = true
 cairo-lang-starknet-classes.workspace = true

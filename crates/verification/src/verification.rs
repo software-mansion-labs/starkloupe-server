@@ -6,7 +6,6 @@ use sqlx::{Pool, Postgres};
 use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, FieldElement};
 use starknet::providers::jsonrpc::HttpTransport;
 use starknet::providers::{JsonRpcClient, Provider};
-use starknet_api::core::ChainId;
 use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -14,11 +13,123 @@ use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use tracing::error;
 use uuid::Uuid;
-use walnut_shared::{chain_id_to_readable_string, pad_field_element_to_hex_string_length66};
+use walnut_shared::pad_field_element_to_hex_string_length66;
 
 use crate::db::is_class_verified;
-use crate::utils::{create_files_from_map, read_manifest, run_scarb_build};
+use crate::utils::{
+    check_verification_status, create_files_from_map, read_manifest, run_scarb_build,
+};
 use crate::{SierraToCairoDebugInfo, VerifiedClassData, SUPPORTED_VERSIONS};
+
+pub async fn verify_by_contract_address(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    provider_client: JsonRpcClient<HttpTransport>,
+    contract_address: String,
+    class_name: String,
+    source_code: HashMap<String, String>,
+    chain_id: Option<String>,
+    project_id: Option<i32>,
+) -> Result<Uuid> {
+    let class_hash = pad_field_element_to_hex_string_length66(
+        provider_client
+            .get_class_hash_at(
+                BlockId::Tag(BlockTag::Latest),
+                &FieldElement::from_str(contract_address.as_str())
+                    .context("Contract address format is incorrect")?,
+            )
+            .await
+            .context("Can't find the contract class on the network")?,
+    );
+
+    initiate_verification(
+        db_pool,
+        s3_client,
+        provider_client,
+        class_hash,
+        class_name,
+        source_code,
+        chain_id,
+        project_id,
+    )
+    .await
+}
+
+pub async fn initiate_verification(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    provider_client: JsonRpcClient<HttpTransport>,
+    class_hash: String,
+    class_name: String,
+    source_code: HashMap<String, String>,
+    chain_id: Option<String>,
+    project_id: Option<i32>,
+) -> Result<Uuid> {
+    let _status = check_verification_status(db_pool, class_hash.clone(), chain_id.clone()).await?;
+
+    let verification_status_id = Uuid::new_v4();
+
+    sqlx::query!(
+        r#"
+        INSERT INTO verification_status (id, network, class_hash, status, error_message, created_at, updated_at)
+        VALUES ($1, $2, NULL, 'pending', NULL, NOW(), NOW())
+        "#,
+        verification_status_id,
+        chain_id,
+    )
+    .execute(db_pool)
+    .await
+    .context("Failed to insert initial verification status entry")?;
+
+    let db_pool_clone = db_pool.clone();
+    let s3_client_clone = s3_client.clone();
+    let class_hash_clone = class_hash.clone();
+    let chain_id_clone = chain_id.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = verify_by_class_hash(
+            &db_pool_clone,
+            &s3_client_clone,
+            provider_client,
+            class_hash_clone,
+            class_name,
+            source_code,
+            chain_id_clone,
+            project_id,
+        )
+        .await
+        {
+            let _ = sqlx::query!(
+                r#"
+                UPDATE verification_status
+                SET status = 'failed', error_message = $1, class_hash = $2, network = $3, updated_at = NOW()
+                WHERE id = $4
+                "#,
+                &e.to_string(),
+                class_hash,
+                chain_id,
+                verification_status_id
+            )
+            .execute(&db_pool_clone)
+            .await;
+        } else {
+            let _ = sqlx::query!(
+                r#"
+                UPDATE verification_status
+                SET status = 'success', class_hash = $1, network = $2, updated_at = NOW()
+                WHERE id = $3
+                "#,
+                class_hash,
+                chain_id,
+                verification_status_id
+            )
+            .execute(&db_pool_clone)
+            .await;
+        }
+    });
+
+    Ok(verification_status_id)
+}
 
 pub async fn verify_by_class_hash(
     db_pool: &Pool<Postgres>,
@@ -27,7 +138,7 @@ pub async fn verify_by_class_hash(
     class_hash: String,
     class_name: String,
     source_code: HashMap<String, String>,
-    chain_id: Option<ChainId>,
+    chain_id: Option<String>,
     project_id: Option<i32>,
 ) -> Result<()> {
     let is_verified = is_class_verified(db_pool, class_hash.clone()).await?;
@@ -79,49 +190,13 @@ pub async fn verify_by_class_hash(
         true,
         is_cairo_debug_info,
         true,
-        chain_id.map_or(None, |id| Some(chain_id_to_readable_string(&id))),
+        chain_id,
         project_id
     )
     .execute(db_pool)
     .await?;
 
     Ok(())
-}
-
-pub async fn verify_by_contract_address(
-    db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
-    provider_client: JsonRpcClient<HttpTransport>,
-    contract_address: String,
-    class_name: String,
-    source_code: HashMap<String, String>,
-    chain_id: Option<ChainId>,
-    project_id: Option<i32>,
-) -> Result<String> {
-    let class_hash = pad_field_element_to_hex_string_length66(
-        provider_client
-            .get_class_hash_at(
-                BlockId::Tag(BlockTag::Latest),
-                &FieldElement::from_str(contract_address.as_str())
-                    .context("Contract address format is incorrect")?,
-            )
-            .await
-            .context("Can't find the contract class on the network")?,
-    );
-
-    verify_by_class_hash(
-        db_pool,
-        s3_client,
-        provider_client,
-        class_hash.clone(),
-        class_name,
-        source_code,
-        chain_id,
-        project_id,
-    )
-    .await?;
-
-    Ok(class_hash)
 }
 
 async fn verify(

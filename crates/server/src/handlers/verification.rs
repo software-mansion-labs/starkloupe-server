@@ -1,18 +1,96 @@
 use crate::app_state::AppState;
 use anyhow::Result;
 use axum::{
-    extract::{self, State},
+    extract::{self, Path, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
 use utoipa::ToSchema;
-use verification::verification::{verify_by_class_hash, verify_by_contract_address};
+use uuid::Uuid;
+use verification::verification::verify_by_contract_address;
+use verification::{db::fetch_verification_status_data, verification::initiate_verification};
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
 };
+
+#[derive(Deserialize, Debug, Serialize, ToSchema)]
+pub struct VerificationStatusResponse {
+    pub status: String,
+    pub error: Option<String>,
+    pub class_hash: Option<String>,
+    pub updated_at: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/verfication/{verification_status_id}/status",
+    responses(
+        (status = 200, description = "Returns the status of the contract verification", body = VerificationStatusResponse),
+        (status = 404, description = "Verification status not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    params(
+        ("verification_status_id" = String, Path, description = "Verification status identifier"),
+    ),
+    tag = "Contract class verification status"
+)]
+pub async fn get_verification_status_handler(
+    State(state): State<Arc<AppState>>,
+    Path(verification_status_id): Path<String>,
+) -> Response {
+    let verification_status_uuid = match Uuid::parse_str(&verification_status_id) {
+        Ok(uuid) => uuid,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(VerificationStatusResponse {
+                    status: "invalid_id".to_string(),
+                    error: Some("Invalid UUID format for verification_status_id.".to_string()),
+                    class_hash: None,
+                    updated_at: "".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match fetch_verification_status_data(&state.db_pool, verification_status_uuid).await {
+        Ok(verification_status_row) => {
+            // Map VerificationStatusRow to VerificationStatusResponse
+            let response = VerificationStatusResponse {
+                status: verification_status_row.status.to_string(),
+                error: verification_status_row.error_message,
+                class_hash: verification_status_row.class_hash,
+                updated_at: verification_status_row.updated_at.to_string(),
+            };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(sqlx::Error::RowNotFound) => (
+            StatusCode::NOT_FOUND,
+            Json(VerificationStatusResponse {
+                status: "Not_found".to_string(),
+                error: Some("Verification status not found.".to_string()),
+                class_hash: None,
+                updated_at: "".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(VerificationStatusResponse {
+                status: "Error".to_string(),
+                error: Some(format!("Internal server error: {}", e)),
+                class_hash: None,
+                updated_at: "".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct VerificationPayload {
@@ -45,10 +123,10 @@ pub async fn verify_handler(
     State(state): State<Arc<AppState>>,
     chain_id: extract::Path<String>,
     Json(payload): Json<VerificationPayload>,
-) -> (StatusCode, String) {
+) -> Response {
     let chain_id = match extract_chain_id(chain_id.as_str()) {
         Ok(chain_id) => chain_id,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
     let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
@@ -59,13 +137,19 @@ pub async fn verify_handler(
         payload.contract_address,
         payload.contract_name,
         payload.source_code,
-        Some(chain_id),
+        Some(chain_id_readable_string),
         None,
     )
     .await
     {
-        Ok(class_hash) => (StatusCode::OK, format!("Contract has been successfully verified. You can check the verification status at the following link: https://api.walnut.dev/v1/{chain_id_readable_string}/classes/{class_hash}.").to_string()),
-        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()),
+        Ok(verification_status_id) => {
+            let response_message = format!(
+                "Contract verification has started. You can check the verification status at the following link: https://api.walnut.dev/v1/verification/{}/status.",
+                verification_status_id
+            );
+            (StatusCode::OK, Json(response_message)).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     }
 }
 
@@ -118,36 +202,47 @@ pub async fn verify_handler_with_rpc(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<VerificationPayloadWithRpc>,
-) -> (StatusCode, String) {
+) -> Response {
     let api_key = match get_api_token(&headers) {
         Ok(token) => token,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
 
     let project_id = match check_api_key(&api_key) {
         Ok(project_id) => project_id,
-        Err(e) => return (StatusCode::UNAUTHORIZED, e.to_string()),
+        Err(e) => return (StatusCode::UNAUTHORIZED, Json(e.to_string())).into_response(),
     };
 
     let rpc_url = match Url::parse(&payload.rpc_url) {
         Ok(url) => url,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
 
     let provider_client = create_rpc_client_from_url(rpc_url);
 
-    match verify_by_class_hash(
+    let class_hash = payload.class_hash.clone();
+    let class_name = payload.class_name.clone();
+    let source_code = payload.source_code.clone();
+
+    match initiate_verification(
         &state.db_pool,
         &state.s3_client,
         provider_client,
-        payload.class_hash.clone(),
-        payload.class_name,
-        payload.source_code,
+        class_hash,
+        class_name,
+        source_code,
         None,
-        Some(project_id)
-    ).await
+        Some(project_id),
+    )
+    .await
     {
-        Ok(()) => (StatusCode::OK, format!("Class has been successfully verified. You can check the verification status at the following link: https://api.walnut.dev/v1/classes/{}.", payload.class_hash).to_string()),
-        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()),
+        Ok(verification_status_id) => {
+            let response_message = format!(
+                "Contract verification has started. You can check the verification status at the following link: https://api.walnut.dev/v1/verification/{}/status.",
+                verification_status_id
+            );
+            (StatusCode::OK, Json(response_message)).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     }
 }

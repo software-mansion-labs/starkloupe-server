@@ -1,7 +1,9 @@
+use crate::EVerificationStatus;
+use crate::VerificationStatusRow;
+use crate::VerifiedClassRow;
 use anyhow::Result;
 use sqlx::{Pool, Postgres};
-
-use crate::VerifiedClassRow;
+use uuid::Uuid;
 
 pub async fn fetch_verified_classes(
     db_pool: &Pool<Postgres>,
@@ -50,4 +52,44 @@ pub async fn is_class_verified(db_pool: &Pool<Postgres>, class_hash: String) -> 
     };
 
     Ok(false)
+}
+
+pub async fn fetch_verification_id_and_status(
+    db_pool: &Pool<Postgres>,
+    class_hash: String,
+    network: String,
+) -> Result<Option<(Uuid, EVerificationStatus)>> {
+    let result = sqlx::query!(
+        r#"
+        SELECT id, status as "status: EVerificationStatus"
+        FROM verification_status
+        WHERE class_hash = $1 AND network = $2 AND status IN ('pending', 'success')
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "#,
+        class_hash,
+        network
+    )
+    .fetch_optional(db_pool)
+    .await?;
+
+    // Return the result as an Option of a tuple
+    Ok(result.map(|row| (row.id, row.status)))
+}
+
+pub async fn fetch_verification_status_data(
+    db_pool: &Pool<Postgres>,
+    id: Uuid,
+) -> Result<VerificationStatusRow, sqlx::Error> {
+    let verification_status = sqlx::query_as!(
+        VerificationStatusRow,
+        r#"SELECT id, network, class_hash, status as "status: EVerificationStatus", error_message, created_at, updated_at
+        FROM verification_status
+        WHERE id = $1"#,
+        &id
+    )
+    .fetch_one(db_pool)
+    .await?;
+
+    Ok(verification_status)
 }

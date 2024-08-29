@@ -1,10 +1,13 @@
+use crate::db::fetch_verification_id_and_status;
+use crate::EVerificationStatus;
 use anyhow::Result;
 use scarb_api::ScarbCommand;
+use sqlx::{Pool, Postgres};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, fs::File};
 use std::{env, fs};
-use tracing::error;
+use tracing::{error, info};
 
 pub fn create_files_from_map(
     source_code: &HashMap<String, String>,
@@ -88,4 +91,39 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
     Ok(Manifest {
         package_name: package_name.to_string(),
     })
+}
+
+pub async fn check_verification_status(
+    db_pool: &Pool<Postgres>,
+    class_hash: String,
+    chain_id: Option<String>,
+) -> Result<()> {
+    let result =
+        fetch_verification_id_and_status(db_pool, class_hash.clone(), chain_id.unwrap_or_default())
+            .await?;
+
+    match result {
+        Some((existing_id, status)) => match status {
+            EVerificationStatus::Pending => {
+                return Err(anyhow::anyhow!(
+                        "Verification is in progress. Please check the status at: https://api.walnut.dev/v1/verification/{}/status.",
+                        existing_id
+                    ));
+            }
+            EVerificationStatus::Success => {
+                return Err(anyhow::anyhow!(
+                        "Verification is completed successfully. You can access the class details at: https://api.walnut.dev/v1/classes/{}.",
+                        class_hash
+                    ));
+            }
+            EVerificationStatus::Failed => {
+                info!("Verification failed. You can start a new verification.");
+            }
+        },
+        None => {
+            info!("No existing verification status found. You can proceed with verification.");
+        }
+    }
+
+    Ok(())
 }
