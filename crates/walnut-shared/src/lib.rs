@@ -9,6 +9,7 @@ use num_bigint::BigUint;
 use serde::Serialize;
 use starknet::core::types::FieldElement;
 use starknet_api::core::ChainId;
+use starknet_api::hash::StarkFelt;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
 
@@ -146,6 +147,13 @@ pub fn felt_vec_to_event_vec(felts: &[Felt252]) -> Vec<Event> {
     }
 
     events
+}
+
+pub fn starkfelt_vec_to_fieldelement_vec(calldata: &[StarkFelt]) -> Vec<FieldElement> {
+    calldata
+        .iter()
+        .map(|starkfelt| FieldElement::from_bytes_be(starkfelt.bytes()).unwrap())
+        .collect()
 }
 
 pub fn clone_vm_trace(vm_trace: &Vec<TraceEntry>) -> Vec<TraceEntry> {

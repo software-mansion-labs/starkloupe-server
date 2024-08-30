@@ -69,10 +69,10 @@ futures = { version = "0.3.30", features = ["async-await"] }
 # scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
 # conversions = { path = "../walnut-starknet-foundry/crates/conversions" }
 
-cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "03410d497dc131923e7e76e8a267a35c42d0a741" }
-runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "03410d497dc131923e7e76e8a267a35c42d0a741" }
-scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "03410d497dc131923e7e76e8a267a35c42d0a741" }
-conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "03410d497dc131923e7e76e8a267a35c42d0a741" }
+cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
+runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
+scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
+conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
 
 itertools = "0.12.1"
 internal-tracing = { path = "./crates/internal-tracing" }
