@@ -27,3 +27,4 @@ cairo-felt.workspace = true
 anyhow.workspace = true
 aws-sdk-s3.workspace = true
 thiserror.workspace = true
+tracing.workspace = true

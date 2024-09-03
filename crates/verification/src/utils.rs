@@ -1,12 +1,11 @@
 use crate::db::fetch_verification_id_and_status;
 use crate::EVerificationStatus;
 use anyhow::Result;
-use scarb_api::ScarbCommand;
 use sqlx::{Pool, Postgres};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, fs::File};
-use std::{env, fs};
 use tracing::{error, info};
 
 pub fn create_files_from_map(
@@ -26,36 +25,10 @@ pub fn create_files_from_map(
     Ok(())
 }
 
-pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
-    let mut cmd = ScarbCommand::new();
-    cmd.current_dir(tmp_dir);
-    let absolute_path = fs::canonicalize(scarb_path)?;
-    cmd.scarb_path(absolute_path);
-    cmd.arg("build");
-    let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
-    let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
-        error!("Error converting cache directory to string");
-        anyhow::anyhow!("Failed to convert cache dir to string")
-    })?;
-    cmd.env("SCARB_CACHE", scarb_cache_dir_str);
-    let mut process_cmd = cmd.command();
-    if process_cmd.status()?.success() {
-        Ok(())
-    } else {
-        let output = match process_cmd.output() {
-            Ok(output) => output,
-            Err(e) => {
-                error!("Failed to execute `scarb`, failed to get output: {:?}", e);
-                return Err(anyhow::anyhow!("Failed to compile the contract class"));
-            }
-        };
-        error!("`scarb` exited with error: {:?}", output);
-        Err(anyhow::anyhow!("Failed to compile the contract class"))
-    }
-}
-
+#[derive(Debug)]
 pub struct Manifest {
     pub package_name: String,
+    pub has_dojo_target: bool,
 }
 
 pub fn read_manifest(path: &Path) -> Result<Manifest> {
@@ -88,8 +61,12 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
         }
     };
 
+    // Check for [target.dojo]
+    let has_dojo_target = toml.get("target").and_then(|t| t.get("dojo")).is_some();
+
     Ok(Manifest {
         package_name: package_name.to_string(),
+        has_dojo_target,
     })
 }
 

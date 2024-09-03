@@ -16,10 +16,10 @@ use uuid::Uuid;
 use walnut_shared::pad_field_element_to_hex_string_length66;
 
 use crate::db::is_class_verified;
-use crate::utils::{
-    check_verification_status, create_files_from_map, read_manifest, run_scarb_build,
-};
-use crate::{SierraToCairoDebugInfo, VerifiedClassData, SUPPORTED_VERSIONS};
+use crate::scarb::compile_with_scarb;
+use crate::sozo::compile_with_sozo;
+use crate::utils::{check_verification_status, create_files_from_map, read_manifest};
+use crate::{SierraToCairoDebugInfo, VerifiedClassData};
 
 pub async fn verify_by_contract_address(
     db_pool: &Pool<Postgres>,
@@ -240,58 +240,10 @@ async fn verify(
         program_from_blockchain[5].try_into()?,
     );
 
-    let is_arm64 = cfg!(target_arch = "aarch64");
-    match starknet_version {
-        version if SUPPORTED_VERSIONS.contains(&version) => {
-            let scarb_path = match version {
-                (2, 6, 3) => {
-                    if is_arm64 {
-                        "scarb/scarb_cairo_v_2_6_3_arm"
-                    } else {
-                        "scarb/scarb_cairo_v_2_6_3"
-                    }
-                }
-                (2, 6, 4) => {
-                    if is_arm64 {
-                        "scarb/scarb_cairo_v_2_6_4_arm"
-                    } else {
-                        "scarb/scarb_cairo_v_2_6_4"
-                    }
-                }
-                (2, 7, 0) => {
-                    if is_arm64 {
-                        "scarb/scarb_cairo_v_2_7_0_arm"
-                    } else {
-                        "scarb/scarb_cairo_v_2_7_0"
-                    }
-                }
-                _ => unreachable!(),
-            };
-            run_scarb_build(&tmp_dir, scarb_path)?;
-        }
-        _ => {
-            error!(
-                "Unsupported Cairo version {}.{}.{}",
-                starknet_version.0, starknet_version.1, starknet_version.2
-            );
-            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4, 2.7.0 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
-        }
+    let (contract_class, cairo_debug_info_path) = match manifest.has_dojo_target {
+        true => compile_with_sozo(starknet_version, manifest, tmp_dir, class_name)?,
+        false => compile_with_scarb(starknet_version, manifest, tmp_dir, class_name)?,
     };
-
-    let contract_class_path = tmp_dir.join("target/dev").join(format!(
-        "{}_{}.contract_class.json",
-        manifest.package_name, class_name
-    ));
-    let contract_class_file = File::open(&contract_class_path).map_err(|e| {
-        error!("Failed to open contract class file: {:?}", e);
-        e
-    })?;
-    let contract_class_reader = BufReader::new(contract_class_file);
-    let contract_class: ContractClass =
-        serde_json::from_reader(contract_class_reader).map_err(|e| {
-            error!("Failed to deserialize contract class: {:?}", e);
-            e
-        })?;
 
     if contract_class.sierra_program.len() != program_from_blockchain.len() {
         let err = anyhow::anyhow!("Contract class does not match");
@@ -312,12 +264,8 @@ async fn verify(
         }
     }
 
-    let cairo_debug_info: Result<Option<SierraToCairoDebugInfo>> = match starknet_version {
-        version if SUPPORTED_VERSIONS.contains(&version) => {
-            let cairo_debug_info_path = tmp_dir.join("target/dev").join(format!(
-                "{}_{}.contract_class_debug.json",
-                manifest.package_name, class_name
-            ));
+    let cairo_debug_info: Result<Option<SierraToCairoDebugInfo>> =
+        if let Some(cairo_debug_info_path) = cairo_debug_info_path {
             let cairo_debug_info_file = File::open(&cairo_debug_info_path).map_err(|e| {
                 error!(
                     "Failed to open debug info file {}: {:?}",
@@ -333,9 +281,9 @@ async fn verify(
                     e
                 })?;
             Ok(Some(cairo_debug_info))
-        }
-        _ => Ok(None),
-    };
+        } else {
+            Ok(None)
+        };
     let cairo_debug_info = cairo_debug_info.map_err(|e| {
         error!("Failed to process debug info: {:?}", e);
         e

@@ -187,3 +187,12 @@ pub fn get_contract_call_id(
 pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> String {
     format!("{}-fp-{}", contract_call_id, fp)
 }
+
+/// Pads a given hex string (starting with "0x") to 66 characters, including "0x".
+/// This function adds zeros after "0x" to achieve the desired length.
+pub fn pad_hex_string_to_66(hex_str: &str) -> String {
+    if !hex_str.starts_with("0x") {
+        panic!("Hex string must start with '0x'");
+    }
+    format!("0x{:0>64}", &hex_str[2..])
+}

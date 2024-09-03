@@ -84,6 +84,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::usize;
 use thiserror::Error;
+use tracing::error;
 use url::Url;
 use utils::transaction_type_to_string;
 use walnut_shared::chain_id_to_readable_string;
@@ -1121,20 +1122,17 @@ pub fn enhance_call_trace_with_internal_trace_and_debugger_data(
                         Ok((internal_fn_call_trace, call_debugger_data)) => {
                             (Some(internal_fn_call_trace), Some(call_debugger_data))
                         }
-                        Err(_) => {
-                            println!("Failed to get internal fn call trace");
+                        Err(e) => {
+                            error!("Failed to get internal fn call trace: {:?}", e);
                             (None, None)
                         }
                     }
                 }
-                None => {
-                    println!("Failed to get internal fn call trace");
-                    (None, None)
-                }
+                None => (None, None),
             }
         }
         _ => {
-            println!("Not enough data to get internal fn call trace");
+            error!("Not enough data to get internal fn call trace");
             (None, None)
         }
     };

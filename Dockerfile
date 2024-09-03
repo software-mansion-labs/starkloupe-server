@@ -18,7 +18,7 @@ RUN adduser \
   appuser
 COPY --from=builder /app/walnut-server/target/release/server /opt/app/server
 COPY --from=builder /app/walnut-server/universal-sierra-compiler /opt/app/universal-sierra-compiler
-COPY --from=builder /app/walnut-server/scarb /opt/app/scarb
+COPY --from=builder /app/walnut-server/binaries /opt/app/binaries
 RUN chown -R appuser /opt/app
 USER appuser
 ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"

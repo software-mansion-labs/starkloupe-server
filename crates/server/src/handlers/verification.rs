@@ -15,6 +15,7 @@ use verification::verification::verify_by_contract_address;
 use verification::{db::fetch_verification_status_data, verification::initiate_verification};
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
+    pad_hex_string_to_66,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -220,7 +221,7 @@ pub async fn verify_handler_with_rpc(
 
     let provider_client = create_rpc_client_from_url(rpc_url);
 
-    let class_hash = payload.class_hash.clone();
+    let class_hash = pad_hex_string_to_66(&payload.class_hash.clone());
     let class_name = payload.class_name.clone();
     let source_code = payload.source_code.clone();
 

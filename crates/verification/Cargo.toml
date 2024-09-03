@@ -36,3 +36,4 @@ aws-config.workspace = true
 aws-smithy-types.workspace = true
 hex.workspace = true
 tracing.workspace = true
+walkdir.workspace = true

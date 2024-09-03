@@ -106,3 +106,4 @@ aws-config = { version = "1.5.3", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.2.0"
 hex = "0.4.3"
 indexmap = "2.3.0"
+walkdir = "2.5.0"
