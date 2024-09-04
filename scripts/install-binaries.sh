@@ -4,7 +4,7 @@
 ARCH=$(uname -m)
 echo "System architecture: $ARCH"  # Output the architecture to the console
 
-if [ "$ARCH" == "aarch64" ] || [ "$ARCH" == "arm64" ]; then
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     FOLDER="arm64"
 else
     FOLDER="x86_64"
