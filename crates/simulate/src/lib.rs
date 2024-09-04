@@ -103,7 +103,7 @@ use walnut_shared::{
 pub struct SimulationRawArgs {
     pub chain_id: Option<String>,
     pub rpc_url: Option<String>,
-    pub block_number: u64,
+    pub block_number: Option<u64>,
     pub nonce: Option<u64>,
     pub sender_address: String,
     pub calldata: Vec<String>,
@@ -185,7 +185,9 @@ impl TryFrom<SimulationRawArgs> for SimulationArgs {
         Ok(Self {
             chain_id,
             rpc_url,
-            block_number: BlockNumber(raw_args.block_number),
+            block_number: raw_args
+                .block_number
+                .map_or(BlockNumber::default(), BlockNumber),
             nonce: raw_args.nonce.map(|nonce| Nonce(StarkFelt::from(nonce))),
             sender_address: contract_address!(raw_args.sender_address.as_str()),
             calldata: Calldata(calldata.into()),
@@ -276,12 +278,12 @@ async fn extract_block_txs_info(
     match block_with_txs {
         Ok(MaybePendingBlockWithTxs::Block(block_txs)) => {
             let block_timestamp = BlockTimestamp(block_txs.timestamp);
-            let transaction_index = extract_transaction_index(&block_txs, simulation_args)?;
+            let transaction_index = extract_transaction_index(&block_txs, simulation_args);
             Ok((block_timestamp, transaction_index))
         }
         Ok(MaybePendingBlockWithTxs::PendingBlock(_)) => {
             Err(TransactionSimulationError::PendingBlock(
-                "Pending block is not be allowed at the configuration level".to_string(),
+                "Pending block is not allowed at the configuration level".to_string(),
             ))
         }
         Err(err) => Err(TransactionSimulationError::ProviderError(err)),
@@ -291,15 +293,14 @@ async fn extract_block_txs_info(
 fn extract_transaction_index(
     block_with_txs: &BlockWithTxs,
     simulation_args: &SimulationArgs,
-) -> Result<usize, TransactionSimulationError> {
+) -> usize {
     for (index, tx) in block_with_txs.transactions.iter().enumerate() {
         if match_transaction(tx, simulation_args) {
-            return Ok(index);
+            return index;
         }
     }
-    Err(TransactionSimulationError::TransactionIndexNotFound)
+    0
 }
-
 fn match_transaction(tx: &Transaction, args: &SimulationArgs) -> bool {
     let sender_address = FieldElement::from(*args.sender_address.0);
     let calldata = starkfelt_vec_to_fieldelement_vec(&args.calldata.0);
