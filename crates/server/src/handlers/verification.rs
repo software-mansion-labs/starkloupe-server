@@ -165,7 +165,11 @@ fn check_api_key(api_key: &str) -> Result<i32> {
     match api_key {
         "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" => Ok(1), // Walnut Project
         "walnut_cntgR78e35j_SjkgMzV0KrNykHY9F0pVjB" => Ok(8), // Cartridge Project
-        "walnut_V7PlxSbPrpx_aalIqha6AqZwK0bB3juEzC" => Ok(9), // SomeProject Project
+        "walnut_V7PlxSbPrpx_aalIqha6AqZwK0bB3juEzC" => Ok(9), // Unassigned
+        "walnut_83emw3JcDMt_C6qXwh24Ni8ZmnMO5ni8c3" => Ok(10), // Unassigned
+        "walnut_h2MmwIU99ru_2O4JkLWmNm9E6i9UXdpgFl" => Ok(11), // Unassigned
+        "walnut_80tR2Eelg9Y_MzFziveCu37HjUBaUJGKr4" => Ok(12), // Unassigned
+        "walnut_UAMEr3IpvRQ_tCjW5QYcf07mvE5T8mQgL6" => Ok(13), // Unassigned
         _ => Err(anyhow::anyhow!("Invalid API key")),
     }
 }
