@@ -68,11 +68,13 @@ futures = { version = "0.3.30", features = ["async-await"] }
 # runtime = { path = "../walnut-starknet-foundry/crates/runtime" }
 # scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
 # conversions = { path = "../walnut-starknet-foundry/crates/conversions" }
+# universal-sierra-compiler-api = { path = "../walnut-starknet-foundry/crates/universal-sierra-compiler-api" }
 
 cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
 runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
 scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
 conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
+universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "b4f08285c32838b15e0f35e25de55235c38baf35" }
 
 itertools = "0.12.1"
 internal-tracing = { path = "./crates/internal-tracing" }

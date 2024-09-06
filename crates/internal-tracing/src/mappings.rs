@@ -61,7 +61,7 @@ impl Mappings {
             .type_names;
         let casm_program = compile_sierra_contract_class(contract_class, usize::MAX);
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
-        let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace);
+        let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace)?;
 
         let pc_to_ptr_sys_calls =
             get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);

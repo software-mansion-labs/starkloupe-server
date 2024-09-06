@@ -78,7 +78,7 @@ pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<us
 pub fn get_pc_mappings(
     relocated_memory: &Vec<Option<Felt252>>,
     vm_trace: &Vec<TraceEntry>,
-) -> (HashMap<usize, Instruction>, HashMap<usize, usize>) {
+) -> Result<(HashMap<usize, Instruction>, HashMap<usize, usize>)> {
     let max_pc_entry = vm_trace.iter().max_by(|a, b| a.pc.cmp(&b.pc));
 
     let max_pc = match max_pc_entry {
@@ -105,8 +105,7 @@ pub fn get_pc_mappings(
             .expect("Failed to get instruction encoding");
         let instruction_encoding_bytes_le = instruction_encoding_felt.to_le_bytes();
         let instruction_encoding_u64 = LittleEndian::read_u64(&instruction_encoding_bytes_le[..]);
-        let instruction =
-            decode_instruction(instruction_encoding_u64).expect("Failed to decode instruction");
+        let instruction = decode_instruction(instruction_encoding_u64)?;
         pc_inst_map.insert(pc, instruction.clone());
         if instruction.op1_addr == Op1Addr::Imm {
             skip_next_pc = true;
@@ -115,7 +114,7 @@ pub fn get_pc_mappings(
         pc_to_inst_indexes_map.insert(pc, casm_index);
         casm_index += 1;
     }
-    (pc_inst_map, pc_to_inst_indexes_map)
+    Ok((pc_inst_map, pc_to_inst_indexes_map))
 }
 
 pub fn get_pc_to_ptr_sys_call_mappings(

@@ -33,7 +33,7 @@ pub fn compile_with_sozo(
     tmp_dir: &PathBuf,
     class_name: String,
 ) -> Result<(ContractClass, Option<PathBuf>)> {
-    let sozo_path = "binaries/sozo/sozo";
+    let sozo_path = "binaries/sozo/sozo-v1-0-0-alpha-9";
 
     run_sozo_build(tmp_dir, sozo_path)?;
 

@@ -1,7 +1,8 @@
 pub mod abi_processor;
 pub mod contract_names;
+pub mod state;
 pub mod utils;
-use crate::utils::create_fork_cached_state_at;
+
 use abi_processor::AbiProcessor;
 use blockifier::abi::abi_utils::selector_from_name;
 use blockifier::context::BlockContext;
@@ -24,7 +25,6 @@ use cairo_felt::Felt252;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
 use calldata_decoder::decode_datas;
-use cheatnet::forking::state::ForkStateReader;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
@@ -33,7 +33,6 @@ use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_event
 use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CheatnetState;
-use cheatnet::state::ExtendedStateReader;
 use contract_names::ContractNamesFetcher;
 use internal_tracing::call_trace::InternalFnCallTraceEntryNode;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
@@ -77,6 +76,7 @@ use starknet_api::transaction::TransactionVersion;
 use starknet_api::transaction::{Calldata, TransactionHash, TransactionSignature};
 use starknet_api::{contract_address, patricia_key, stark_felt};
 use starknet_selector_decoder::get_selector;
+use state::ForkStateReader;
 use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -223,23 +223,21 @@ pub async fn simulate(
     let (block_timestamp, transaction_index) =
         extract_block_txs_info(&provider_client, &args).await?;
 
-    let mut cached_fork_state = create_fork_cached_state_at(
-        args.rpc_url.clone(),
-        BlockNumber(args.block_number.0 - 1),
-        transaction_index,
-        "tmp/sn-debugger/cache",
-    )?;
+    let mut cached_fork_state = CachedState::new(
+        ForkStateReader::new(
+            args.rpc_url.clone(),
+            args.block_number.0.clone(),
+            transaction_index,
+        )
+        .map_err(|e| {
+            TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
+        })?,
+    );
 
     let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
 
-    if cached_fork_state.state.fork_state_reader.is_none() {
-        return Err(TransactionSimulationError::TransactionIndexNotFound);
-    }
-
-    let (mut simulation_info, class_hashes) = get_simulation_info(
-        &cached_fork_state.state.fork_state_reader.unwrap(),
-        cheatnet_state,
-    );
+    let (mut simulation_info, class_hashes) =
+        get_simulation_info(&cached_fork_state.state, cheatnet_state);
 
     let classes_debugger_data = fetch_classes_debugger_data(db_pool, s3_client, class_hashes).await;
 
@@ -369,7 +367,7 @@ fn match_transaction(tx: &Transaction, args: &SimulationArgs) -> bool {
 
 fn run_simulation(
     args: SimulationArgs,
-    cached_fork_state: &mut CachedState<ExtendedStateReader>,
+    cached_fork_state: &mut CachedState<ForkStateReader>,
 ) -> Result<CheatnetState, TransactionSimulationError> {
     let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
@@ -916,7 +914,11 @@ fn get_additional_info(
     let mut struct_items: Vec<StructItems> = Vec::new();
     let mut event_items: Vec<EventItems> = Vec::new();
     if let Some(class_hash) = class_hash {
-        let contract_class = fork_state_reader.get_compiled_contract_class_from_cache(class_hash);
+        let contract_class = fork_state_reader
+            .in_memory_fork_cache
+            .borrow()
+            .get_contract_class(class_hash)
+            .ok();
         if let Some(contract_class) = contract_class {
             match contract_class {
                 ContractClass::Sierra(class) => {
