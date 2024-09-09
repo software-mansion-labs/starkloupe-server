@@ -10,6 +10,8 @@ use walkdir::WalkDir;
 
 use crate::utils::Manifest;
 
+pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[9, 11];
+
 fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
     let absolute_path = fs::canonicalize(sozo_path)?;
     let status = Command::new(absolute_path)
@@ -23,7 +25,7 @@ fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
         Ok(())
     } else {
         error!("`sozo` exited with error: {:?}", status);
-        Err(anyhow::anyhow!("Failed to compile the contract class"))
+        Err(anyhow::anyhow!("`sozo` exited with error: {:?}", status))
     }
 }
 
@@ -33,9 +35,41 @@ pub fn compile_with_sozo(
     tmp_dir: &PathBuf,
     class_name: String,
 ) -> Result<(ContractClass, Option<PathBuf>)> {
-    let sozo_path = "binaries/sozo/sozo-v1-0-0-alpha-9";
-
-    run_sozo_build(tmp_dir, sozo_path)?;
+    // Check if the manifest contains a dojo_alpha_version
+    if let Some(dojo_alpha_version) = manifest.dojo_alpha_version {
+        // If the dojo_alpha_version is supported, construct the sozo_path and run the build
+        if SUPPORTED_DOJO_ALPHA_VERSIONS.contains(&dojo_alpha_version) {
+            let sozo_path = format!("binaries/sozo/sozo-v1-0-0-alpha-{}", dojo_alpha_version);
+            run_sozo_build(tmp_dir, &sozo_path).map_err(|e| {
+                let error_message = format!("Failed to build the Dojo project: {:?}", e);
+                error!("{}", error_message);
+                anyhow::anyhow!(error_message)
+            })?;
+        } else {
+            // If the dojo_alpha_version is not supported, log an error and return an error
+            let error_message = format!(
+                "Unsupported Dojo version. We support Dojo versions: {}.",
+                get_supported_dojo_versions()
+            );
+            error!(error_message);
+            return Err(anyhow::anyhow!(error_message));
+        }
+    } else {
+        // If no dojo_alpha_version is specified, use the latest supported version
+        let sozo_path = format!(
+            "binaries/sozo/sozo-v1-0-0-alpha-{}",
+            SUPPORTED_DOJO_ALPHA_VERSIONS.last().unwrap()
+        );
+        run_sozo_build(tmp_dir, &sozo_path).map_err(|e| {
+            let error_message = format!(
+                "Failed to build the Dojo project: {:?}. We support Dojo versions: {}.",
+                e,
+                get_supported_dojo_versions()
+            );
+            error!("{}", error_message);
+            anyhow::anyhow!(error_message)
+        })?;
+    };
 
     let file_name = format!("{}-{}.json", manifest.package_name, class_name);
 
@@ -65,4 +99,12 @@ pub fn compile_with_sozo(
     let cairo_debug_info_path = Some(contract_class_path.parent().unwrap().join(debug_file_name));
 
     Ok((contract_class, cairo_debug_info_path))
+}
+
+pub fn get_supported_dojo_versions() -> String {
+    SUPPORTED_DOJO_ALPHA_VERSIONS
+        .iter()
+        .map(|&version| format!("v1.0.0-alpha.{}", version))
+        .collect::<Vec<String>>()
+        .join(", ")
 }

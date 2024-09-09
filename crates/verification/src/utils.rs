@@ -29,6 +29,7 @@ pub fn create_files_from_map(
 pub struct Manifest {
     pub package_name: String,
     pub has_dojo_target: bool,
+    pub dojo_alpha_version: Option<u8>,
 }
 
 pub fn read_manifest(path: &Path) -> Result<Manifest> {
@@ -64,9 +65,28 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
     // Check for [target.dojo]
     let has_dojo_target = toml.get("target").and_then(|t| t.get("dojo")).is_some();
 
+    // Check for dojo dependency and get the tag value
+    let dojo_tag = toml
+        .get("dependencies")
+        .and_then(|d| d.get("dojo"))
+        .and_then(|dojo| dojo.get("tag"))
+        .and_then(toml::Value::as_str)
+        .map(|tag| tag.to_string());
+
+    // Extract the number if the tag starts with "v1.0.0-alpha"
+    let dojo_alpha_version: Option<u8> = dojo_tag.as_deref().and_then(|tag| {
+        if tag.starts_with("v1.0.0-alpha") {
+            tag.strip_prefix("v1.0.0-alpha.")
+                .and_then(|s| s.parse::<u8>().ok())
+        } else {
+            None
+        }
+    });
+
     Ok(Manifest {
         package_name: package_name.to_string(),
         has_dojo_target,
+        dojo_alpha_version,
     })
 }
 
