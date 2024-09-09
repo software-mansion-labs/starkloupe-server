@@ -7,6 +7,7 @@ use abi_processor::AbiProcessor;
 use blockifier::abi::abi_utils::selector_from_name;
 use blockifier::context::BlockContext;
 use blockifier::context::ChainInfo;
+use blockifier::context::FeeTokenAddresses;
 use blockifier::context::TransactionContext;
 use blockifier::execution::common_hints::ExecutionMode;
 use blockifier::execution::entry_point::CallEntryPoint;
@@ -87,16 +88,11 @@ use thiserror::Error;
 use tracing::error;
 use url::Url;
 use utils::transaction_type_to_string;
-use walnut_shared::chain_id_to_readable_string;
-use walnut_shared::clone_vm_trace;
-use walnut_shared::create_rpc_client_from_url;
-use walnut_shared::extract_chain_id;
-use walnut_shared::felt252_to_hex;
-use walnut_shared::get_contract_call_id;
-use walnut_shared::rpc_url;
 use walnut_shared::{
-    decode_felt252, felt_vec_to_event_vec, starkfelt_vec_to_fieldelement_vec, EventItems,
-    StructItems,
+    chain_id_to_readable_string, clone_vm_trace, create_rpc_client_from_url, decode_felt252,
+    extract_chain_id, felt252_to_hex, felt_vec_to_event_vec, get_contract_call_id, rpc_url,
+    starkfelt_vec_to_fieldelement_vec, EventItems, StructItems, ETH_FEE_TOKEN_ADDRESS,
+    STRK_FEE_TOKEN_ADDRESS,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -108,6 +104,7 @@ pub struct SimulationRawArgs {
     pub sender_address: String,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
+    pub transaction_signature: Option<Vec<StarkFelt>>,
 }
 
 #[derive(Debug)]
@@ -119,6 +116,7 @@ pub struct SimulationArgs {
     pub sender_address: ContractAddress,
     pub calldata: Calldata,
     pub transaction_version: TransactionVersion,
+    pub transaction_signature: Option<TransactionSignature>,
 }
 
 #[derive(Serialize, Debug)]
@@ -200,6 +198,7 @@ impl TryFrom<SimulationRawArgs> for SimulationArgs {
                     return Err(TransactionSimulationError::InvalidTransactionVersion);
                 }
             },
+            transaction_signature: None,
         })
     }
 }
@@ -384,20 +383,31 @@ fn run_simulation(
     };
 
     let block_info = cached_fork_state.state.get_block_info()?;
+    let chain_info = if let Some(chain_id) = args.chain_id {
+        ChainInfo {
+            chain_id: ChainId(chain_id_to_readable_string(&chain_id).to_uppercase()),
+            fee_token_addresses: FeeTokenAddresses {
+                strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
+                eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
+            },
+        }
+    } else {
+        ChainInfo::default()
+    };
 
     let transaction_context = Arc::new(TransactionContext {
         block_context: BlockContext::new_unchecked(
             &block_info,
-            &ChainInfo::default(),
+            &chain_info,
             VersionedConstants::latest_constants(),
         ),
         tx_info: TransactionInfo::Current(CurrentTransactionInfo {
             common_fields: CommonAccountFields {
                 transaction_hash: TransactionHash::default(),
                 version: args.transaction_version,
-                signature: TransactionSignature::default(),
-                nonce: args.nonce.unwrap_or(Nonce::default()),
-                sender_address: ContractAddress::default(),
+                signature: args.transaction_signature.unwrap_or_default(),
+                nonce: args.nonce.unwrap_or_default(),
+                sender_address: args.sender_address,
                 only_query: false,
             },
             resource_bounds: ResourceBoundsMapping(BTreeMap::from([
@@ -737,8 +747,14 @@ pub async fn simulate_transaction_by_hash(
         .get_transaction_by_hash(transaction_hash)
         .await;
     if let Ok(transaction) = transaction {
-        if let Some((nonce, sender_address, calldata, transaction_version, transaction_type)) =
-            extract_submitted_tx(transaction)
+        if let Some((
+            nonce,
+            sender_address,
+            calldata,
+            transaction_version,
+            transaction_type,
+            signature,
+        )) = extract_submitted_tx(transaction)
         {
             let transaction_receipt = provider_client
                 .get_transaction_receipt(transaction_hash)
@@ -757,6 +773,7 @@ pub async fn simulate_transaction_by_hash(
                                 sender_address,
                                 calldata: calldata.clone(),
                                 transaction_version,
+                                transaction_signature: Some(signature),
                             },
                         )
                         .await?;
@@ -813,72 +830,102 @@ fn extract_submitted_tx(
     Calldata,
     TransactionVersion,
     TransactionType,
+    TransactionSignature,
 )> {
     match transaction {
         Transaction::Invoke(invoke_transaction) => match invoke_transaction {
             InvokeTransaction::V0(tx) => {
                 let calldata: Vec<StarkFelt> =
                     tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
                 Some((
                     Nonce::default(),
                     contract_address!(tx.contract_address),
                     Calldata(calldata.into()),
                     TransactionVersion::ZERO,
                     TransactionType::InvokeFunction,
+                    TransactionSignature(signature),
                 ))
             }
             InvokeTransaction::V1(tx) => {
                 let calldata: Vec<StarkFelt> =
                     tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
                 Some((
                     Nonce(StarkFelt::from(tx.nonce)),
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
                     TransactionVersion::ONE,
                     TransactionType::InvokeFunction,
+                    TransactionSignature(signature),
                 ))
             }
             InvokeTransaction::V3(tx) => {
                 let calldata: Vec<StarkFelt> =
                     tx.calldata.into_iter().map(|x| stark_felt!(x)).collect();
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
                 Some((
                     Nonce(StarkFelt::from(tx.nonce)),
                     contract_address!(tx.sender_address),
                     Calldata(calldata.into()),
                     TransactionVersion::THREE,
                     TransactionType::InvokeFunction,
+                    TransactionSignature(signature),
                 ))
             }
         },
         Transaction::Declare(declare_transaction) => match declare_transaction {
-            DeclareTransaction::V0(tx) => Some((
-                Nonce::default(),
-                contract_address!(tx.sender_address),
-                Calldata::default(),
-                TransactionVersion::ZERO,
-                TransactionType::Declare,
-            )),
-            DeclareTransaction::V1(tx) => Some((
-                Nonce(StarkFelt::from(tx.nonce)),
-                contract_address!(tx.sender_address),
-                Calldata::default(),
-                TransactionVersion::ONE,
-                TransactionType::Declare,
-            )),
-            DeclareTransaction::V2(tx) => Some((
-                Nonce(StarkFelt::from(tx.nonce)),
-                contract_address!(tx.sender_address),
-                Calldata::default(),
-                TransactionVersion::TWO,
-                TransactionType::Declare,
-            )),
-            DeclareTransaction::V3(tx) => Some((
-                Nonce(StarkFelt::from(tx.nonce)),
-                contract_address!(tx.sender_address),
-                Calldata::default(),
-                TransactionVersion::THREE,
-                TransactionType::Declare,
-            )),
+            DeclareTransaction::V0(tx) => {
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce::default(),
+                    contract_address!(tx.sender_address),
+                    Calldata::default(),
+                    TransactionVersion::ZERO,
+                    TransactionType::Declare,
+                    TransactionSignature(signature),
+                ))
+            }
+            DeclareTransaction::V1(tx) => {
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce(StarkFelt::from(tx.nonce)),
+                    contract_address!(tx.sender_address),
+                    Calldata::default(),
+                    TransactionVersion::ONE,
+                    TransactionType::Declare,
+                    TransactionSignature(signature),
+                ))
+            }
+            DeclareTransaction::V2(tx) => {
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce(StarkFelt::from(tx.nonce)),
+                    contract_address!(tx.sender_address),
+                    Calldata::default(),
+                    TransactionVersion::TWO,
+                    TransactionType::Declare,
+                    TransactionSignature(signature),
+                ))
+            }
+            DeclareTransaction::V3(tx) => {
+                let signature: Vec<StarkFelt> =
+                    tx.signature.into_iter().map(|x| stark_felt!(x)).collect();
+                Some((
+                    Nonce(StarkFelt::from(tx.nonce)),
+                    contract_address!(tx.sender_address),
+                    Calldata::default(),
+                    TransactionVersion::THREE,
+                    TransactionType::Declare,
+                    TransactionSignature(signature),
+                ))
+            }
         },
         _ => None,
     }
