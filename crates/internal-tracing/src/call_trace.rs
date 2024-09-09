@@ -37,6 +37,7 @@ pub struct DebuggerExecutionTraceEntryWithLocation {
     pub location_index: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
+    pub function_id: Option<String>,
 }
 
 pub fn get_internal_call_trace(
@@ -181,6 +182,7 @@ pub fn get_internal_call_trace(
             }
         }
         prev_fp = trace_entry.fp;
+        let parent_function_id = get_internal_function_call_id(&parent_contract_call_id, prev_fp);
 
         if let Some(sierra_indexes) = sierra_indexes {
             for sierra_index in sierra_indexes {
@@ -201,6 +203,7 @@ pub fn get_internal_call_trace(
                                 results: results.clone(),
                                 arguments: arguments.clone(),
                                 location_index,
+                                function_id: Some(parent_function_id.clone()),
                             },
                         ));
                         // If current step has the same Cairo location as the last step with Cairo location
@@ -215,6 +218,7 @@ pub fn get_internal_call_trace(
                             )) = debugger_execution_trace.iter_mut().rev().find(|entry| {
                                 matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
                             }) {
+                                last_with_location.function_id = Some(parent_function_id.clone());
                                 last_with_location.results = results.clone();
                                 last_with_location.arguments = arguments.clone();
                             }
@@ -227,6 +231,7 @@ pub fn get_internal_call_trace(
                                 results: results.clone(),
                                 arguments: arguments.clone(),
                                 location_index,
+                                function_id: Some(parent_function_id.clone()),
                             },
                         ));
                     }
