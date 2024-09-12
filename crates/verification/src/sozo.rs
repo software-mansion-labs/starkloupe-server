@@ -96,7 +96,13 @@ pub fn compile_with_sozo(
         })?;
     };
 
-    let file_name = format!("{}-{}.json", manifest.package_name, class_name);
+    // Hotfix for the class name
+    let mut _class_name = class_name.clone();
+    if _class_name.starts_with('-') {
+        _class_name.remove(0);
+    }
+
+    let file_name = format!("{}-{}.json", manifest.package_name, _class_name);
 
     let contract_class_path = WalkDir::new(tmp_dir.join("target"))
         .into_iter()
@@ -104,8 +110,12 @@ pub fn compile_with_sozo(
         .find(|e| e.file_name().to_string_lossy() == file_name)
         .map(|e| e.into_path())
         .ok_or_else(|| {
-            error!("Failed to find contract class file in target directory");
-            anyhow::anyhow!("Failed to find contract class file in target directory")
+            let error_message = format!(
+                "Failed to find contract class file '{}' in target directory",
+                file_name
+            );
+            error!("{}", error_message);
+            anyhow::anyhow!(error_message)
         })?;
 
     let contract_class_file = File::open(&contract_class_path).map_err(|e| {
@@ -120,7 +130,7 @@ pub fn compile_with_sozo(
         })?;
 
     // Assume debug info file is in the same folder with a different name format
-    let debug_file_name = format!("{}-{}.debug.json", manifest.package_name, class_name);
+    let debug_file_name = format!("{}-{}.debug.json", manifest.package_name, _class_name);
     let cairo_debug_info_path = Some(contract_class_path.parent().unwrap().join(debug_file_name));
 
     Ok((contract_class, cairo_debug_info_path))

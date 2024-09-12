@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
     let db_pool = PgPoolOptions::new()
-        .max_connections(2)
+        .max_connections(10)
         .connect(&db_addr)
         .await?;
 

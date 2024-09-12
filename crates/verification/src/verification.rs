@@ -69,6 +69,7 @@ pub async fn initiate_verification(
 
     let verification_status_id = Uuid::new_v4();
 
+    // TODO: Store class hash for pending verification status
     sqlx::query!(
         r#"
         INSERT INTO verification_status (id, network, class_hash, status, error_message, created_at, updated_at)
