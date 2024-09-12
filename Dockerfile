@@ -11,11 +11,12 @@ FROM public.ecr.aws/docker/library/rust:${RUST_VERSION} AS final
 RUN adduser \
   --disabled-password \
   --gecos "" \
-  --home "/nonexistent" \
+  --home "/home" \
   --shell "/sbin/nologin" \
-  --no-create-home \
   --uid "10001" \
   appuser
+
+RUN chown -R appuser /home
 COPY --from=builder /app/walnut-server/target/release/server /opt/app/server
 COPY --from=builder /app/walnut-server/universal-sierra-compiler /opt/app/universal-sierra-compiler
 COPY --from=builder /app/walnut-server/binaries /opt/app/binaries
