@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::{Pool, Postgres};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::{collections::HashMap, fs::File};
 use tracing::{error, info};
 
@@ -30,10 +30,14 @@ pub struct Manifest {
     pub package_name: String,
     pub has_dojo_target: bool,
     pub dojo_alpha_version: Option<u8>,
+    pub dojo_namespace_name: Option<String>,
 }
 
-pub fn read_manifest(path: &Path) -> Result<Manifest> {
-    let contents = match fs::read_to_string(path) {
+pub fn read_manifest(tmp_dir: &PathBuf) -> Result<Manifest> {
+    let scarb_config_file = tmp_dir.join("Scarb.toml");
+    let dojo_config_file = tmp_dir.join("dojo_dev.toml");
+
+    let scarb_config_contents = match fs::read_to_string(scarb_config_file) {
         Ok(c) => c,
         Err(e) => {
             error!("Failed to read Scarb.toml: {}", e);
@@ -42,7 +46,7 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
     };
 
     // Parse the string as TOML
-    let toml = match contents.parse::<toml::Value>() {
+    let scarb_config_toml = match scarb_config_contents.parse::<toml::Value>() {
         Ok(parsed) => parsed,
         Err(e) => {
             error!("Failed to parse Scarb.toml: {}", e);
@@ -50,7 +54,7 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
         }
     };
 
-    let package_name = match toml
+    let package_name = match scarb_config_toml
         .get("package")
         .and_then(|p| p.get("name"))
         .and_then(toml::Value::as_str)
@@ -63,10 +67,13 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
     };
 
     // Check for [target.dojo]
-    let has_dojo_target = toml.get("target").and_then(|t| t.get("dojo")).is_some();
+    let has_dojo_target = scarb_config_toml
+        .get("target")
+        .and_then(|t| t.get("dojo"))
+        .is_some();
 
     // Check for dojo dependency and get the tag value
-    let dojo_tag = toml
+    let dojo_tag = scarb_config_toml
         .get("dependencies")
         .and_then(|d| d.get("dojo"))
         .and_then(|dojo| dojo.get("tag"))
@@ -83,10 +90,31 @@ pub fn read_manifest(path: &Path) -> Result<Manifest> {
         }
     });
 
+    // Read dojo_dev.toml and extract the namespace.default value
+    let dojo_namespace_name = match fs::read_to_string(dojo_config_file) {
+        Ok(contents) => {
+            let dojo_config_toml = match contents.parse::<toml::Value>() {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    error!("Failed to parse dojo_dev.toml: {}", e);
+                    return Err(anyhow::anyhow!("Failed to parse dojo_dev.toml: {}", e));
+                }
+            };
+
+            dojo_config_toml
+                .get("namespace")
+                .and_then(|ns| ns.get("default"))
+                .and_then(toml::Value::as_str)
+                .map(|s| s.to_string())
+        }
+        Err(_) => None,
+    };
+
     Ok(Manifest {
         package_name: package_name.to_string(),
         has_dojo_target,
         dojo_alpha_version,
+        dojo_namespace_name,
     })
 }
 

@@ -102,7 +102,8 @@ pub fn compile_with_sozo(
         _class_name.remove(0);
     }
 
-    let file_name = format!("{}-{}.json", manifest.package_name, _class_name);
+    let namespace_name = manifest.dojo_namespace_name.as_deref().unwrap_or(&manifest.package_name);
+    let file_name = format!("{}-{}.json", namespace_name, _class_name);
 
     let contract_class_path = WalkDir::new(tmp_dir.join("target"))
         .into_iter()
@@ -130,7 +131,7 @@ pub fn compile_with_sozo(
         })?;
 
     // Assume debug info file is in the same folder with a different name format
-    let debug_file_name = format!("{}-{}.debug.json", manifest.package_name, _class_name);
+    let debug_file_name = format!("{}-{}.debug.json", namespace_name, _class_name);
     let cairo_debug_info_path = Some(contract_class_path.parent().unwrap().join(debug_file_name));
 
     Ok((contract_class, cairo_debug_info_path))

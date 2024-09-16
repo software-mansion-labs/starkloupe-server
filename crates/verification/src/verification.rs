@@ -209,8 +209,7 @@ async fn verify(
 ) -> Result<(ContractClass, Option<SierraToCairoDebugInfo>)> {
     create_files_from_map(source_code, &tmp_dir)?;
 
-    let scarb_config_file = tmp_dir.join("Scarb.toml");
-    let manifest = read_manifest(&scarb_config_file)?;
+    let manifest = read_manifest(&tmp_dir)?;
 
     let class_from_blockchain = provider_client
         .get_class(
