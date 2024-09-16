@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.77.1
+ARG RUST_VERSION=1.80.0
 
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION} AS builder
 WORKDIR /app/walnut-server
