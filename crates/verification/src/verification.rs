@@ -241,10 +241,11 @@ async fn verify(
         program_from_blockchain[5].try_into()?,
     );
 
-    let (contract_class, cairo_debug_info_path) = match manifest.has_dojo_target {
-        true => compile_with_sozo(starknet_version, manifest, tmp_dir, class_name)?,
-        false => compile_with_scarb(starknet_version, manifest, tmp_dir, class_name)?,
-    };
+    let (contract_class, cairo_debug_info_path) =
+        match manifest.has_dojo_target || manifest.dojo_alpha_version.is_some() {
+            true => compile_with_sozo(starknet_version, manifest, tmp_dir, class_name)?,
+            false => compile_with_scarb(starknet_version, manifest, tmp_dir, class_name)?,
+        };
 
     if contract_class.sierra_program.len() != program_from_blockchain.len() {
         let err = anyhow::anyhow!("Contract class does not match");
