@@ -10,9 +10,13 @@ use walkdir::WalkDir;
 
 use crate::utils::Manifest;
 
-pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[9, 11];
+pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[11, 12];
 
-fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
+fn run_sozo_build(
+    tmp_dir: &PathBuf,
+    sozo_path: &str,
+    is_output_debug_info_flag: bool,
+) -> Result<()> {
     let absolute_path = fs::canonicalize(sozo_path)?;
 
     let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
@@ -25,6 +29,11 @@ fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
 
     cmd.env("SCARB_CACHE", scarb_cache_dir_str)
         .arg("build")
+        .arg(if is_output_debug_info_flag {
+            "--output-debug-info"
+        } else {
+            ""
+        })
         .current_dir(tmp_dir)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -65,7 +74,8 @@ pub fn compile_with_sozo(
         // If the dojo_alpha_version is supported, construct the sozo_path and run the build
         if SUPPORTED_DOJO_ALPHA_VERSIONS.contains(&dojo_alpha_version) {
             let sozo_path = format!("binaries/sozo/sozo-v1-0-0-alpha-{}", dojo_alpha_version);
-            run_sozo_build(tmp_dir, &sozo_path).map_err(|e| {
+            let is_output_debug_info_flag = dojo_alpha_version >= 12;
+            run_sozo_build(tmp_dir, &sozo_path, is_output_debug_info_flag).map_err(|e| {
                 let error_message = format!("Failed to build the Dojo project: {:?}", e);
                 error!("{}", error_message);
                 anyhow::anyhow!(error_message)
@@ -85,7 +95,7 @@ pub fn compile_with_sozo(
             "binaries/sozo/sozo-v1-0-0-alpha-{}",
             SUPPORTED_DOJO_ALPHA_VERSIONS.last().unwrap()
         );
-        run_sozo_build(tmp_dir, &sozo_path).map_err(|e| {
+        run_sozo_build(tmp_dir, &sozo_path, true).map_err(|e| {
             let error_message = format!(
                 "Failed to build the Dojo project: {:?}. We support Dojo versions: {}.",
                 e,
@@ -102,7 +112,10 @@ pub fn compile_with_sozo(
         _class_name.remove(0);
     }
 
-    let namespace_name = manifest.dojo_namespace_name.as_deref().unwrap_or(&manifest.package_name);
+    let namespace_name = manifest
+        .dojo_namespace_name
+        .as_deref()
+        .unwrap_or(&manifest.package_name);
     let file_name = format!("{}-{}.json", namespace_name, _class_name);
 
     let contract_class_path = WalkDir::new(tmp_dir.join("target"))
