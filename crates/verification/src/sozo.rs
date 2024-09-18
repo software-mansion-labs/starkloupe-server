@@ -29,14 +29,13 @@ fn run_sozo_build(
 
     cmd.env("SCARB_CACHE", scarb_cache_dir_str)
         .arg("build")
-        .arg(if is_output_debug_info_flag {
-            "--output-debug-info"
-        } else {
-            ""
-        })
         .current_dir(tmp_dir)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    if is_output_debug_info_flag {
+        cmd.arg("--output-debug-info");
+    }
 
     let status = cmd.status()?;
 
