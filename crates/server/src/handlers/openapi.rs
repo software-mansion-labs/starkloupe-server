@@ -20,7 +20,7 @@ use utoipa::ToSchema;
 #[derive(Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum ChainId {
-    SnMainnet,
+    SnMain,
     SnSepolia,
 }
 
