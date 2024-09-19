@@ -28,9 +28,9 @@ use std::collections::HashMap;
 pub fn compile_sierra_contract_class(
     contract_class: ContractClass,
     max_bytecode_size: usize,
-) -> CairoProgram {
-    let (sierra_version, _, program) =
-        sierra_from_felt252s(&contract_class.sierra_program).unwrap();
+) -> Result<CairoProgram> {
+    let (sierra_version, _, program) = sierra_from_felt252s(&contract_class.sierra_program)
+        .map_err(|e| anyhow::anyhow!("Failed to parse Sierra program: {:?}", e))?;
 
     let entrypoint_function_indices = chain!(
         &contract_class.entry_points_by_type.constructor,
@@ -39,12 +39,15 @@ pub fn compile_sierra_contract_class(
     )
     .map(|entrypoint| entrypoint.function_idx);
 
-    let entrypoint_ids = entrypoint_function_indices.map(|idx| program.funcs[idx].id.clone());
+    let entrypoint_ids: Vec<_> = entrypoint_function_indices
+        .map(|idx| program.funcs[idx].id.clone())
+        .collect();
 
     let no_eq_solver = sierra_version.minor >= 4;
 
     let metadata_computation_config = MetadataComputationConfig {
         function_set_costs: entrypoint_ids
+            .into_iter()
             .map(|id| (id, [(CostTokenType::Const, ENTRY_POINT_COST)].into()))
             .collect(),
         linear_gas_solver: no_eq_solver,
@@ -53,9 +56,10 @@ pub fn compile_sierra_contract_class(
         compute_runtime_costs: false,
     };
 
-    let metadata = calc_metadata(&program, metadata_computation_config).unwrap();
+    let metadata = calc_metadata(&program, metadata_computation_config)
+        .map_err(|e| anyhow::anyhow!("Failed to calculate metadata: {:?}", e))?;
 
-    cairo_lang_sierra_to_casm::compiler::compile(
+    let compiled_program = cairo_lang_sierra_to_casm::compiler::compile(
         &program,
         &metadata,
         SierraToCasmConfig {
@@ -63,7 +67,9 @@ pub fn compile_sierra_contract_class(
             max_bytecode_size,
         },
     )
-    .unwrap()
+    .map_err(|e| anyhow::anyhow!("Failed to compile Sierra to Casm: {:?}", e))?;
+
+    Ok(compiled_program)
 }
 
 pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<usize, Vec<usize>> {
@@ -155,11 +161,17 @@ pub fn get_instruction_encoding(
     if memory[pc].is_none() {
         return Err(Error::msg("Memory at pc is None"));
     }
-    let instruction_encoding = memory[pc].clone().unwrap();
-    let prime = BigUint::parse_bytes(PRIME_STR[2..].as_bytes(), 16).unwrap();
-
+    let instruction_encoding = memory
+        .get(pc)
+        .and_then(|value| value.clone())
+        .ok_or_else(|| {
+            anyhow::Error::msg(format!("Memory at pc = {} is None or out of bounds", pc))
+        })?;
+    let prime = BigUint::parse_bytes(PRIME_STR[2..].as_bytes(), 16)
+        .ok_or_else(|| anyhow::Error::msg("Failed to parse prime"))?;
     let imm_addr = BigUint::from(pc + 1) % prime;
-    let imm_addr = usize::try_from(imm_addr.clone()).map_err(|_| Error::msg(""))?;
+    let imm_addr = usize::try_from(imm_addr.clone())
+        .map_err(|_| anyhow::Error::msg("Failed to convert imm_addr to usize"))?;
     let optional_imm = memory[imm_addr].clone();
     Ok((instruction_encoding, optional_imm))
 }
