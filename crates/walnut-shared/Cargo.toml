@@ -11,6 +11,7 @@ num-bigint.workspace = true
 cairo-felt.workspace = true
 serde.workspace = true
 cairo-vm.workspace = true
+cairo-lang-sierra.workspace = true
 conversions.workspace = true
 cheatnet.workspace = true
 starknet.workspace = true

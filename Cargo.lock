@@ -1943,6 +1943,7 @@ dependencies = [
 name = "calldata-decoder"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde_json",
  "starknet_api",
  "walnut-shared",
@@ -3485,6 +3486,7 @@ dependencies = [
  "cairo-lang-sierra-type-size 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-starknet-classes 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
+ "calldata-decoder",
  "futures",
  "indexmap 2.3.0",
  "indextree",
@@ -4721,9 +4723,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.10.5"
+version = "1.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91213439dad192326a0d7c6ee3955910425f441d7038e0d6933b0aec5c4517f"
+checksum = "4219d74c6b67a3654a9fbebc4b419e22126d13d2f3c4a07ee0cb61ff79a79619"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -6969,6 +6971,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cairo-felt",
+ "cairo-lang-sierra 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
  "cheatnet",
  "conversions",

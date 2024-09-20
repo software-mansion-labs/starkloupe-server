@@ -4,6 +4,7 @@ use cairo_felt::Felt252;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
 use indextree::{Arena, NodeId};
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::{get_contract_call_id, get_internal_function_call_id};
@@ -78,7 +79,9 @@ pub fn get_internal_call_trace(
             fp: prev_fp,
             cairo_location: entrypoint_cairo_locations.first().cloned(),
             arguments: Vec::new(),
+            arguments_decoded: Vec::new(),
             results: Vec::new(),
+            results_decoded: Vec::new(),
             is_panic_result: false,
             debugger_execution_trace_step_index: 0,
             nested_calls_ids: Vec::new(),
@@ -117,9 +120,10 @@ pub fn get_internal_call_trace(
 
         // Arguments at the current step (can be empty)
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+        let mut arguments_decoded: Vec<DecodedData> = Vec::new();
         // Results at the current step (can be empty)
         let mut results: Vec<InternalFnCallIO> = Vec::new();
-        // Contract Call at current step (can be empty)
+        let mut results_decoded: Vec<DecodedData> = Vec::new();
 
         if new_fp > prev_fp {
             // If the FP register increases, that means we have entered a nested function call
@@ -130,13 +134,13 @@ pub fn get_internal_call_trace(
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
             // Get the arguments of the new function call
-            arguments = match prev_sierra_index {
+            (arguments, arguments_decoded) = match prev_sierra_index {
                 Some(prev_sierra_index) => mappings.get_arguments_at_trace_step(
                     relocated_memory,
                     prev_sierra_index,
                     prev_trace_entry,
                 ),
-                None => Vec::new(),
+                None => (Vec::new(), Vec::new()),
             };
 
             let call_entry = InternalFnCallTraceEntry {
@@ -147,7 +151,9 @@ pub fn get_internal_call_trace(
                 fp: new_fp,
                 cairo_location: cairo_locations.first().cloned(),
                 arguments: arguments.clone(),
+                arguments_decoded: arguments_decoded.clone(),
                 results: Vec::new(),
+                results_decoded: Vec::new(),
                 is_panic_result: false,
                 debugger_execution_trace_step_index: debugger_execution_trace.len(),
                 nested_calls_ids: Vec::new(),
@@ -161,16 +167,16 @@ pub fn get_internal_call_trace(
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
             // Get the results of the function call from which we have just exited
-            results = match prev_sierra_index {
+            (results, results_decoded) = match prev_sierra_index {
                 Some(sierra_index) => mappings.get_results_at_trace_step(
                     relocated_memory,
                     sierra_index.clone(),
                     prev_trace_entry,
                 ),
-                None => Vec::new(),
+                None => (Vec::new(), Vec::new()),
             };
 
-            tree.set_results_to_current_node(results.clone());
+            tree.set_results_to_current_node(results.clone(), results_decoded);
             // Return to the parent function call
             tree.move_to_parent();
         } else {
@@ -265,13 +271,17 @@ pub fn get_internal_call_trace(
     Ok((tree.get_root_serializable(), debugger_execution_trace))
 }
 
+pub type DecodedData = Vec<Value>;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InternalFnCallTraceEntry {
     pub id: String,
     pub fn_name: Option<String>,
     pub fp: usize,
     pub results: Vec<InternalFnCallIO>,
+    pub results_decoded: Vec<DecodedData>,
     pub arguments: Vec<InternalFnCallIO>,
+    pub arguments_decoded: Vec<DecodedData>,
     pub cairo_location: Option<CodeLocation>,
     pub is_panic_result: bool,
     pub debugger_execution_trace_step_index: usize,
@@ -388,10 +398,15 @@ impl InternalFnCallTraceTree {
         }
     }
 
-    fn set_results_to_current_node(&mut self, results: Vec<InternalFnCallIO>) {
+    fn set_results_to_current_node(
+        &mut self,
+        results: Vec<InternalFnCallIO>,
+        results_decoded: Vec<DecodedData>,
+    ) {
         if let Some(node) = self.arena.get_mut(self.current_node) {
             let data = node.get_mut();
             data.results = results;
+            data.results_decoded = results_decoded;
         }
     }
 

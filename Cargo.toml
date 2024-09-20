@@ -24,6 +24,7 @@ sqlx = { version = "0.7.2", features = [
   "uuid",
   "time",
 ] }
+regex = "1.10.6"
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["cors", "trace"] }
 tokio = { version = "1.33.0", features = ["full"] }
@@ -36,7 +37,6 @@ num-bigint = { version = "0.4.4", features = ["rand"] }
 camino = { version = "1.1.4", features = ["serde1"] }
 fs2 = "0.4.3"
 flate2 = "1.0.27"
-regex = "1.9.6"
 anyhow = "1.0.75"
 cairo-felt = "0.9.1"
 cairo-vm = "0.9.2"

@@ -1,5 +1,11 @@
+use std::default;
+
 use anyhow::anyhow;
 use cairo_felt::Felt252;
+use cairo_lang_sierra::{
+    ids::GenericTypeId,
+    program::{GenericArg, TypeDeclaration},
+};
 use cairo_vm::{
     hint_processor::hint_processor_utils::felt_to_usize, vm::trace::trace_entry::TraceEntry,
 };
@@ -14,21 +20,27 @@ use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
-pub struct EventItems {
-    pub name: String,
-    pub members: Vec<Datas>,
-}
-
-#[derive(Serialize, Debug, Clone)]
 pub struct Datas {
     pub names: String,
     pub types: String,
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct EventItems {
+    pub name: String,
+    pub members: Vec<Datas>,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct StructItems {
     pub name: String,
     pub members: Vec<Datas>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct EnumItems {
+    pub variant: Option<String>,
+    pub data_type: String,
 }
 
 pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
@@ -200,4 +212,74 @@ pub fn pad_hex_string_to_66(hex_str: &str) -> String {
         panic!("Hex string must start with '0x'");
     }
     format!("0x{:0>64}", &hex_str[2..])
+}
+
+pub fn build_data_items_from_type_declaration(
+    type_declaration: &Option<TypeDeclaration>,
+    type_declarations: &[TypeDeclaration],
+) -> (Option<Vec<EnumItems>>, Option<Vec<StructItems>>) {
+    let type_declaration = match type_declaration {
+        Some(decl) => decl,
+        None => return (None, None),
+    };
+
+    let mut enum_items: Vec<EnumItems> = Vec::new();
+    let mut struct_items: Vec<StructItems> = Vec::new();
+    let mut members: Vec<Datas> = Vec::new();
+
+    let struct_name = type_declaration
+        .id
+        .debug_name
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
+
+    for arg in &type_declaration.long_id.generic_args {
+        if let GenericArg::Type(concrete_type_id) = arg {
+            if let Some(nested_type_declaration) = type_declarations
+                .iter()
+                .find(|type_decl| type_decl.id.id == concrete_type_id.id)
+                .cloned()
+            {
+                let nested_type_name = nested_type_declaration
+                    .id
+                    .debug_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string();
+
+                // Handle Enum types only if the main type is an Enum
+                if type_declaration.long_id.generic_id == GenericTypeId::from_string("Enum") {
+                    enum_items.push(EnumItems {
+                        variant: None,
+                        data_type: nested_type_name.clone(),
+                    });
+                }
+
+                // Handle Struct types for both Enum and Struct cases
+                members.push(Datas {
+                    names: "".to_string(),
+                    types: nested_type_name.clone(),
+                });
+
+                let (_, nested_struct_items) = build_data_items_from_type_declaration(
+                    &Some(nested_type_declaration),
+                    type_declarations,
+                );
+
+                if let Some(nested_struct_items) = nested_struct_items {
+                    struct_items.extend(nested_struct_items);
+                }
+            }
+        }
+    }
+
+    if !members.is_empty() {
+        struct_items.push(StructItems {
+            name: struct_name,
+            members,
+        });
+    }
+
+    (Some(enum_items), Some(struct_items))
 }

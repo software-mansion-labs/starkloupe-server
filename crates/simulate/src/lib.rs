@@ -1081,8 +1081,10 @@ fn get_function_result(
                     &ret_hex,
                     &function_return_result_types,
                     &vec![],
-                    struct_items,
+                    Some(struct_items),
+                    None,
                     &mut 0,
+                    true,
                 );
                 additional_info.function_result = Some(json!(decoded_result));
             }
@@ -1106,8 +1108,10 @@ fn get_function_arguments(
             &calldata_hex,
             &function_arguments_types,
             &function_arguments_names,
-            &struct_items,
+            Some(struct_items),
+            None,
             &mut 0,
+            true,
         );
 
         additional_info.calldata_decoded = Some(json!(decoded_arguments));

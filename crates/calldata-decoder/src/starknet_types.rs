@@ -1,10 +1,32 @@
+use regex::Regex;
 use std::fmt;
 
 #[derive(Debug)]
 pub enum EDataType {
+    System(ESystemType),
     Primitive(EPrimitiveType),
     Array(Box<EDataType>),
     Struct(String),
+    Tuple(Vec<String>),
+    Enum(EEnumType),
+}
+
+#[derive(Debug)]
+pub enum ESystemType {
+    Const,
+    Step,
+    Hole,
+    RangeCheck,
+    RangeCheck96,
+    Pedersen,
+    Bitwise,
+    EcOp,
+    System,
+    GasBuiltin,
+    Poseidon,
+    Unit,
+    Snapshot,
+    ComponentState,
 }
 
 #[derive(Debug)]
@@ -29,37 +51,87 @@ pub enum EPrimitiveType {
     Bytes31,
 }
 
+#[derive(Debug)]
+pub enum EEnumType {
+    PanicResult,
+    Option,
+    Result,
+}
+
 impl fmt::Display for EDataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            EDataType::System(system) => write!(f, "{:?}", system),
             EDataType::Primitive(primitive) => write!(f, "{:?}", primitive),
             EDataType::Array(inner_type) => write!(f, "Array<{:?}>", inner_type),
             EDataType::Struct(name) => write!(f, "{}", name),
+            EDataType::Tuple(inner_types) => {
+                let formatted_types: Vec<String> =
+                    inner_types.iter().map(|t| format!("{:?}", t)).collect();
+                write!(f, "Tuple<{}>", formatted_types.join(", "))
+            }
+            EDataType::Enum(name) => write!(f, "{:?}", name),
+        }
+    }
+}
+
+impl ESystemType {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Const" => Some(Self::Const),
+            "Step" => Some(Self::Step),
+            "Hole" => Some(Self::Hole),
+            "RangeCheck" => Some(Self::RangeCheck),
+            "RangeCheck96" => Some(Self::RangeCheck96),
+            "Pedersen" => Some(Self::Pedersen),
+            "Bitwise" => Some(Self::Bitwise),
+            "EcOp" => Some(Self::EcOp),
+            "System" => Some(Self::System),
+            "GasBuiltin" => Some(Self::GasBuiltin),
+            "Poseidon" => Some(Self::Poseidon),
+            "Unit" => Some(Self::Unit),
+            _ if s.contains("()") => Some(Self::Unit),
+            _ if s.contains("Snapshot") => Some(Self::Snapshot),
+            _ if s.contains("ComponentState") => Some(Self::ComponentState),
+            _ => None,
         }
     }
 }
 
 impl EPrimitiveType {
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "core::integer::u8" => Some(Self::U8),
-            "core::integer::u16" => Some(Self::U16),
-            "core::integer::u32" => Some(Self::U32),
-            "core::integer::u64" => Some(Self::U64),
-            "core::integer::u128" => Some(Self::U128),
-            "core::integer::usize" => Some(Self::Usize),
-            "core::integer::i8" => Some(Self::I8),
-            "core::integer::i16" => Some(Self::I16),
-            "core::integer::i32" => Some(Self::I32),
-            "core::integer::i64" => Some(Self::I64),
-            "core::integer::i128" => Some(Self::I128),
-            "core::bool" => Some(Self::Bool),
+        let last_segment = s.rsplit("::").next().unwrap_or(s);
+
+        match last_segment {
+            "u8" => Some(Self::U8),
+            "u16" => Some(Self::U16),
+            "u32" => Some(Self::U32),
+            "u64" => Some(Self::U64),
+            "u128" => Some(Self::U128),
+            "usize" => Some(Self::Usize),
+            "i8" => Some(Self::I8),
+            "i16" => Some(Self::I16),
+            "i32" => Some(Self::I32),
+            "i64" => Some(Self::I64),
+            "i128" => Some(Self::I128),
+            "bool" => Some(Self::Bool),
             "felt" => Some(Self::Felt),
-            "core::felt252" => Some(Self::Felt252),
-            "core::starknet::contract_address::ContractAddress" => Some(Self::ContractAddress),
-            "core::staknet::eth_address::EthAddress" => Some(Self::EthAddress),
-            "core::starknet::class_hash::ClassHash" => Some(Self::ClassHash),
-            "core::bytes_31::bytes31" => Some(Self::Bytes31),
+            "felt252" => Some(Self::Felt252),
+            "ContractAddress" => Some(Self::ContractAddress),
+            "EthAddress" => Some(Self::EthAddress),
+            "ClassHash" => Some(Self::ClassHash),
+            "bytes31" => Some(Self::Bytes31),
+            _ => None,
+        }
+    }
+}
+
+impl EEnumType {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match () {
+            _ if s.contains("PanicResult") => Some(Self::PanicResult),
+            _ if s.contains("Option") => Some(Self::Option),
+            _ if s.contains("Result") => Some(Self::Result),
             _ => None,
         }
     }
@@ -75,8 +147,27 @@ impl EDataType {
         {
             let inner_type = &s[s.find("::<").unwrap() + 3..s.len() - 1];
             Self::Array(Box::new(Self::from_str(inner_type)))
+        } else if s.starts_with("Tuple<") {
+            let inner_types = extract_inner_types(s);
+            Self::Tuple(inner_types)
+        } else if let Some(enum_type) = EEnumType::from_str(s) {
+            Self::Enum(enum_type)
+        } else if let Some(system) = ESystemType::from_str(s) {
+            Self::System(system)
         } else {
             Self::Struct(s.to_string())
         }
     }
+}
+
+fn extract_inner_types(data_type: &str) -> Vec<String> {
+    let re_inner_type = Regex::new(r"<\s*\(?\s*(.*[^\s\)])\s*\)?\s*>").unwrap();
+    if let Some(captures) = re_inner_type.captures(data_type) {
+        let inner_content = captures.get(1).map_or("", |m| m.as_str());
+        return inner_content
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+    }
+    vec![]
 }

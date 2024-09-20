@@ -2,6 +2,8 @@ use anyhow::Result;
 use blockifier::execution::{
     deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
 };
+use serde_json::Value;
+
 use byteorder::{ByteOrder, LittleEndian};
 use cairo_felt::{felt_str, Felt252};
 use cairo_lang_casm::{
@@ -19,15 +21,16 @@ use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKin
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
+use calldata_decoder::decode_datas;
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
-use walnut_shared::decode_felt252;
+use walnut_shared::{build_data_items_from_type_declaration, decode_felt252};
 
 use crate::{
-    call_trace::{ContractCall, ESysCall, InternalFnCallIO},
+    call_trace::{ContractCall, DecodedData, ESysCall, InternalFnCallIO},
     utils::{
         compile_sierra_contract_class, felt_to_stark_felt, get_pc_mappings,
         get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
@@ -52,7 +55,7 @@ impl Mappings {
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program()?;
-        //dbg!(&sierra_program.libfunc_declarations);
+        //dbg!(&sierra_program.type_declarations);
         //dbg!(format_sierra_program(sierra_program.clone()));
         let type_names = contract_class
             .sierra_program_debug_info
@@ -172,8 +175,10 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt252>>,
         sierra_index: usize,
         trace_entry: &TraceEntry,
-    ) -> Vec<InternalFnCallIO> {
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedData>) {
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+        let mut arguments_decoded: Vec<DecodedData> = Vec::new();
+        let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
                 StatementKindDebugInfo::Invoke(invoke_info) => {
@@ -185,14 +190,38 @@ impl Mappings {
                             &invoke_ref.expression.cells,
                             &ApChange::Known(0),
                         );
-                        arguments.push(InternalFnCallIO {
-                            type_name: self
-                                .type_names
-                                .get(&invoke_ref.ty)
-                                .clone()
-                                .map(|n| n.to_string()),
-                            value: values,
-                        })
+                        let type_names = self
+                            .type_names
+                            .get(&invoke_ref.ty)
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "".to_string());
+
+                        let type_id = &invoke_ref.ty;
+                        if let Some(type_declaration) = type_declarations
+                            .iter()
+                            .find(|type_decl| type_decl.id.id == type_id.id)
+                            .cloned()
+                        {
+                            let (enum_items, struct_items) = build_data_items_from_type_declaration(
+                                &Some(type_declaration.clone()),
+                                &type_declarations,
+                            );
+                            let mut data_index = 0;
+                            let argument_decoded = decode_datas(
+                                &values,
+                                &vec![type_names.clone()],
+                                &vec![],
+                                struct_items.as_ref(),
+                                enum_items.as_ref(),
+                                &mut data_index,
+                                false,
+                            );
+                            arguments.push(InternalFnCallIO {
+                                type_name: Some(type_names),
+                                value: values,
+                            });
+                            arguments_decoded.push(argument_decoded);
+                        }
                     }
 
                     // for (branch_index, branch_change) in
@@ -232,7 +261,7 @@ impl Mappings {
                         // }
             }
         }
-        arguments
+        (arguments, arguments_decoded)
     }
 
     pub fn get_results_at_trace_step(
@@ -240,8 +269,10 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt252>>,
         sierra_index: usize,
         trace_entry: &TraceEntry,
-    ) -> Vec<InternalFnCallIO> {
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedData>) {
         let mut results: Vec<InternalFnCallIO> = Vec::new();
+        let mut results_decoded: Vec<DecodedData> = Vec::new();
+        let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
                 StatementKindDebugInfo::Return(return_info) => {
@@ -257,13 +288,11 @@ impl Mappings {
                         let result_type = self
                             .type_names
                             .get(&return_ref.ty)
-                            .clone()
-                            .map(|n| n.to_string());
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "".to_string());
 
-                        if is_panic_result(&result_type) && values[0] == "1" {
-                            //if result is panic the first element is panic flag, and the second
-                            //and third are memory locations
-                            //https://github.com/lambdaclass/cairo-vm/blob/bb491f2a9ea0514bbeba92d858b28baaf41053e7/cairo1-run/src/cairo_run.rs#L1085
+                        if is_panic_result(&Some(result_type.clone())) && values[0] == "1" {
+                            // Handle panic case
                             let panic_reason: Felt252 = relocated_memory
                                 .get(values[1].parse::<usize>().unwrap())
                                 .unwrap()
@@ -272,16 +301,44 @@ impl Mappings {
                             let panic_reason_decoded = decode_felt252(vec![panic_reason]).unwrap();
                             values = vec!["1".to_string(), panic_reason_decoded];
                         }
-                        results.push(InternalFnCallIO {
-                            type_name: result_type,
-                            value: values,
-                        })
+
+                        if let Some(type_declaration) = type_declarations
+                            .iter()
+                            .find(|type_decl| type_decl.id.id == return_ref.ty.id)
+                            .cloned()
+                        {
+                            let (enum_items, struct_items) = build_data_items_from_type_declaration(
+                                &Some(type_declaration.clone()),
+                                &type_declarations,
+                            );
+                            let mut data_index = 0;
+                            let result_decoded = decode_datas(
+                                &values,
+                                &vec![result_type.clone()],
+                                &vec![],
+                                struct_items.as_ref(),
+                                enum_items.as_ref(),
+                                &mut data_index,
+                                false,
+                            );
+
+                            results.push(InternalFnCallIO {
+                                type_name: Some(result_type),
+                                value: values,
+                            });
+                            results_decoded.push(result_decoded);
+                        } else {
+                            results.push(InternalFnCallIO {
+                                type_name: Some(result_type),
+                                value: values,
+                            });
+                        }
                     }
                 }
                 _ => {}
             }
         }
-        results
+        (results, results_decoded)
     }
 
     pub fn get_system_call_at_trace_step(

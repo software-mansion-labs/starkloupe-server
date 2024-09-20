@@ -1,14 +1,16 @@
 mod starknet_types;
 use serde_json::{json, map::Map, Value};
 use starknet_types::EDataType;
-use walnut_shared::StructItems;
+use walnut_shared::{EnumItems, StructItems};
 
 pub fn decode_datas(
     datas: &Vec<String>,
     types: &Vec<String>,
     names: &Vec<String>,
-    struct_items: &Vec<StructItems>,
+    struct_items: Option<&Vec<StructItems>>,
+    enum_items: Option<&Vec<EnumItems>>,
     data_index: &mut usize,
+    expect_array_with_length: bool,
 ) -> Vec<Value> {
     let mut result = Vec::new();
 
@@ -18,6 +20,23 @@ pub fn decode_datas(
         };
         let e_data_type = EDataType::from_str(data_type);
         match e_data_type {
+            EDataType::System(_) => {
+                let values: Vec<serde_json::Value> = datas[*data_index..]
+                    .iter()
+                    .map(|data| {
+                        let value = json!(data);
+                        *data_index += 1;
+                        value
+                    })
+                    .collect();
+
+                result.push(Value::Object(create_result_obj(
+                    names,
+                    index,
+                    data_type,
+                    ValueType::Array(values),
+                )));
+            }
             EDataType::Primitive(_) => {
                 let data = &datas[*data_index];
                 *data_index += 1;
@@ -29,28 +48,96 @@ pub fn decode_datas(
                 )))
             }
             EDataType::Array(inner_type) => {
-                let array_length_hex = datas.get(*data_index).unwrap().trim_start_matches("0x");
-                let array_length = usize::from_str_radix(array_length_hex, 16).unwrap();
-                *data_index += 1;
-                let mut decoded_array = Vec::new();
-                for _ in 0..array_length {
-                    // For the struct type include the type and name of struct memebers
-                    let mut decoded_item = decode_struct_item(
-                        struct_items,
+                if expect_array_with_length {
+                    let result_value = calldata_array(
                         datas,
-                        &inner_type.to_string(),
                         data_index,
+                        struct_items,
+                        enum_items,
+                        &inner_type.to_string(),
+                        expect_array_with_length,
+                        names,
+                        index,
+                        data_type,
                     );
-                    if decoded_item.is_empty() {
-                        //For the primitive types include only the value
-                        let data = datas[*data_index].to_string();
-                        *data_index += 1;
-                        decoded_item = vec![json!({"value": data})];
+                    result.push(result_value);
+                } else {
+                    let result_value = internal_function_array(
+                        datas,
+                        data_index,
+                        struct_items,
+                        enum_items,
+                        &inner_type.to_string(),
+                        expect_array_with_length,
+                        names,
+                        index,
+                        data_type,
+                    );
+                    result.push(result_value);
+                }
+            }
+            EDataType::Enum(_) => {
+                let enum_index = match datas.get(*data_index) {
+                    Some(value) => value.parse::<usize>().unwrap_or(0), // Convert to usize, default to 0
+                    None => {
+                        dbg!(
+                            "The first element in the datas is the index of the enum variant {}",
+                            *data_index
+                        );
+                        continue;
                     }
-                    if decoded_item.len() == 1 {
-                        decoded_array.push(decoded_item[0]["value"].clone());
-                    } else {
-                        decoded_array.push(json!(decoded_item));
+                };
+                *data_index += 1;
+                if let Some(enum_items) = enum_items {
+                    if let Some(enum_item) = enum_items.get(enum_index) {
+                        let variant_name = enum_item.variant.as_deref().unwrap_or("");
+                        let enum_type = enum_item.data_type.clone();
+
+                        let decoded_values = decode_datas(
+                            datas,
+                            &vec![enum_type],
+                            &vec![variant_name.to_string()],
+                            struct_items,
+                            Some(enum_items),
+                            data_index,
+                            expect_array_with_length,
+                        );
+
+                        result.push(Value::Object(create_result_obj(
+                            names,
+                            index,
+                            data_type,
+                            ValueType::Array(decoded_values),
+                        )));
+                    }
+                }
+            }
+            EDataType::Tuple(inner_types) => {
+                let mut decoded_inner_values = Vec::new();
+
+                // Check if there's only one inner type and more than one data element
+                // This happen from sierra return "type":
+                // "core::panics::PanicResult::<(core::bool,)>" -> Tuple<core::bool>",
+                if inner_types.len() == 1 && datas.len() > 1 {
+                    if let Some(last_data) = datas.last() {
+                        // Push the last element from datas into decoded_inner_values
+                        decoded_inner_values.push(json!(last_data));
+                    }
+                } else {
+                    for inner_type in inner_types {
+                        let decoded_inner = decode_datas(
+                            datas,
+                            &vec![inner_type.to_string()],
+                            names,
+                            struct_items,
+                            enum_items,
+                            data_index,
+                            expect_array_with_length,
+                        );
+                        // Push the first decoded value for other cases
+                        if let Some(inner_value) = decoded_inner.first() {
+                            decoded_inner_values.push(inner_value.clone());
+                        }
                     }
                 }
 
@@ -58,11 +145,18 @@ pub fn decode_datas(
                     names,
                     index,
                     data_type,
-                    ValueType::Array(decoded_array),
-                )))
+                    ValueType::Array(decoded_inner_values),
+                )));
             }
             EDataType::Struct(_) => {
-                let decoded_item = decode_struct_item(struct_items, datas, data_type, data_index);
+                let decoded_item = decode_struct_item(
+                    struct_items,
+                    enum_items,
+                    datas,
+                    data_type,
+                    data_index,
+                    expect_array_with_length,
+                );
                 result.push(Value::Object(create_result_obj(
                     names,
                     index,
@@ -76,30 +170,129 @@ pub fn decode_datas(
 }
 
 fn decode_struct_item(
-    struct_items: &Vec<StructItems>,
+    struct_items: Option<&Vec<StructItems>>,
+    enum_items: Option<&Vec<EnumItems>>,
     datas: &Vec<String>,
     data_type: &str,
     data_index: &mut usize,
+    expect_array_with_length: bool,
 ) -> Vec<Value> {
-    if let Some(struct_item) = struct_items.iter().find(|item| item.name == *data_type) {
-        decode_datas(
-            datas,
-            &struct_item
-                .members
-                .iter()
-                .map(|m| m.types.clone())
-                .collect(),
-            &struct_item
-                .members
-                .iter()
-                .map(|m| m.names.clone())
-                .collect(),
-            struct_items,
-            data_index,
-        )
-    } else {
-        Vec::new()
+    if let Some(struct_items) = struct_items {
+        if let Some(struct_item) = struct_items.iter().find(|item| item.name == *data_type) {
+            return decode_datas(
+                datas,
+                &struct_item
+                    .members
+                    .iter()
+                    .map(|m| m.types.clone())
+                    .collect(),
+                &struct_item
+                    .members
+                    .iter()
+                    .map(|m| m.names.clone())
+                    .collect(),
+                Some(struct_items),
+                enum_items,
+                data_index,
+                expect_array_with_length,
+            );
+        }
     }
+    Vec::new()
+}
+
+fn calldata_array(
+    datas: &Vec<String>,
+    data_index: &mut usize,
+    struct_items: Option<&Vec<StructItems>>,
+    enum_items: Option<&Vec<EnumItems>>,
+    inner_type: &str,
+    expect_array_with_length: bool,
+    names: &Vec<String>,
+    index: usize,
+    data_type: &str,
+) -> Value {
+    let mut decoded_array = Vec::new();
+
+    // Handle case where array length is specified as first data in calldata
+    let array_length_hex = datas.get(*data_index).map(|s| s.as_str()).unwrap_or("0");
+    let array_length =
+        usize::from_str_radix(array_length_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+    *data_index += 1;
+
+    for _ in 0..array_length {
+        // Decode each item based on its type
+        let mut decoded_item = decode_struct_item(
+            struct_items,
+            enum_items,
+            datas,
+            &inner_type.to_string(),
+            data_index,
+            expect_array_with_length,
+        );
+
+        if decoded_item.is_empty() {
+            // For primitive types, include only the value
+            let data = datas[*data_index].to_string();
+            *data_index += 1;
+            decoded_item = vec![json!({"value": data})];
+        }
+
+        if decoded_item.len() == 1 {
+            decoded_array.push(decoded_item[0]["value"].clone());
+        } else {
+            decoded_array.push(json!(decoded_item));
+        }
+    }
+
+    Value::Object(create_result_obj(
+        names,
+        index,
+        data_type,
+        ValueType::Array(decoded_array),
+    ))
+}
+
+fn internal_function_array(
+    datas: &Vec<String>,
+    data_index: &mut usize,
+    struct_items: Option<&Vec<StructItems>>,
+    enum_items: Option<&Vec<EnumItems>>,
+    inner_type: &str,
+    expect_array_with_length: bool,
+    names: &Vec<String>,
+    index: usize,
+    data_type: &str,
+) -> Value {
+    let mut decoded_array = Vec::new();
+
+    // Collect values until the first '0' or '1' or end of the data
+    while *data_index < datas.len() && datas[*data_index] != "0" && datas[*data_index] != "1" {
+        let data = datas[*data_index].clone();
+        decoded_array.push(json!(data));
+        *data_index += 1;
+    }
+
+    let struct_items_decoded = decode_struct_item(
+        struct_items,
+        enum_items,
+        datas,
+        &inner_type.to_string(),
+        data_index,
+        expect_array_with_length,
+    );
+
+    let combined_decoded: Vec<Value> = decoded_array
+        .into_iter()
+        .chain(struct_items_decoded.into_iter())
+        .collect();
+
+    Value::Object(create_result_obj(
+        names,
+        index,
+        data_type,
+        ValueType::Array(combined_decoded),
+    ))
 }
 
 enum ValueType {
