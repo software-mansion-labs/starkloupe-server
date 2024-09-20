@@ -8,7 +8,7 @@ use std::{env, fs};
 use tracing::error;
 
 use crate::utils::Manifest;
-use crate::SUPPORTED_VERSIONS;
+use crate::{ClassVerificationData, SUPPORTED_VERSIONS};
 
 pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
@@ -42,8 +42,8 @@ pub fn compile_with_scarb(
     starknet_version: (u32, u32, u32),
     manifest: Manifest,
     tmp_dir: &PathBuf,
-    class_name: String,
-) -> Result<(ContractClass, Option<PathBuf>)> {
+    class_verification_data: &mut ClassVerificationData,
+) -> Result<()> {
     match starknet_version {
         version if SUPPORTED_VERSIONS.contains(&version) => {
             let scarb_path = match version {
@@ -63,30 +63,66 @@ pub fn compile_with_scarb(
         }
     };
 
-    let contract_class_path = tmp_dir.join("target/dev").join(format!(
-        "{}_{}.contract_class.json",
-        manifest.package_name, class_name
-    ));
-    let contract_class_file = File::open(&contract_class_path).map_err(|e| {
-        error!("Failed to open contract class file: {:?}", e);
-        e
-    })?;
-    let contract_class_reader = BufReader::new(contract_class_file);
-    let contract_class: ContractClass =
-        serde_json::from_reader(contract_class_reader).map_err(|e| {
-            error!("Failed to deserialize contract class: {:?}", e);
-            e
-        })?;
+    for (class_hash, class_result) in class_verification_data.iter_mut() {
+        let (class_name, _, _, _, _, _) = match class_result.as_ref() {
+            Ok(result) => result,
+            Err(e) => {
+                let error_message =
+                    format!("Error in class result for hash {}: {:?}", class_hash, e);
+                error!("{}", error_message);
+                continue;
+            }
+        };
 
-    let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
-        version if SUPPORTED_VERSIONS.contains(&version) => {
-            Some(tmp_dir.join("target/dev").join(format!(
-                "{}_{}.contract_class_debug.json",
-                manifest.package_name, class_name
-            )))
+        let contract_class_path = tmp_dir.join("target/dev").join(format!(
+            "{}_{}.contract_class.json",
+            manifest.package_name, class_name
+        ));
+
+        let contract_class_file = match File::open(&contract_class_path) {
+            Ok(file) => file,
+            Err(e) => {
+                let error_message = format!("Failed to open contract class file: {:?}", e);
+                error!("{}", error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+                continue;
+            }
+        };
+
+        let contract_class_reader = BufReader::new(contract_class_file);
+        let contract_class: ContractClass = match serde_json::from_reader(contract_class_reader) {
+            Ok(class) => class,
+            Err(e) => {
+                let error_message = format!("Failed to deserialize contract class: {:?}", e);
+                error!("{}", error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+                continue;
+            }
+        };
+
+        let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
+            version if SUPPORTED_VERSIONS.contains(&version) => {
+                Some(tmp_dir.join("target/dev").join(format!(
+                    "{}_{}.contract_class_debug.json",
+                    manifest.package_name, class_name
+                )))
+            }
+            _ => None,
+        };
+
+        if let Ok((
+            _,
+            _,
+            _,
+            ref mut existing_contract_class,
+            ref mut existing_cairo_debug_info_path,
+            _,
+        )) = class_result
+        {
+            *existing_contract_class = Some(contract_class);
+            *existing_cairo_debug_info_path = cairo_debug_info_path;
         }
-        _ => None,
-    };
+    }
 
-    Ok((contract_class, cairo_debug_info_path))
+    Ok(())
 }

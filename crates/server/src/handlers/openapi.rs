@@ -27,7 +27,7 @@ enum ChainId {
 #[derive(OpenApi)]
 #[openapi(
     paths(verify_handler,get_verification_status_handler,get_class_handler_with_chain_id,get_class_handler,verify_handler_with_rpc, get_contract_handler_with_chain_id, get_search_handler),
-    components(schemas(VerificationPayload, VerificationStatusResponse, ChainId, GetClassResponse, GetClassResponseWithSourceCode, VerificationPayloadWithRpc, ContractResponseWithSourceCode, SearchResponse)),
+    components(schemas(VerificationPayload, ChainId, GetClassResponse, GetClassResponseWithSourceCode, VerificationPayloadWithRpc, ContractResponseWithSourceCode, SearchResponse, VerificationStatusResponse)),
     tags((name = "Contract class verification", description = "We currently support the following cairo version & scarb version: 2.6.*")),
     info(title = "Walnut API", version = "1.1.0")
 )]

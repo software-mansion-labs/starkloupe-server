@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO verification_status (id, network, class_hash, status, message, created_at, updated_at)\n            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fba0b5a87b2ca88ced2edb8d33d27b26ef890b8ddc0bfa2afa1bc43403b27c13"
+}

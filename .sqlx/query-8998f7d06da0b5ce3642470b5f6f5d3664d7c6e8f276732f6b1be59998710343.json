@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO contract_classes ( hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code, chain_id, project_id )\n                VALUES ( $1, $2, $3, $4, $5, $6 )\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Varchar",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8998f7d06da0b5ce3642470b5f6f5d3664d7c6e8f276732f6b1be59998710343"
+}

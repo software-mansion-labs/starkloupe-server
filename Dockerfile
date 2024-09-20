@@ -4,7 +4,7 @@ FROM public.ecr.aws/docker/library/rust:${RUST_VERSION} AS builder
 WORKDIR /app/walnut-server
 COPY . .
 RUN make deps
-ENV DATABASE_URL="postgresql://wido:Prankster-Wido@wido-1.cn5qetssppiq.us-east-1.rds.amazonaws.com:5432/walnut"
+ENV SQLX_OFFLINE=true
 RUN cargo build --locked --release --bin server
 
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION} AS final

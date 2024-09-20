@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT class_hash, status as \"status: EVerificationStatus\"\n        FROM verification_status\n        WHERE class_hash = ANY($1) AND network = $2 AND status IN ('pending', 'success')\n        ORDER BY updated_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "class_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "status: EVerificationStatus",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "649941764e4e828db70a8c993aab308c4a4e17f8583e549e49f8d10ba974da65"
+}
