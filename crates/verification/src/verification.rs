@@ -80,11 +80,10 @@ pub async fn initiate_verification(
         r#"
         SELECT class_hash, status as "status: EVerificationStatus"
         FROM verification_status
-        WHERE class_hash = ANY($1) AND network = $2 AND status IN ('pending', 'success')
+        WHERE class_hash = ANY($1) AND status IN ('pending', 'success')
         ORDER BY updated_at DESC
         "#,
-        &class_hashes,
-        chain_id.clone().unwrap_or_default()
+        &class_hashes
     )
     .fetch_all(db_pool)
     .await?;
@@ -114,6 +113,24 @@ pub async fn initiate_verification(
         }
     }
 
+    let verified_contract_classes = sqlx::query!(
+        r#"
+        SELECT hash
+        FROM contract_classes
+        WHERE hash = ANY($1)
+        "#,
+        &class_hashes
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    for contract_class in verified_contract_classes {
+        if let Some(entry) = class_status_map.get_mut(&contract_class.hash) {
+            entry.1 = EVerificationStatus::Success;
+            entry.2 = Some("This class is already verified.".to_string());
+        }
+    }
+
     // If there is only one class to verify, check if we already have a status for it
     if class_status_map.len() == 1 {
         let (class_hash, (_, status, message)) = class_status_map.iter().next().unwrap();
@@ -134,14 +151,15 @@ pub async fn initiate_verification(
     for (class_hash, (_, status, message)) in &class_status_map {
         sqlx::query!(
             r#"
-            INSERT INTO verification_status (id, network, class_hash, status, message, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+            INSERT INTO verification_status (id, network, class_hash, status, message, created_at, updated_at, project_id)
+            VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6)
             "#,
             verification_status_id,
             chain_id.clone().unwrap_or_default(),
             class_hash,
             status.to_string(),
-            message.clone().unwrap_or_default()
+            message.clone().unwrap_or_default(),
+            project_id
         )
         .execute(db_pool)
         .await
@@ -159,6 +177,11 @@ pub async fn initiate_verification(
             }
         })
         .collect();
+
+    if pending_classes.is_empty() {
+        return Ok(verification_status_id);
+    }
+
     // Make a list of class hashes to verify
     let pending_class_hashes: Vec<String> = pending_classes
         .iter()
@@ -374,7 +397,6 @@ async fn verify(
 
     // If there is no Cairo version, then it means that zero classes were fetched from the network
     let cairo_version = cairo_version.ok_or_else(|| {
-        let err = anyhow::anyhow!("Failed to fetch classes from the network");
         error!("{:?}", err);
         err
     })?;

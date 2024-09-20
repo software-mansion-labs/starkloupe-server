@@ -29,7 +29,7 @@ pub struct VerificationStatusResponse {
 
 #[utoipa::path(
     post,
-    path = "/v1/verfication/{verification_status_id}/status",
+    path = "/v1/verification/{verification_status_id}/status",
     responses(
         (status = 200, description = "Returns the status of the contract class verification", body = VerificationStatusResponse),
         (status = 404, description = "Verification status not found"),
