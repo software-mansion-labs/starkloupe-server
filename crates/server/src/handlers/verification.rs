@@ -12,7 +12,10 @@ use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
 use verification::verification::verify_by_contract_address;
-use verification::{db::fetch_verification_status_data, verification::initiate_verification};
+use verification::{
+    db::fetch_verification_statuses_by_id, verification::initiate_verification,
+    VerificationStatusSerializable,
+};
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
     pad_hex_string_to_66,
@@ -20,17 +23,15 @@ use walnut_shared::{
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct VerificationStatusResponse {
-    pub status: String,
-    pub error: Option<String>,
-    pub class_hash: Option<String>,
-    pub updated_at: String,
+    verification_statuses: Vec<VerificationStatusSerializable>,
+    error_message: Option<String>,
 }
 
 #[utoipa::path(
     post,
     path = "/v1/verfication/{verification_status_id}/status",
     responses(
-        (status = 200, description = "Returns the status of the contract verification", body = VerificationStatusResponse),
+        (status = 200, description = "Returns the status of the contract class verification", body = VerificationStatusResponse),
         (status = 404, description = "Verification status not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -49,44 +50,32 @@ pub async fn get_verification_status_handler(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(VerificationStatusResponse {
-                    status: "invalid_id".to_string(),
-                    error: Some("Invalid UUID format for verification_status_id.".to_string()),
-                    class_hash: None,
-                    updated_at: "".to_string(),
+                    verification_statuses: vec![],
+                    error_message: Some(
+                        "Invalid UUID format for verification_status_id.".to_string(),
+                    ),
                 }),
             )
                 .into_response();
         }
     };
 
-    match fetch_verification_status_data(&state.db_pool, verification_status_uuid).await {
-        Ok(verification_status_row) => {
-            // Map VerificationStatusRow to VerificationStatusResponse
-            let response = VerificationStatusResponse {
-                status: verification_status_row.status.to_string(),
-                error: verification_status_row.error_message,
-                class_hash: verification_status_row.class_hash,
-                updated_at: verification_status_row.updated_at.to_string(),
-            };
-            (StatusCode::OK, Json(response)).into_response()
-        }
-        Err(sqlx::Error::RowNotFound) => (
-            StatusCode::NOT_FOUND,
+    match fetch_verification_statuses_by_id(&state.db_pool, verification_status_uuid).await {
+        Ok(verification_status_rows) => (
+            StatusCode::OK,
             Json(VerificationStatusResponse {
-                status: "Not_found".to_string(),
-                error: Some("Verification status not found.".to_string()),
-                class_hash: None,
-                updated_at: "".to_string(),
+                verification_statuses: VerificationStatusSerializable::from_rows(
+                    verification_status_rows,
+                ),
+                error_message: None,
             }),
         )
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(VerificationStatusResponse {
-                status: "Error".to_string(),
-                error: Some(format!("Internal server error: {}", e)),
-                class_hash: None,
-                updated_at: "".to_string(),
+                verification_statuses: vec![],
+                error_message: Some(format!("Internal server error: {}", e)),
             }),
         )
             .into_response(),
@@ -176,8 +165,10 @@ fn check_api_key(api_key: &str) -> Result<i32> {
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct VerificationPayloadWithRpc {
-    pub class_name: String,
-    pub class_hash: String,
+    pub class_name: Option<String>,
+    pub class_hash: Option<String>,
+    pub class_names: Option<Vec<String>>,
+    pub class_hashes: Option<Vec<String>>,
     pub rpc_url: String,
     #[schema(
         example = "{ \"src/lib.cairo\": \"// lib.cairo source code\", \"src/utils/util1.cairo\": \"// util1.cairo source code\" }"
@@ -194,7 +185,7 @@ pub struct VerificationPayloadWithRpc {
         content_type = "application/json"
     ),
     responses(
-        (status = 200, description = "Class successfully verified", body = String),
+        (status = 200, description = "Class verification has started", body = String),
         (status = 400, description = "An error occurred during verification; an error message will be returned", body = String)
     ),
     params(
@@ -225,16 +216,43 @@ pub async fn verify_handler_with_rpc(
 
     let provider_client = create_rpc_client_from_url(rpc_url);
 
-    let class_hash = pad_hex_string_to_66(&payload.class_hash.clone());
-    let class_name = payload.class_name.clone();
+    let class_hashes = if let Some(hashes) = payload.class_hashes.clone() {
+        hashes
+    } else if let Some(hash) = payload.class_hash.clone() {
+        vec![hash]
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json("Class hash is required".to_string()),
+        )
+            .into_response();
+    };
+
+    let class_hashes = class_hashes
+        .iter()
+        .map(|hash| pad_hex_string_to_66(hash))
+        .collect();
+
+    let class_names = if let Some(names) = payload.class_names.clone() {
+        names
+    } else if let Some(name) = payload.class_name.clone() {
+        vec![name]
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json("Class name is required".to_string()),
+        )
+            .into_response();
+    };
+
     let source_code = payload.source_code.clone();
 
     match initiate_verification(
         &state.db_pool,
         &state.s3_client,
         provider_client,
-        class_hash,
-        class_name,
+        class_hashes,
+        class_names,
         source_code,
         None,
         Some(project_id),

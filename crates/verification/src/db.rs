@@ -39,21 +39,6 @@ pub async fn fetch_verified_class(
     Ok(verified_class)
 }
 
-pub async fn is_class_verified(db_pool: &Pool<Postgres>, class_hash: String) -> Result<bool> {
-    let result = sqlx::query!(
-        r#"SELECT EXISTS ( SELECT 1 from contract_classes WHERE hash = $1 ) "#,
-        class_hash
-    )
-    .fetch_one(db_pool)
-    .await?;
-
-    if let Some(e) = result.exists {
-        return Ok(e);
-    };
-
-    Ok(false)
-}
-
 pub async fn fetch_verification_id_and_status(
     db_pool: &Pool<Postgres>,
     class_hash: String,
@@ -77,18 +62,19 @@ pub async fn fetch_verification_id_and_status(
     Ok(result.map(|row| (row.id, row.status)))
 }
 
-pub async fn fetch_verification_status_data(
+pub async fn fetch_verification_statuses_by_id(
     db_pool: &Pool<Postgres>,
     id: Uuid,
-) -> Result<VerificationStatusRow, sqlx::Error> {
+) -> Result<Vec<VerificationStatusRow>, sqlx::Error> {
     let verification_status = sqlx::query_as!(
         VerificationStatusRow,
-        r#"SELECT id, network, class_hash, status as "status: EVerificationStatus", error_message, created_at, updated_at
+        r#"SELECT primary_id, id, network, class_hash, status as "status: EVerificationStatus", message, created_at, updated_at, project_id
         FROM verification_status
-        WHERE id = $1"#,
+        WHERE id = $1
+        ORDER BY primary_id"#,
         &id
     )
-    .fetch_one(db_pool)
+    .fetch_all(db_pool)
     .await?;
 
     Ok(verification_status)

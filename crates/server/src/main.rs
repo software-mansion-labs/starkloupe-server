@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shared_config = aws_config::from_env().region(region_provider).load().await;
     let s3_client = aws_sdk_s3::Client::new(&shared_config);
 
-    // sqlx::migrate!().run(&db_pool).await?;
+    sqlx::migrate!().run(&db_pool).await?;
 
     let shared_state = Arc::new(AppState {
         db_pool,

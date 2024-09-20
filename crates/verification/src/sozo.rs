@@ -9,6 +9,7 @@ use tracing::error;
 use walkdir::WalkDir;
 
 use crate::utils::Manifest;
+use crate::ClassVerificationData;
 
 pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[11, 12];
 
@@ -63,11 +64,10 @@ fn run_sozo_build(
 }
 
 pub fn compile_with_sozo(
-    _starknet_version: (u32, u32, u32),
     manifest: Manifest,
     tmp_dir: &PathBuf,
-    class_name: String,
-) -> Result<(ContractClass, Option<PathBuf>)> {
+    class_verification_data: &mut ClassVerificationData,
+) -> Result<()> {
     // Check if the manifest contains a dojo_alpha_version
     if let Some(dojo_alpha_version) = manifest.dojo_alpha_version {
         // If the dojo_alpha_version is supported, construct the sozo_path and run the build
@@ -105,48 +105,88 @@ pub fn compile_with_sozo(
         })?;
     };
 
-    // Hotfix for the class name
-    let mut _class_name = class_name.clone();
-    if _class_name.starts_with('-') {
-        _class_name.remove(0);
-    }
-
     let namespace_name = manifest
         .dojo_namespace_name
         .as_deref()
         .unwrap_or(&manifest.package_name);
-    let file_name = format!("{}-{}.json", namespace_name, _class_name);
 
-    let contract_class_path = WalkDir::new(tmp_dir.join("target"))
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy() == file_name)
-        .map(|e| e.into_path())
-        .ok_or_else(|| {
-            let error_message = format!(
-                "Failed to find contract class file '{}' in target directory",
-                file_name
-            );
-            error!("{}", error_message);
-            anyhow::anyhow!(error_message)
-        })?;
+    for (class_hash, class_result) in class_verification_data.iter_mut() {
+        let (class_name, _, _, _, _, _) = match class_result.as_ref() {
+            Ok(result) => result,
+            Err(e) => {
+                let error_message =
+                    format!("Error in class result for hash {}: {:?}", class_hash, e);
+                error!("{}", error_message);
+                continue;
+            }
+        };
 
-    let contract_class_file = File::open(&contract_class_path).map_err(|e| {
-        error!("Failed to open contract class file: {:?}", e);
-        e
-    })?;
-    let contract_class_reader = BufReader::new(contract_class_file);
-    let contract_class: ContractClass =
-        serde_json::from_reader(contract_class_reader).map_err(|e| {
-            error!("Failed to deserialize contract class: {:?}", e);
-            e
-        })?;
+        // Hotfix for the class name
+        let mut _class_name = class_name.clone();
+        if _class_name.starts_with('-') {
+            _class_name.remove(0);
+        }
 
-    // Assume debug info file is in the same folder with a different name format
-    let debug_file_name = format!("{}-{}.debug.json", namespace_name, _class_name);
-    let cairo_debug_info_path = Some(contract_class_path.parent().unwrap().join(debug_file_name));
+        let file_name = format!("{}-{}.json", namespace_name, _class_name);
 
-    Ok((contract_class, cairo_debug_info_path))
+        let contract_class_path = match WalkDir::new(tmp_dir.join("target"))
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy() == file_name)
+            .map(|e| e.into_path())
+        {
+            Some(path) => path,
+            None => {
+                let error_message = format!(
+                    "Failed to find contract class file '{}' in target directory",
+                    file_name
+                );
+                error!("{}", error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+                continue;
+            }
+        };
+
+        let contract_class_file = match File::open(&contract_class_path) {
+            Ok(file) => file,
+            Err(e) => {
+                let error_message = format!("Failed to open contract class file: {:?}", e);
+                error!("{}", error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+                continue;
+            }
+        };
+        let contract_class_reader = BufReader::new(contract_class_file);
+        let contract_class: ContractClass = match serde_json::from_reader(contract_class_reader) {
+            Ok(class) => class,
+            Err(e) => {
+                let error_message = format!("Failed to deserialize contract class: {:?}", e);
+                error!("{}", error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+                continue;
+            }
+        };
+
+        // Assume debug info file is in the same folder with a different name format
+        let debug_file_name = format!("{}-{}.debug.json", namespace_name, _class_name);
+        let cairo_debug_info_path =
+            Some(contract_class_path.parent().unwrap().join(debug_file_name));
+
+        if let Ok((
+            ref _class_name,
+            ref _program_from_network,
+            ref _starknet_version,
+            ref mut existing_contract_class,
+            ref mut existing_cairo_debug_info_path,
+            ref _sierra_to_cairo_debug_info,
+        )) = class_result
+        {
+            *existing_contract_class = Some(contract_class);
+            *existing_cairo_debug_info_path = cairo_debug_info_path;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn get_supported_dojo_versions() -> String {
