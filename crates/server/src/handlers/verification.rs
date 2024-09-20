@@ -134,7 +134,7 @@ pub async fn verify_handler(
     {
         Ok(verification_status_id) => {
             let response_message = format!(
-                "Contract verification has started. You can check the verification status at the following link: https://api.walnut.dev/v1/verification/{}/status .",
+                "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                 verification_status_id
             );
             (StatusCode::OK, Json(response_message)).into_response()
@@ -261,7 +261,7 @@ pub async fn verify_handler_with_rpc(
     {
         Ok(verification_status_id) => {
             let response_message = format!(
-                "Contract verification has started. You can check the verification status at the following link: https://api.walnut.dev/v1/verification/{}/status .",
+                "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                 verification_status_id
             );
             (StatusCode::OK, Json(response_message)).into_response()
