@@ -397,6 +397,7 @@ async fn verify(
 
     // If there is no Cairo version, then it means that zero classes were fetched from the network
     let cairo_version = cairo_version.ok_or_else(|| {
+        let err = anyhow::anyhow!("Failed to fetch classes from the network");
         error!("{:?}", err);
         err
     })?;
