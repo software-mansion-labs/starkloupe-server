@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::fmt;
+use walnut_shared::EnumItems;
 
 #[derive(Debug)]
 pub enum EDataType {
@@ -8,7 +9,8 @@ pub enum EDataType {
     Array(Box<EDataType>),
     Struct(String),
     Tuple(Vec<String>),
-    Enum(EEnumType),
+    SystemEnum(EEnumType),
+    UserEnum(String),
 }
 
 #[derive(Debug)]
@@ -70,7 +72,8 @@ impl fmt::Display for EDataType {
                     inner_types.iter().map(|t| format!("{:?}", t)).collect();
                 write!(f, "Tuple<{}>", formatted_types.join(", "))
             }
-            EDataType::Enum(name) => write!(f, "{:?}", name),
+            EDataType::SystemEnum(name) => write!(f, "{:?}", name),
+            EDataType::UserEnum(name) => write!(f, "{}", name),
         }
     }
 }
@@ -128,35 +131,43 @@ impl EPrimitiveType {
 
 impl EEnumType {
     pub fn from_str(s: &str) -> Option<Self> {
-        match () {
-            _ if s.contains("PanicResult") => Some(Self::PanicResult),
-            _ if s.contains("Option") => Some(Self::Option),
-            _ if s.contains("Result") => Some(Self::Result),
+        // Handle predefined enums like PanicResult, Option, Result
+        match s {
+            s if s.contains("PanicResult") => Some(Self::PanicResult),
+            s if s.contains("Option") => Some(Self::Option),
+            s if s.contains("Result") => Some(Self::Result),
             _ => None,
         }
     }
 }
-
 impl EDataType {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str, enum_items: Option<&Vec<EnumItems>>) -> Self {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
-            Self::Primitive(primitive)
-        } else if s.starts_with("core::array::Array::<")
+            return Self::Primitive(primitive);
+        }
+        if s.starts_with("core::array::Array::<")
             || s.starts_with("@core::array::Array::<")
             || s.starts_with("core::array::Span::<")
         {
             let inner_type = &s[s.find("::<").unwrap() + 3..s.len() - 1];
-            Self::Array(Box::new(Self::from_str(inner_type)))
-        } else if s.starts_with("Tuple<") {
-            let inner_types = extract_inner_types(s);
-            Self::Tuple(inner_types)
-        } else if let Some(enum_type) = EEnumType::from_str(s) {
-            Self::Enum(enum_type)
-        } else if let Some(system) = ESystemType::from_str(s) {
-            Self::System(system)
-        } else {
-            Self::Struct(s.to_string())
+            return Self::Array(Box::new(Self::from_str(inner_type, enum_items)));
         }
+        if s.starts_with("Tuple<") {
+            let inner_types = extract_inner_types(s);
+            return Self::Tuple(inner_types);
+        }
+        if let Some(enum_type) = EEnumType::from_str(s) {
+            return Self::SystemEnum(enum_type);
+        }
+        if let Some(items) = enum_items {
+            if items.iter().any(|item| item.name == s) {
+                return Self::UserEnum(s.to_string());
+            }
+        }
+        if let Some(system) = ESystemType::from_str(s) {
+            return Self::System(system);
+        }
+        Self::Struct(s.to_string())
     }
 }
 

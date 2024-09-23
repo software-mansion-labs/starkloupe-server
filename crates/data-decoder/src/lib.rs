@@ -1,6 +1,7 @@
 mod starknet_types;
 use serde_json::{json, map::Map, Value};
-use starknet_types::EDataType;
+use starknet_types::{EDataType, EEnumType};
+use tracing::{info, warn};
 use walnut_shared::{EnumItems, StructItems};
 
 pub fn decode_datas(
@@ -18,7 +19,7 @@ pub fn decode_datas(
         if datas.len() <= *data_index {
             break;
         };
-        let e_data_type = EDataType::from_str(data_type);
+        let e_data_type = EDataType::from_str(data_type, enum_items);
         match e_data_type {
             EDataType::System(_) => {
                 let values: Vec<serde_json::Value> = datas[*data_index..]
@@ -29,7 +30,6 @@ pub fn decode_datas(
                         value
                     })
                     .collect();
-
                 result.push(Value::Object(create_result_obj(
                     names,
                     index,
@@ -76,11 +76,11 @@ pub fn decode_datas(
                     result.push(result_value);
                 }
             }
-            EDataType::Enum(_) => {
+            EDataType::SystemEnum(_) | EDataType::UserEnum(_) => {
                 let enum_index = match datas.get(*data_index) {
-                    Some(value) => value.parse::<usize>().unwrap_or(0), // Convert to usize, default to 0
+                    Some(value) => value.parse::<usize>().unwrap_or(0),
                     None => {
-                        dbg!(
+                        info!(
                             "The first element in the datas is the index of the enum variant {}",
                             *data_index
                         );
@@ -89,26 +89,29 @@ pub fn decode_datas(
                 };
                 *data_index += 1;
                 if let Some(enum_items) = enum_items {
-                    if let Some(enum_item) = enum_items.get(enum_index) {
-                        let variant_name = enum_item.variant.as_deref().unwrap_or("");
-                        let enum_type = enum_item.data_type.clone();
+                    for enum_item in enum_items {
+                        if enum_item.name == *data_type {
+                            if let Some(enum_member_item) = enum_item.members.get(enum_index) {
+                                let variant_name = enum_member_item.names.clone();
+                                let enum_type = enum_member_item.types.clone();
+                                let decoded_values = decode_datas(
+                                    datas,
+                                    &vec![enum_type],
+                                    &vec![variant_name.clone()],
+                                    struct_items,
+                                    Some(enum_items),
+                                    data_index,
+                                    expect_array_with_length,
+                                );
 
-                        let decoded_values = decode_datas(
-                            datas,
-                            &vec![enum_type],
-                            &vec![variant_name.to_string()],
-                            struct_items,
-                            Some(enum_items),
-                            data_index,
-                            expect_array_with_length,
-                        );
-
-                        result.push(Value::Object(create_result_obj(
-                            names,
-                            index,
-                            data_type,
-                            ValueType::Array(decoded_values),
-                        )));
+                                result.push(Value::Object(create_result_obj(
+                                    names,
+                                    index,
+                                    data_type,
+                                    ValueType::Array(decoded_values),
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -140,7 +143,6 @@ pub fn decode_datas(
                         }
                     }
                 }
-
                 result.push(Value::Object(create_result_obj(
                     names,
                     index,
@@ -233,7 +235,14 @@ fn calldata_array(
 
         if decoded_item.is_empty() {
             // For primitive types, include only the value
-            let data = datas[*data_index].to_string();
+            let data = match datas.get(*data_index) {
+                Some(value) => value.to_string(),
+                None => {
+                    // Handle the case when the data is missing (e.g., logging or fallback)
+                    warn!("No data found at index {}", *data_index);
+                    "".to_string() // Return an empty string or provide a default value
+                }
+            };
             *data_index += 1;
             decoded_item = vec![json!({"value": data})];
         }
@@ -268,7 +277,14 @@ fn internal_function_array(
 
     // Collect values until the first '0' or '1' or end of the data
     while *data_index < datas.len() && datas[*data_index] != "0" && datas[*data_index] != "1" {
-        let data = datas[*data_index].clone();
+        let data = match datas.get(*data_index) {
+            Some(value) => value.to_string(),
+            None => {
+                // Handle the case when the data is missing (e.g., logging or fallback)
+                warn!("No data found at index {}", *data_index);
+                "".to_string() // Return an empty string or provide a default value
+            }
+        };
         decoded_array.push(json!(data));
         *data_index += 1;
     }

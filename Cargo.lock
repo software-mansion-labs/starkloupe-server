@@ -1940,16 +1940,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "calldata-decoder"
-version = "0.1.0"
-dependencies = [
- "regex",
- "serde_json",
- "starknet_api",
- "walnut-shared",
-]
-
-[[package]]
 name = "camino"
 version = "1.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2420,6 +2410,17 @@ dependencies = [
  "darling_core 0.20.3",
  "quote",
  "syn 2.0.68",
+]
+
+[[package]]
+name = "data-decoder"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde_json",
+ "starknet_api",
+ "tracing",
+ "walnut-shared",
 ]
 
 [[package]]
@@ -3486,7 +3487,7 @@ dependencies = [
  "cairo-lang-sierra-type-size 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-starknet-classes 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
- "calldata-decoder",
+ "data-decoder",
  "futures",
  "indexmap 2.3.0",
  "indextree",
@@ -5515,9 +5516,9 @@ dependencies = [
  "cairo-lang-starknet-classes 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-lang-utils 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
- "calldata-decoder",
  "cheatnet",
  "conversions",
+ "data-decoder",
  "flate2",
  "futures",
  "internal-tracing",
@@ -6918,8 +6919,8 @@ dependencies = [
  "cairo-felt",
  "cairo-lang-starknet-classes 2.6.3 (git+https://github.com/walnuthq/cairo?rev=e27ee4aa794331cabee4a22768fe99d837b489df)",
  "cairo-vm",
- "calldata-decoder",
  "cheatnet",
+ "data-decoder",
  "futures",
  "hex",
  "num-bigint",

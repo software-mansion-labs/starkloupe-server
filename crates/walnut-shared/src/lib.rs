@@ -39,6 +39,12 @@ pub struct StructItems {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct EnumItems {
+    pub name: String,
+    pub members: Vec<Datas>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct EnumItemsIO {
     pub variant: Option<String>,
     pub data_type: String,
 }
@@ -224,6 +230,7 @@ pub fn build_data_items_from_type_declaration(
     };
 
     let mut enum_items: Vec<EnumItems> = Vec::new();
+    let mut variants: Vec<Datas> = Vec::new();
     let mut struct_items: Vec<StructItems> = Vec::new();
     let mut members: Vec<Datas> = Vec::new();
 
@@ -250,10 +257,19 @@ pub fn build_data_items_from_type_declaration(
 
                 // Handle Enum types only if the main type is an Enum
                 if type_declaration.long_id.generic_id == GenericTypeId::from_string("Enum") {
-                    enum_items.push(EnumItems {
-                        variant: None,
-                        data_type: nested_type_name.clone(),
+                    variants.push(Datas {
+                        names: "".to_string(),
+                        types: nested_type_name.clone(),
                     });
+                    enum_items = vec![EnumItems {
+                        name: type_declaration
+                            .id
+                            .debug_name
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_string(),
+                        members: variants.clone(),
+                    }];
                 }
 
                 // Handle Struct types for both Enum and Struct cases

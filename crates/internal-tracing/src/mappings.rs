@@ -2,10 +2,8 @@ use anyhow::Result;
 use blockifier::execution::{
     deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
 };
-use serde_json::Value;
-
 use byteorder::{ByteOrder, LittleEndian};
-use cairo_felt::{felt_str, Felt252};
+use cairo_felt::Felt252;
 use cairo_lang_casm::{
     ap_change::ApChange,
     cell_expression::{CellExpression, CellOperator},
@@ -21,16 +19,18 @@ use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKin
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
-use calldata_decoder::decode_datas;
+use data_decoder::decode_datas;
 use indexmap::IndexSet;
 use num_bigint::BigInt;
+use serde_json::json;
+use serde_json::Value;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::{build_data_items_from_type_declaration, decode_felt252};
 
 use crate::{
-    call_trace::{ContractCall, DecodedData, ESysCall, InternalFnCallIO},
+    call_trace::{ContractCall, ESysCall, InternalFnCallIO},
     utils::{
         compile_sierra_contract_class, felt_to_stark_felt, get_pc_mappings,
         get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
@@ -175,9 +175,9 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt252>>,
         sierra_index: usize,
         trace_entry: &TraceEntry,
-    ) -> (Vec<InternalFnCallIO>, Vec<DecodedData>) {
+    ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
-        let mut arguments_decoded: Vec<DecodedData> = Vec::new();
+        let mut arguments_decoded: Vec<Value> = Vec::new();
         let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
@@ -217,10 +217,19 @@ impl Mappings {
                                 false,
                             );
                             arguments.push(InternalFnCallIO {
-                                type_name: Some(type_names),
+                                type_name: Some(type_names.clone()),
                                 value: values,
                             });
-                            arguments_decoded.push(argument_decoded);
+                            if argument_decoded.is_empty() {
+                                arguments_decoded.push(json!({
+                                    "type_name": type_names,
+                                    "value": []
+                                }));
+                            } else {
+                                argument_decoded
+                                    .get(0)
+                                    .map(|value| arguments_decoded.push(json!(value)));
+                            }
                         }
                     }
 
@@ -269,9 +278,9 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt252>>,
         sierra_index: usize,
         trace_entry: &TraceEntry,
-    ) -> (Vec<InternalFnCallIO>, Vec<DecodedData>) {
+    ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
         let mut results: Vec<InternalFnCallIO> = Vec::new();
-        let mut results_decoded: Vec<DecodedData> = Vec::new();
+        let mut results_decoded: Vec<Value> = Vec::new();
         let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
@@ -323,10 +332,19 @@ impl Mappings {
                             );
 
                             results.push(InternalFnCallIO {
-                                type_name: Some(result_type),
+                                type_name: Some(result_type.clone()),
                                 value: values,
                             });
-                            results_decoded.push(result_decoded);
+                            if result_decoded.is_empty() {
+                                results_decoded.push(json!({
+                                    "type_name": result_type,
+                                    "value": []
+                                }));
+                            } else {
+                                result_decoded
+                                    .get(0)
+                                    .map(|value| results_decoded.push(json!(value)));
+                            }
                         } else {
                             results.push(InternalFnCallIO {
                                 type_name: Some(result_type),

@@ -1,7 +1,7 @@
 use blockifier::abi::abi_utils::selector_from_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
-use walnut_shared::{Datas, EventItems, StructItems};
+use walnut_shared::{Datas, EnumItems, EventItems, StructItems};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,
@@ -13,6 +13,7 @@ pub struct AbiProcessor {
     pub function_return_result_types: Option<Vec<String>>,
     view_and_external_fn_names: Vec<String>,
     pub struct_items: Vec<StructItems>,
+    pub enum_items: Vec<EnumItems>,
     pub event_items: Vec<EventItems>,
 }
 
@@ -28,6 +29,7 @@ impl AbiProcessor {
             function_return_result_types: None,
             view_and_external_fn_names: Vec::new(),
             struct_items: Vec::new(),
+            enum_items: Vec::new(),
             event_items: Vec::new(),
         }
     }
@@ -35,6 +37,7 @@ impl AbiProcessor {
     pub fn process_abi(&mut self, abi: String) {
         self.process_abi_event(&serde_json::from_str(abi.as_str()).unwrap());
         self.process_abi_struct(&serde_json::from_str(abi.as_str()).unwrap());
+        self.process_abi_enum(&serde_json::from_str(abi.as_str()).unwrap());
         self.process_abi_internal(&serde_json::from_str(abi.as_str()).unwrap());
         self.check_if_erc20_token();
     }
@@ -157,6 +160,40 @@ impl AbiProcessor {
                     members: datas,
                 };
                 self.struct_items.push(struct_item);
+            }
+        }
+    }
+
+    fn process_abi_enum(&mut self, abi_value_array: &Vec<Value>) {
+        for item in abi_value_array {
+            if let Value::Object(obj) = item {
+                if obj.get("type") == Some(&Value::String("enum".to_string())) {
+                    self.process_abi_enum_variants(obj);
+                }
+            }
+        }
+    }
+
+    fn process_abi_enum_variants(&mut self, obj: &Map<String, Value>) {
+        if let Some(Value::String(name)) = obj.get("name") {
+            if let Some(Value::Array(enum_variants)) = obj.get("variants") {
+                let mut datas = Vec::new();
+                for variant in enum_variants {
+                    if let Value::Object(variant_obj) = variant {
+                        let variant_name = variant_obj.get("name").unwrap().as_str().unwrap();
+                        let variant_type = variant_obj.get("type").unwrap().as_str().unwrap();
+                        let data = Datas {
+                            names: variant_name.to_string(),
+                            types: variant_type.to_string(),
+                        };
+                        datas.push(data);
+                    }
+                }
+                let enum_items = EnumItems {
+                    name: name.clone(),
+                    members: datas,
+                };
+                self.enum_items.push(enum_items);
             }
         }
     }

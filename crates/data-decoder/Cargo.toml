@@ -1,5 +1,5 @@
 [package]
-name = "calldata-decoder"
+name = "data-decoder"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,3 +8,4 @@ starknet_api.workspace = true
 serde_json.workspace = true
 walnut-shared.workspace = true
 regex.workspace = true
+tracing.workspace = true

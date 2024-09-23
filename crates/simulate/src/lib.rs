@@ -25,7 +25,6 @@ use blockifier::versioned_constants::VersionedConstants;
 use cairo_felt::Felt252;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cairo_vm::vm::trace::trace_entry::TraceEntry;
-use calldata_decoder::decode_datas;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
@@ -35,6 +34,7 @@ use cheatnet::state::BlockInfoReader;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CheatnetState;
 use contract_names::ContractNamesFetcher;
+use data_decoder::decode_datas;
 use internal_tracing::call_trace::InternalFnCallTraceEntryNode;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
 use internal_tracing::debugger_data_maps_full_class_to_class;
@@ -88,6 +88,7 @@ use thiserror::Error;
 use tracing::error;
 use url::Url;
 use utils::transaction_type_to_string;
+use walnut_shared::EnumItems;
 use walnut_shared::{
     chain_id_to_readable_string, clone_vm_trace, create_rpc_client_from_url, decode_felt252,
     extract_chain_id, felt252_to_hex, felt_vec_to_event_vec, get_contract_call_id, rpc_url,
@@ -959,6 +960,7 @@ fn get_additional_info(
         cairo_version: None,
     };
     let mut struct_items: Vec<StructItems> = Vec::new();
+    let mut enum_items: Vec<EnumItems> = Vec::new();
     let mut event_items: Vec<EventItems> = Vec::new();
     if let Some(class_hash) = class_hash {
         let contract_class = fork_state_reader
@@ -983,6 +985,7 @@ fn get_additional_info(
                     additional_info.function_return_result_types =
                         abi_processor.function_return_result_types;
                     struct_items = abi_processor.struct_items;
+                    enum_items = abi_processor.enum_items;
                     event_items = abi_processor.event_items;
                     let (sierra_version, cairo_version) = extract_version(&class.sierra_program);
                     additional_info.sierra_version = sierra_version;
@@ -995,8 +998,8 @@ fn get_additional_info(
 
     get_event_data(&mut additional_info, &event_items);
     get_function_name(&mut additional_info, &entry_point_selector);
-    get_function_result(&mut additional_info, &result, &struct_items);
-    get_function_arguments(&mut additional_info, &calldata, &struct_items);
+    get_function_result(&mut additional_info, &result, &struct_items, &enum_items);
+    get_function_arguments(&mut additional_info, &calldata, &struct_items, &enum_items);
 
     additional_info
 }
@@ -1071,6 +1074,7 @@ fn get_function_result(
     additional_info: &mut SimulationCallTraceAdditionalInfo,
     call_result: &CallResult,
     struct_items: &Vec<StructItems>,
+    enum_items: &Vec<EnumItems>,
 ) {
     if let CallResult::Success { ret_data } = call_result {
         if let Ok(ret_hex) = felt252_to_hex(ret_data.to_vec()) {
@@ -1082,14 +1086,14 @@ fn get_function_result(
                     &function_return_result_types,
                     &vec![],
                     Some(struct_items),
-                    None,
+                    Some(enum_items),
                     &mut 0,
                     true,
                 );
                 additional_info.function_result = Some(json!(decoded_result));
             }
         } else {
-            panic!("Failed to decode return data");
+            error!("Failed to decode return data");
         }
     }
 }
@@ -1098,6 +1102,7 @@ fn get_function_arguments(
     additional_info: &mut SimulationCallTraceAdditionalInfo,
     calldata: &Calldata,
     struct_items: &Vec<StructItems>,
+    enum_items: &Vec<EnumItems>,
 ) {
     if let (Some(function_arguments_types), Some(function_arguments_names)) = (
         additional_info.function_arguments_types.clone(),
@@ -1109,7 +1114,7 @@ fn get_function_arguments(
             &function_arguments_types,
             &function_arguments_names,
             Some(struct_items),
-            None,
+            Some(enum_items),
             &mut 0,
             true,
         );
