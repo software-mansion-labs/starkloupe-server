@@ -5,16 +5,16 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use starknet::core::types::{BlockId, BlockTag, FieldElement};
-use starknet::providers::Provider;
+use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
+use starknet_old::core::types as starknet_old_types;
+use starknet_providers::Provider;
 use std::str::FromStr;
-use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
-    pad_field_element_to_hex_string_length66, MAIN_CHAIN_ID, SEPOLIA_CHAIN_ID,
+    felt_to_field_element,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -72,8 +72,8 @@ pub async fn get_search_handler(
     Path(search_hash): Path<String>,
     Query(query): Query<SearchQuery>,
 ) -> Response {
-    let hash = match FieldElement::from_str(search_hash.as_str()) {
-        Ok(hash) => pad_field_element_to_hex_string_length66(hash),
+    let hash = match Felt::from_str(search_hash.as_str()) {
+        Ok(hash) => hash.to_fixed_hex_string(),
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -84,8 +84,8 @@ pub async fn get_search_handler(
     };
 
     let mut sources = vec![
-        SourceType::ChainId(ChainId(MAIN_CHAIN_ID.to_string())),
-        SourceType::ChainId(ChainId(SEPOLIA_CHAIN_ID.to_string())),
+        SourceType::ChainId(ChainId::Mainnet),
+        SourceType::ChainId(ChainId::Sepolia),
     ];
 
     if let Some(urls) = query.rpc_urls {
@@ -176,7 +176,7 @@ async fn check_transaction(hash: &str, sources: &[SourceType]) -> Option<Vec<Dat
             SourceType::ChainId(chain_id) => {
                 let provider_client = create_rpc_client(chain_id);
                 match provider_client
-                    .get_transaction_status(FieldElement::from_str(hash).ok()?)
+                    .get_transaction_status(felt_to_field_element(Felt::from_str(hash).ok()?))
                     .await
                 {
                     Ok(_) => {
@@ -191,7 +191,7 @@ async fn check_transaction(hash: &str, sources: &[SourceType]) -> Option<Vec<Dat
             SourceType::RpcUrl(url) => {
                 let client = create_rpc_client_from_url(url.clone());
                 match client
-                    .get_transaction_status(FieldElement::from_str(hash).ok()?)
+                    .get_transaction_status(felt_to_field_element(Felt::from_str(hash).ok()?))
                     .await
                 {
                     Ok(_) => {
@@ -220,8 +220,8 @@ async fn check_contract(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>>
                 let provider_client = create_rpc_client(chain_id);
                 match provider_client
                     .get_class_hash_at(
-                        BlockId::Tag(BlockTag::Latest),
-                        FieldElement::from_str(hash).ok()?,
+                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                        felt_to_field_element(Felt::from_str(hash).ok()?),
                     )
                     .await
                 {
@@ -238,8 +238,8 @@ async fn check_contract(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>>
                 let client = create_rpc_client_from_url(url.clone());
                 match client
                     .get_class_hash_at(
-                        BlockId::Tag(BlockTag::Latest),
-                        FieldElement::from_str(hash).ok()?,
+                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                        felt_to_field_element(Felt::from_str(hash).ok()?),
                     )
                     .await
                 {
@@ -269,8 +269,8 @@ async fn check_class(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>> {
                 let provider_client = create_rpc_client(chain_id);
                 match provider_client
                     .get_class(
-                        BlockId::Tag(BlockTag::Latest),
-                        FieldElement::from_str(hash).ok()?,
+                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                        felt_to_field_element(Felt::from_str(hash).ok()?),
                     )
                     .await
                 {
@@ -287,8 +287,8 @@ async fn check_class(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>> {
                 let client = create_rpc_client_from_url(url.clone());
                 match client
                     .get_class(
-                        BlockId::Tag(BlockTag::Latest),
-                        FieldElement::from_str(hash).ok()?,
+                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                        felt_to_field_element(Felt::from_str(hash).ok()?),
                     )
                     .await
                 {

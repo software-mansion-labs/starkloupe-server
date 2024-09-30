@@ -3,7 +3,6 @@ use blockifier::execution::{
     deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
 };
 use byteorder::{ByteOrder, LittleEndian};
-use cairo_felt::{felt_str, Felt252};
 use cairo_lang_casm::{
     ap_change::ApChange,
     cell_expression::{CellExpression, CellOperator},
@@ -18,22 +17,25 @@ use cairo_lang_sierra::{
 use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
-use cairo_vm::vm::trace::trace_entry::TraceEntry;
+use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use indexmap::IndexSet;
 use num_bigint::BigInt;
+use num_traits::cast::ToPrimitive;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
-use walnut_shared::decode_felt252;
+use walnut_shared::decode_felt;
 
 use crate::{
     call_trace::{ContractCall, ESysCall, InternalFnCallIO},
     utils::{
-        compile_sierra_contract_class, felt_to_stark_felt, get_pc_mappings,
-        get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
+        compile_sierra_contract_class, get_pc_mappings, get_pc_to_ptr_sys_call_mappings,
+        is_panic_result, make_casm_to_sierra_map,
     },
 };
+use starknet_types_core::felt::{Felt, NonZeroFelt};
 
+#[derive(Debug)]
 pub struct Mappings {
     pub pc_to_inst_indexes_map: HashMap<usize, usize>,
     pub pc_to_ptr_sys_calls: HashMap<usize, CellExpression>,
@@ -47,8 +49,8 @@ pub struct Mappings {
 
 impl Mappings {
     pub fn new(
-        relocated_memory: &Vec<Option<Felt252>>,
-        vm_trace: &Vec<TraceEntry>,
+        relocated_memory: &Vec<Option<Felt>>,
+        vm_trace: &Vec<RelocatedTraceEntry>,
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program()?;
@@ -147,7 +149,10 @@ impl Mappings {
         return locations;
     }
 
-    pub fn get_sierra_execution_trace(&self, vm_trace: &Vec<TraceEntry>) -> Vec<Vec<usize>> {
+    pub fn get_sierra_execution_trace(
+        &self,
+        vm_trace: &Vec<RelocatedTraceEntry>,
+    ) -> Vec<Vec<usize>> {
         let mut sierra_trace: Vec<Vec<usize>> = vec![];
         for trace_entry in vm_trace {
             if let Some(sierra_indexes) = self.get_sierra_indexes_at_pc(&trace_entry.pc) {
@@ -169,9 +174,9 @@ impl Mappings {
 
     pub fn get_arguments_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt252>>,
+        relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
-        trace_entry: &TraceEntry,
+        trace_entry: &RelocatedTraceEntry,
     ) -> Vec<InternalFnCallIO> {
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
@@ -237,9 +242,9 @@ impl Mappings {
 
     pub fn get_results_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt252>>,
+        relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
-        trace_entry: &TraceEntry,
+        trace_entry: &RelocatedTraceEntry,
     ) -> Vec<InternalFnCallIO> {
         let mut results: Vec<InternalFnCallIO> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
@@ -264,12 +269,12 @@ impl Mappings {
                             //if result is panic the first element is panic flag, and the second
                             //and third are memory locations
                             //https://github.com/lambdaclass/cairo-vm/blob/bb491f2a9ea0514bbeba92d858b28baaf41053e7/cairo1-run/src/cairo_run.rs#L1085
-                            let panic_reason: Felt252 = relocated_memory
+                            let panic_reason: Felt = relocated_memory
                                 .get(values[1].parse::<usize>().unwrap())
                                 .unwrap()
                                 .clone()
                                 .unwrap();
-                            let panic_reason_decoded = decode_felt252(vec![panic_reason]).unwrap();
+                            let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
                             values = vec!["1".to_string(), panic_reason_decoded];
                         }
                         results.push(InternalFnCallIO {
@@ -286,11 +291,10 @@ impl Mappings {
 
     pub fn get_system_call_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt252>>,
-        trace_entry: &TraceEntry,
+        relocated_memory: &Vec<Option<Felt>>,
+        trace_entry: &RelocatedTraceEntry,
     ) -> Option<ESysCall> {
         let pc = trace_entry.pc as usize;
-        let fp = trace_entry.fp as usize;
         let ptr_sys_call = self.pc_to_ptr_sys_calls.get(&pc);
         match ptr_sys_call {
             Some(ptr_sys_call) => {
@@ -304,8 +308,7 @@ impl Mappings {
                 let mut ptr = value.parse::<usize>().unwrap();
                 let felt_value = relocated_memory.get(ptr).unwrap();
                 ptr += 1;
-                let starkfelt = felt_to_stark_felt(&felt_value.as_ref().unwrap());
-                let selector = SyscallSelector::try_from(starkfelt);
+                let selector = SyscallSelector::try_from(felt_value.unwrap());
                 match selector {
                     Ok(selector) => {
                         match selector {
@@ -313,15 +316,13 @@ impl Mappings {
                                 // https://github.com/starkware-libs/blockifier/blob/9bfb3d4c8bf1b68a0c744d1249b32747c75a4d87/crates/blockifier/src/execution/syscalls/hint_processor.rs#L302C13-L306C15
                                 let _felt_value = relocated_memory.get(ptr).unwrap();
                                 ptr += 1;
-                                let felt_value: Felt252 =
+                                let felt_value: Felt =
                                     relocated_memory.get(ptr).unwrap().clone().unwrap();
-                                let contract_address =
-                                    format!("0x{:0>64}", felt_value.to_str_radix(16));
+                                let contract_address = felt_value.to_fixed_hex_string();
                                 ptr += 1;
                                 let felt_value =
                                     relocated_memory.get(ptr).unwrap().clone().unwrap();
-                                let function_selector =
-                                    format!("0x{:0>64}", felt_value.to_str_radix(16));
+                                let function_selector = felt_value.to_fixed_hex_string();
                                 let contract_call = ContractCall {
                                     contract_address,
                                     function_selector,
@@ -344,8 +345,8 @@ impl Mappings {
 }
 
 pub fn get_values_from_cell_expressions(
-    memory: &Vec<Option<Felt252>>,
-    trace_entry: &TraceEntry,
+    memory: &Vec<Option<Felt>>,
+    trace_entry: &RelocatedTraceEntry,
     cell_expressions: &Vec<CellExpression>,
     ap_change: &ApChange,
 ) -> Vec<String> {
@@ -376,11 +377,11 @@ pub enum GetCellRefValueError {
 }
 
 pub fn get_cell_ref_value(
-    memory: &Vec<Option<Felt252>>,
-    trace_entry: &TraceEntry,
+    memory: &Vec<Option<Felt>>,
+    trace_entry: &RelocatedTraceEntry,
     cell_ref: &CellRef,
     ap_change: &ApChange,
-) -> Result<Felt252, GetCellRefValueError> {
+) -> Result<Felt, GetCellRefValueError> {
     match cell_ref.register {
         Register::AP => match ap_change {
             ApChange::Known(ap_change_value) => {
@@ -403,8 +404,8 @@ pub fn get_cell_ref_value(
 }
 
 pub fn get_value_from_cell_expression(
-    memory: &Vec<Option<Felt252>>,
-    trace_entry: &TraceEntry,
+    memory: &Vec<Option<Felt>>,
+    trace_entry: &RelocatedTraceEntry,
     cell_expression: &CellExpression,
     ap_change: &ApChange,
 ) -> Result<String, GetCellRefValueError> {
@@ -417,10 +418,12 @@ pub fn get_value_from_cell_expression(
         CellExpression::DoubleDeref(cell_ref, offset) => {
             match get_cell_ref_value(memory, trace_entry, cell_ref, ap_change) {
                 Ok(cell_ref_value_felt) => {
-                    let cell_ref_value_bytes_le = cell_ref_value_felt.to_bytes_be();
                     let cell_ref_value =
-                        LittleEndian::read_u128(&extend_to_16_bytes(cell_ref_value_bytes_le)[..])
-                            as i128;
+                        cell_ref_value_felt
+                            .to_i128()
+                            .ok_or(GetCellRefValueError::OtherError(
+                                "Failed to convert cell_ref_value_felt to i128".to_string(),
+                            ))?;
                     let addr = cell_ref_value + offset.clone() as i128;
                     let value = memory.get(addr as usize).cloned();
                     if let Some(Some(value)) = value {
@@ -440,20 +443,23 @@ pub fn get_value_from_cell_expression(
                         DerefOrImmediate::Deref(cell) => {
                             get_cell_ref_value(memory, trace_entry, cell, ap_change)
                         }
-                        DerefOrImmediate::Immediate(x) => Ok(Felt252::from(&x.value)),
+                        DerefOrImmediate::Immediate(x) => Ok(Felt::from(&x.value)),
                     };
 
                     match b {
                         Ok(b) => {
-                            let value: Result<Felt252, GetCellRefValueError> = match op {
+                            let value: Result<Felt, GetCellRefValueError> = match op {
                                 CellOperator::Add => Ok(a + b),
                                 CellOperator::Mul => Ok(a * b),
-                                CellOperator::Div => match b.try_into() {
-                                    Ok(b) => Ok(a / b),
-                                    Err(_) => Err(GetCellRefValueError::OtherError(
-                                        "Division by zero".to_string(),
-                                    )),
-                                },
+                                CellOperator::Div => {
+                                    let non_zero_b: Result<NonZeroFelt, _> = b.try_into();
+                                    match non_zero_b {
+                                        Ok(non_zero_b) => Ok(a.div_rem(&non_zero_b).0),
+                                        Err(_) => Err(GetCellRefValueError::OtherError(
+                                            "Division by zero".to_string(),
+                                        )),
+                                    }
+                                }
                                 CellOperator::Sub => Ok(a - b),
                             };
                             match value {

@@ -1,9 +1,9 @@
 use crate::{mappings::Mappings, utils::is_panic_result};
 use anyhow::Result;
-use cairo_felt::Felt252;
-use cairo_vm::vm::trace::trace_entry::TraceEntry;
+use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use indextree::{Arena, NodeId};
 use serde::Serialize;
+use starknet::core::types::Felt;
 use std::collections::HashMap;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::{get_contract_call_id, get_internal_function_call_id};
@@ -42,8 +42,8 @@ pub struct DebuggerExecutionTraceEntryWithLocation {
 
 pub fn get_internal_call_trace(
     mappings: &Mappings,
-    relocated_memory: &Vec<Option<Felt252>>,
-    vm_trace: &Vec<TraceEntry>,
+    relocated_memory: &Vec<Option<Felt>>,
+    vm_trace: &Vec<RelocatedTraceEntry>,
     sierra_statements_to_cairo_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
     parent_contract_call_id: &String,
 ) -> Result<(

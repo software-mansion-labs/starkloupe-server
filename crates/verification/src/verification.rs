@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_smithy_types::body::SdkBody;
 use sqlx::{Pool, Postgres};
-use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, FieldElement};
-use starknet::providers::jsonrpc::HttpTransport;
-use starknet::providers::{JsonRpcClient, Provider};
+use starknet::core::types::{ContractClass as CoreContractClass, Felt};
+use starknet_old::core::types as starknet_old_types;
+use starknet_providers::jsonrpc::HttpTransport;
+use starknet_providers::{JsonRpcClient, Provider};
 use std::fs;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use tracing::error;
 use uuid::Uuid;
-use walnut_shared::pad_field_element_to_hex_string_length66;
+use walnut_shared::{felt_to_field_element, field_element_to_felt};
 
 use crate::scarb::compile_with_scarb;
 use crate::sozo::compile_with_sozo;
@@ -30,16 +31,19 @@ pub async fn verify_by_contract_address(
     chain_id: Option<String>,
     project_id: Option<i32>,
 ) -> Result<Uuid> {
-    let class_hash = pad_field_element_to_hex_string_length66(
+    let class_hash = field_element_to_felt(
         provider_client
             .get_class_hash_at(
-                BlockId::Tag(BlockTag::Latest),
-                &FieldElement::from_str(contract_address.as_str())
-                    .context("Contract address format is incorrect")?,
+                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                &felt_to_field_element(
+                    Felt::from_str(contract_address.as_str())
+                        .context("Contract address format is incorrect")?,
+                ),
             )
             .await
             .context("Can't find the contract class on the network")?,
-    );
+    )
+    .to_fixed_hex_string();
 
     initiate_verification(
         db_pool,
@@ -258,7 +262,7 @@ pub async fn verify_by_class_hashes(
 
     fs::remove_dir_all(&tmp_dir)?;
 
-    let class_verification_data = class_verification_data?;
+    let class_verification_data: ClassVerificationData = class_verification_data?;
 
     let mut class_status_map: HashMap<String, (EVerificationStatus, Option<String>)> =
         HashMap::new();
@@ -313,14 +317,21 @@ pub async fn verify_by_class_hashes(
 async fn fetch_class_from_blockchain(
     provider_client: &JsonRpcClient<HttpTransport>,
     class_hash: &str,
-) -> Result<(Vec<FieldElement>, (u32, u32, u32))> {
+) -> Result<(Vec<Felt>, (u32, u32, u32))> {
     let class_from_blockchain = provider_client
         .get_class(
-            BlockId::Tag(BlockTag::Latest),
-            &FieldElement::from_str(class_hash).context("Invalid class hash format")?,
+            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+            &felt_to_field_element(
+                Felt::from_str(class_hash).context("Invalid class hash format")?,
+            ),
         )
         .await
         .context("Failed to get class from the network")?;
+
+    let class_json = serde_json::to_value(&class_from_blockchain)
+        .context("Failed to serialize class from blockchain to JSON value")?;
+    let class_from_blockchain: CoreContractClass = serde_json::from_value(class_json)
+        .context("Failed to deserialize class from JSON value back to CoreContractClass")?;
 
     let program_from_blockchain = match &class_from_blockchain {
         CoreContractClass::Sierra(flattened_sierra_class) => {
@@ -334,9 +345,9 @@ async fn fetch_class_from_blockchain(
     }?;
 
     let cairo_version: (u32, u32, u32) = (
-        program_from_blockchain[3].try_into()?,
-        program_from_blockchain[4].try_into()?,
-        program_from_blockchain[5].try_into()?,
+        program_from_blockchain[3].to_biguint().try_into()?,
+        program_from_blockchain[4].to_biguint().try_into()?,
+        program_from_blockchain[5].to_biguint().try_into()?,
     );
 
     Ok((program_from_blockchain, cairo_version))

@@ -43,7 +43,12 @@ pub fn decode_datas(
                     );
                     if decoded_item.is_empty() {
                         //For the primitive types include only the value
-                        let data = datas[*data_index].to_string();
+                        // TODO: Fix as index can be out of range here
+                        let data = match datas.get(*data_index) {
+                            Some(v) => v,
+                            None => return Vec::new(),
+                        }
+                        .to_string();
                         *data_index += 1;
                         decoded_item = vec![json!({"value": data})];
                     }

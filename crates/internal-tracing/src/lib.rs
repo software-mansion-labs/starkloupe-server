@@ -5,13 +5,13 @@ pub mod utils;
 use crate::mappings::Mappings;
 
 use anyhow::Result;
-use cairo_felt::Felt252;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
-use cairo_vm::vm::trace::trace_entry::TraceEntry;
+use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use call_trace::{
     get_internal_call_trace, DebuggerExecutionTraceEntry, InternalFnCallTraceEntryNode,
 };
 use serde::Serialize;
+use starknet::core::types::Felt;
 use std::collections::HashMap;
 use verification::SierraStatementToCairoDebugInfo;
 
@@ -56,8 +56,8 @@ pub fn debugger_data_maps_full_class_to_class(
 
 /// Returns the internal function call trace and sierra_execution_trace
 pub fn get_internal_trace_and_debugger_data(
-    relocated_memory: &Vec<Option<Felt252>>,
-    vm_trace: &Vec<TraceEntry>,
+    relocated_memory: &Vec<Option<Felt>>,
+    vm_trace: &Vec<RelocatedTraceEntry>,
     full_class_debugger_data: &ClassDebuggerDataWithContractClass,
     parent_contract_call_id: &String,
 ) -> Result<(InternalFnCallTraceEntryNode, ContractCallDebuggerData)> {

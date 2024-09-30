@@ -1,15 +1,13 @@
+pub mod felt252_serde;
+pub mod felt252_vec_compression;
+
 use anyhow::anyhow;
-use cairo_felt::Felt252;
-use cairo_vm::{
-    hint_processor::hint_processor_utils::felt_to_usize, vm::trace::trace_entry::TraceEntry,
-};
-use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
-use conversions::IntoConv;
+use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use num_bigint::BigUint;
 use serde::Serialize;
-use starknet::core::types::FieldElement;
+use starknet::core::types::{BlockId, BlockTag, ContractStorageDiffItem, Felt, StorageEntry};
 use starknet_api::core::ChainId;
-use starknet_api::hash::StarkFelt;
+use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
 use url::Url;
 
@@ -48,12 +46,12 @@ pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> 
 }
 
 pub fn rpc_url(chain_id: &ChainId) -> Url {
-    match chain_id.0.as_str() {
-        MAIN_CHAIN_ID => {
+    match chain_id {
+        ChainId::Mainnet => {
             Url::parse("https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
                 .unwrap()
         }
-        SEPOLIA_CHAIN_ID => {
+        ChainId::Sepolia => {
             Url::parse("https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
                 .unwrap()
         }
@@ -62,31 +60,29 @@ pub fn rpc_url(chain_id: &ChainId) -> Url {
 }
 
 pub fn get_voyager_api_url(chain_id: &ChainId) -> &str {
-    match chain_id.0.as_str() {
-        MAIN_CHAIN_ID => "https://api.voyager.online/beta/",
-        SEPOLIA_CHAIN_ID => "https://sepolia-api.voyager.online/beta ",
+    match chain_id {
+        ChainId::Mainnet => "https://api.voyager.online/beta/",
+        ChainId::Sepolia => "https://sepolia-api.voyager.online/beta",
         _ => panic!("Invalid chain id"),
     }
 }
 
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<ChainId> {
-    let main = ChainId(MAIN_CHAIN_ID.to_string());
-    let sepolia = ChainId(SEPOLIA_CHAIN_ID.to_string());
     match chain_id {
-        "0x534e5f4d41494e" => Ok(main),
-        "SN_MAIN" => Ok(main),
-        "sn_main" => Ok(main),
-        "0x534e5f5345504f4c4941" => Ok(sepolia),
-        "SN_SEPOLIA" => Ok(sepolia),
-        "sn_sepolia" => Ok(sepolia),
+        "0x534e5f4d41494e" => Ok(ChainId::Mainnet),
+        "SN_MAIN" => Ok(ChainId::Mainnet),
+        "sn_main" => Ok(ChainId::Mainnet),
+        "0x534e5f5345504f4c4941" => Ok(ChainId::Sepolia),
+        "SN_SEPOLIA" => Ok(ChainId::Sepolia),
+        "sn_sepolia" => Ok(ChainId::Sepolia),
         _ => Err(anyhow!("Invalid chain id")),
     }
 }
 
 pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
-    match chain_id.0.as_str() {
-        MAIN_CHAIN_ID => String::from("sn_main"),
-        SEPOLIA_CHAIN_ID => String::from("sn_sepolia"),
+    match chain_id {
+        ChainId::Mainnet => String::from("sn_main"),
+        ChainId::Sepolia => String::from("sn_sepolia"),
         _ => panic!("Invalid chain id"),
     }
 }
@@ -97,16 +93,15 @@ pub fn bytes_to_text(bytes: [u8; 32]) -> Result<String, std::str::Utf8Error> {
     Ok(text)
 }
 
-pub fn felt252_to_hex(felt_array: Vec<Felt252>) -> Result<Vec<String>, std::str::Utf8Error> {
+pub fn felt_vec_to_hex_vec(felt_array: Vec<Felt>) -> Vec<String> {
     let hex_representation = felt_array
         .iter()
-        .map(|felt| format!("0x{:0>64}", felt.to_str_radix(16)))
+        .map(|felt| felt.to_fixed_hex_string())
         .collect::<Vec<String>>();
-
-    Ok(hex_representation)
+    hex_representation
 }
 
-pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8Error> {
+pub fn decode_felt(felt_array: Vec<Felt>) -> Result<String, std::str::Utf8Error> {
     //convert do decimal string representation
     let decimal_arrays = felt_array
         .iter()
@@ -128,53 +123,15 @@ pub fn decode_felt252(felt_array: Vec<Felt252>) -> Result<String, std::str::Utf8
     Ok(text.to_string())
 }
 
-pub fn felt_vec_to_event_vec(felts: &[Felt252]) -> Vec<Event> {
-    let mut events = vec![];
-    let mut i = 0;
-    while i < felts.len() {
-        let from = felts[i].clone().into_();
-        let keys_length = &felts[i + 1];
-        let keys = &felts[i + 2..i + 2 + felt_to_usize(keys_length).unwrap()];
-        let data_length = &felts[i + 2 + felt_to_usize(keys_length).unwrap()];
-        let data = &felts[i + 2 + felt_to_usize(keys_length).unwrap() + 1
-            ..i + 2
-                + felt_to_usize(keys_length).unwrap()
-                + 1
-                + felt_to_usize(data_length).unwrap()];
-
-        events.push(Event {
-            from,
-            keys: Vec::from(keys),
-            data: Vec::from(data),
-        });
-
-        i = i + 2 + felt_to_usize(keys_length).unwrap() + 1 + felt_to_usize(data_length).unwrap();
-    }
-
-    events
-}
-
-pub fn starkfelt_vec_to_fieldelement_vec(calldata: &[StarkFelt]) -> Vec<FieldElement> {
-    calldata
-        .iter()
-        .map(|starkfelt| FieldElement::from_bytes_be(starkfelt.bytes()).unwrap())
-        .collect()
-}
-
-pub fn clone_vm_trace(vm_trace: &Vec<TraceEntry>) -> Vec<TraceEntry> {
+pub fn clone_vm_trace(vm_trace: &Vec<RelocatedTraceEntry>) -> Vec<RelocatedTraceEntry> {
     vm_trace
         .iter()
-        .map(|trace_entry| TraceEntry {
+        .map(|trace_entry| RelocatedTraceEntry {
             pc: trace_entry.pc,
             fp: trace_entry.fp,
             ap: trace_entry.ap,
         })
         .collect()
-}
-
-pub fn pad_field_element_to_hex_string_length66(field_element: FieldElement) -> String {
-    let hex_string = hex::encode(field_element.to_bytes_be());
-    format!("0x{:0>64}", hex_string)
 }
 
 pub fn get_contract_call_id(
@@ -200,4 +157,57 @@ pub fn pad_hex_string_to_66(hex_str: &str) -> String {
         panic!("Hex string must start with '0x'");
     }
     format!("0x{:0>64}", &hex_str[2..])
+}
+
+pub fn felt_to_field_element(felt: Felt) -> starknet_old_types::FieldElement {
+    starknet_old_types::FieldElement::from_bytes_be(&felt.to_bytes_be()).unwrap()
+}
+
+pub fn field_element_to_felt(field_element: starknet_old_types::FieldElement) -> Felt {
+    Felt::from_bytes_be(&field_element.to_bytes_be())
+}
+
+pub fn vec_field_element_to_vec_felt(
+    field_elements: Vec<starknet_old_types::FieldElement>,
+) -> Vec<Felt> {
+    field_elements
+        .into_iter()
+        .map(|field_element| field_element_to_felt(field_element))
+        .collect()
+}
+
+pub fn block_id_to_old_block_id(block_id: BlockId) -> starknet_old_types::BlockId {
+    match block_id {
+        BlockId::Number(block_number) => starknet_old_types::BlockId::Number(block_number),
+        BlockId::Hash(block_hash) => {
+            starknet_old_types::BlockId::Hash(felt_to_field_element(block_hash))
+        }
+        BlockId::Tag(block_tag) => match block_tag {
+            BlockTag::Latest => {
+                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest)
+            }
+            BlockTag::Pending => {
+                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Pending)
+            }
+        },
+    }
+}
+
+pub fn old_storage_diffs_to_storage_diffs(
+    old_storage_diffs: Vec<starknet_old_types::ContractStorageDiffItem>,
+) -> Vec<ContractStorageDiffItem> {
+    old_storage_diffs
+        .into_iter()
+        .map(|old_storage_diff| ContractStorageDiffItem {
+            address: field_element_to_felt(old_storage_diff.address),
+            storage_entries: old_storage_diff
+                .storage_entries
+                .into_iter()
+                .map(|storage_entry| StorageEntry {
+                    key: field_element_to_felt(storage_entry.key),
+                    value: field_element_to_felt(storage_entry.value),
+                })
+                .collect(),
+        })
+        .collect()
 }
