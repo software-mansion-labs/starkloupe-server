@@ -16,8 +16,6 @@ use std::path::PathBuf;
 use time::PrimitiveDateTime;
 use uuid::Uuid;
 
-pub const SUPPORTED_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0), (2, 8, 2)];
-
 /// The key is a `String` representing the class hash.
 /// The value is a `Result` containing a tuple with the following elements:
 /// - `String`: The class name.
