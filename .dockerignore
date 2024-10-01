@@ -3,5 +3,6 @@ Dockerfile
 # rust temporary files
 target/
 crates/team-onboarding/target/
+local/
 
 .env
