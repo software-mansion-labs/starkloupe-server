@@ -1118,7 +1118,7 @@ fn get_function_arguments(
         additional_info.function_arguments_types.clone(),
         additional_info.function_arguments_names.clone(),
     ) {
-        let calldata_hex: Vec<String> = calldata.0.iter().map(|x| x.to_string()).collect();
+        let calldata_hex: Vec<String> = calldata.0.iter().map(|x| x.to_hex_string()).collect();
         let decoded_arguments = decode_datas(
             &calldata_hex,
             &function_arguments_types,

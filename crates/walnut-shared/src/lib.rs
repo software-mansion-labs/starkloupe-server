@@ -7,6 +7,7 @@ use cairo_lang_sierra::{
     program::{GenericArg, TypeDeclaration},
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use fancy_regex::Regex;
 use num_bigint::BigUint;
 use serde::Serialize;
 use starknet::core::types::{BlockId, BlockTag, ContractStorageDiffItem, Felt, StorageEntry};
@@ -44,6 +45,27 @@ pub struct EnumItemsIO {
     pub variant: Option<String>,
     pub data_type: String,
 }
+
+pub const SKIP_BUILTIN_TYPES: &[&str] = &[
+    "Const",
+    "Step",
+    "Hole",
+    "GasBuiltin",
+    "Unit",
+    "Snapshot",
+    "ComponentState",
+    "Bitwise",
+    "EcOp",
+    "RangeCheck",
+    "SegmentArena",
+    "Poseidon",
+    "Pedersen",
+    "RangeCheck96",
+    "CircuitAdd",
+    "CircuitMul",
+    "Gas",
+    "System",
+];
 
 pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
 pub const SEPOLIA_CHAIN_ID: &str = "0x534e5f5345504f4c4941";
@@ -196,6 +218,7 @@ pub fn build_data_items_from_type_declaration(
         .unwrap_or("")
         .to_string();
 
+    let simplified_struct_name = simplify_type_name(struct_name.as_str());
     for arg in &type_declaration.long_id.generic_args {
         if let GenericArg::Type(concrete_type_id) = arg {
             if let Some(nested_type_declaration) = type_declarations
@@ -209,20 +232,23 @@ pub fn build_data_items_from_type_declaration(
                     .as_deref()
                     .unwrap_or("")
                     .to_string();
+                let simplified_nested_type_name = simplify_type_name(nested_type_name.as_str());
 
                 // Handle Enum types only if the main type is an Enum
                 if type_declaration.long_id.generic_id == GenericTypeId::from_string("Enum") {
                     variants.push(Datas {
                         names: "".to_string(),
-                        types: nested_type_name.clone(),
+                        types: simplified_nested_type_name.clone(),
                     });
+                    let enum_type_name = type_declaration
+                        .id
+                        .debug_name
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_string();
+                    let simplified_enum_type_name = simplify_type_name(enum_type_name.as_str());
                     enum_items = vec![EnumItems {
-                        name: type_declaration
-                            .id
-                            .debug_name
-                            .as_deref()
-                            .unwrap_or("")
-                            .to_string(),
+                        name: simplified_enum_type_name,
                         members: variants.clone(),
                     }];
                 }
@@ -230,7 +256,7 @@ pub fn build_data_items_from_type_declaration(
                 // Handle Struct types for both Enum and Struct cases
                 members.push(Datas {
                     names: "".to_string(),
-                    types: nested_type_name.clone(),
+                    types: simplified_nested_type_name.clone(),
                 });
 
                 let (_, nested_struct_items) = build_data_items_from_type_declaration(
@@ -247,7 +273,7 @@ pub fn build_data_items_from_type_declaration(
 
     if !members.is_empty() {
         struct_items.push(StructItems {
-            name: struct_name,
+            name: simplified_struct_name,
             members,
         });
     }
@@ -306,4 +332,48 @@ pub fn old_storage_diffs_to_storage_diffs(
                 .collect(),
         })
         .collect()
+}
+
+pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
+    SKIP_BUILTIN_TYPES.contains(&type_name)
+}
+
+pub fn simplify_type_name(type_name: &str) -> String {
+    // If the type name has (), return "()"
+    if type_name.contains("()") {
+        return String::from("");
+    }
+
+    // Regex for removing leading namespaces
+    let namespace_regex = Regex::new(r"(\w+::)+(?=\w+)").unwrap();
+    // Regex for cleaning up generics
+    let generic_regex = Regex::new(r"<([^<>]*)>").unwrap();
+    // Regex for cleaning up parentheses with trailing commas
+    let bracket_spaces_regex = Regex::new(r"^\(\s*(.*?)\s*,*\s*\),*$").unwrap();
+
+    // Step 1: Remove leading namespaces using the namespace regex
+    let mut simplified = namespace_regex.replace_all(type_name, "").to_string();
+
+    // Step 2: Process generics by cleaning up inside the <...>
+    simplified = generic_regex
+        .replace_all(&simplified, |caps: &fancy_regex::Captures| {
+            let mut inside = caps.get(1).unwrap().as_str().trim().to_string();
+
+            // Step 3: Handle the edge case of parentheses with trailing commas
+            if let Ok(Some(bracket_match)) = bracket_spaces_regex.captures(&inside) {
+                inside = bracket_match.get(1).unwrap().as_str().trim().to_string();
+            }
+
+            // Step 4: Remove leading namespaces inside generics
+            format!("<{}>", inside.replace(r"(\w+::)+", ""))
+        })
+        .to_string();
+
+    // Step 5: Handle the specific case to remove <, ( from start and end
+    let surrounding_regex = Regex::new(r"^<(\(?)(.*?)(\)?)>$").unwrap();
+    if let Ok(Some(caps)) = surrounding_regex.captures(&simplified) {
+        return caps.get(2).unwrap().as_str().trim().to_string();
+    }
+
+    simplified.trim().to_string()
 }

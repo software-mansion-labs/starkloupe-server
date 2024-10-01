@@ -17,17 +17,22 @@ pub enum ESystemType {
     Const,
     Step,
     Hole,
-    RangeCheck,
-    RangeCheck96,
-    Pedersen,
-    Bitwise,
-    EcOp,
-    System,
     GasBuiltin,
-    Poseidon,
     Unit,
     Snapshot,
+    ContractState,
     ComponentState,
+    Bitwise,
+    EcOp,
+    RangeCheck,
+    SegmentArena,
+    Poseidon,
+    Pedersen,
+    RangeCheck96,
+    CircuitAdd,
+    CircuitMul,
+    Gas,
+    System,
 }
 
 #[derive(Debug)]
@@ -82,15 +87,20 @@ impl ESystemType {
             "Const" => Some(Self::Const),
             "Step" => Some(Self::Step),
             "Hole" => Some(Self::Hole),
-            "RangeCheck" => Some(Self::RangeCheck),
-            "RangeCheck96" => Some(Self::RangeCheck96),
-            "Pedersen" => Some(Self::Pedersen),
+            "GasBuiltin" => Some(Self::GasBuiltin),
+            "Unit" => Some(Self::Unit),
             "Bitwise" => Some(Self::Bitwise),
             "EcOp" => Some(Self::EcOp),
-            "System" => Some(Self::System),
-            "GasBuiltin" => Some(Self::GasBuiltin),
+            "RangeCheck" => Some(Self::RangeCheck),
+            "SegmentArena" => Some(Self::SegmentArena),
             "Poseidon" => Some(Self::Poseidon),
-            "Unit" => Some(Self::Unit),
+            "Pedersen" => Some(Self::Pedersen),
+            "RangeCheck96" => Some(Self::RangeCheck96),
+            "CircuitAdd" => Some(Self::CircuitAdd),
+            "CircuitMul" => Some(Self::CircuitMul),
+            "Gas" => Some(Self::Gas),
+            "System" => Some(Self::System),
+            "ContractState" => Some(Self::ContractState),
             _ if s.contains("()") => Some(Self::Unit),
             _ if s.contains("Snapshot") => Some(Self::Snapshot),
             _ if s.contains("ComponentState") => Some(Self::ComponentState),
@@ -131,9 +141,9 @@ impl EEnumType {
     pub fn from_str(s: &str) -> Option<Self> {
         // Handle predefined enums like PanicResult, Option, Result
         match s {
-            s if s.contains("PanicResult") => Some(Self::PanicResult),
-            s if s.contains("Option") => Some(Self::Option),
-            s if s.contains("Result") => Some(Self::Result),
+            s if s.starts_with("PanicResult") => Some(Self::PanicResult),
+            s if s.starts_with("Option") => Some(Self::Option),
+            s if s.starts_with("Result") => Some(Self::Result),
             _ => None,
         }
     }
@@ -143,14 +153,16 @@ impl EDataType {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
             return Self::Primitive(primitive);
         }
-        if s.starts_with("core::array::Array::<")
-            || s.starts_with("@core::array::Array::<")
-            || s.starts_with("core::array::Span::<")
+        if s.starts_with("Array::<")
+            || s.starts_with("Array<")
+            || s.starts_with("Span::<")
+            || s.starts_with("Span<")
         {
-            let inner_type = &s[s.find("::<").unwrap() + 3..s.len() - 1];
+            let inner_start_index = s.find('<').unwrap() + 1;
+            let inner_type = &s[inner_start_index..s.len() - 1];
             return Self::Array(Box::new(Self::from_str(inner_type, enum_items)));
         }
-        if s.starts_with("Tuple<") {
+        if s.starts_with("Tuple") {
             let inner_types = extract_inner_types(s);
             return Self::Tuple(inner_types);
         }

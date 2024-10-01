@@ -1,7 +1,7 @@
 use blockifier::abi::abi_utils::selector_from_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
-use walnut_shared::{Datas, EnumItems, EventItems, StructItems};
+use walnut_shared::{simplify_type_name, Datas, EnumItems, EventItems, StructItems};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,
@@ -148,9 +148,10 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_member_name = simplify_type_name(member_type);
                         let data = Datas {
                             names: member_name.to_string(),
-                            types: member_type.to_string(),
+                            types: simplified_member_name.to_string(),
                         };
                         datas.push(data);
                     }
@@ -246,9 +247,10 @@ impl AbiProcessor {
                             .push(name.clone());
                     }
                     if let Some(Value::String(arg_type)) = input_obj.get("type") {
+                        let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_arguments_types
                             .get_or_insert(Vec::new())
-                            .push(arg_type.clone());
+                            .push(simplified_arg_type.clone());
                     }
                 }
             }
@@ -260,9 +262,10 @@ impl AbiProcessor {
             for output in outputs {
                 if let Value::Object(output_obj) = output {
                     if let Some(Value::String(arg_type)) = output_obj.get("type") {
+                        let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_return_result_types
                             .get_or_insert(Vec::new())
-                            .push(arg_type.clone());
+                            .push(simplified_arg_type.clone());
                     }
                 }
             }

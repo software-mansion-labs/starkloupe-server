@@ -155,7 +155,7 @@ fn decode_struct_item(
     if let Some(struct_items) = struct_items {
         if let Some(struct_item) = struct_items
             .iter()
-            .find(|item| item.name.contains(&*data_type))
+            .find(|item| item.name.contains(data_type))
         {
             let decoded_struct = decode_datas(
                 datas,
@@ -198,14 +198,15 @@ fn calldata_array(
 ) -> Value {
     let mut decoded_array = Vec::new();
 
-    let array_length_hex = datas.get(*data_index).map(|s| s.as_str()).unwrap_or("0");
-    let array_length =
-        usize::from_str_radix(array_length_hex.trim_start_matches("0x"), 16).unwrap_or(0);
+    let array_length = match datas.get(*data_index) {
+        Some(length) => usize::from_str_radix(length.trim_start_matches("0x"), 16).unwrap_or(0),
+        None => 0,
+    };
     *data_index += 1;
 
     for _ in 0..array_length {
         // Decode each item based on its type
-        let mut decoded_item =
+        let decoded_item =
             decode_struct_item(struct_items, enum_items, datas, &inner_type, data_index);
 
         let is_empty = match &decoded_item {

@@ -251,8 +251,6 @@ fn internal_array(
     data_type: &str,
 ) -> Value {
     let mut decoded_array = Vec::new();
-    dbg!(&data_index);
-    dbg!(&inner_type);
     if !relocated_memory.is_empty() && *data_index + 1 < datas.len() {
         let mut extracted_values = Vec::new();
         extracted_values = datas[..*data_index].to_vec();
@@ -263,8 +261,6 @@ fn internal_array(
         datas.clear();
         datas.extend(extracted_values);
     }
-    dbg!(&datas);
-    dbg!(&data_index);
 
     let array_length = match datas.get(*data_index) {
         Some(str_value) => str_value.parse::<usize>().unwrap_or(0),
