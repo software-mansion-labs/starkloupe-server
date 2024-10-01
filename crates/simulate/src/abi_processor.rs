@@ -83,7 +83,7 @@ impl AbiProcessor {
     }
 
     fn process_abi_event_variants(&mut self, obj: &Map<String, Value>) {
-        if let Some(Value::String(name)) = obj.get("name") {
+        if let Some(Value::String(_name)) = obj.get("name") {
             if let Some(Value::Array(event_members)) = obj.get("variants") {
                 let mut datas = Vec::new();
                 for member in event_members {
@@ -97,10 +97,10 @@ impl AbiProcessor {
                         datas.push(data);
                     }
                 }
-                let event_item = EventItems {
-                    name: name.clone(),
-                    members: datas,
-                };
+                // let event_item = EventItems {
+                //     name: name.clone(),
+                //     members: datas,
+                // };
                 //self.event_items.push(event_item);
             }
         }

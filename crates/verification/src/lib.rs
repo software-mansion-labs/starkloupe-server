@@ -9,19 +9,17 @@ use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
 use sqlx::Type;
-use starknet::core::types::FieldElement;
+use starknet::core::types::Felt;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use time::PrimitiveDateTime;
 use uuid::Uuid;
 
-pub const SUPPORTED_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0)];
-
 /// The key is a `String` representing the class hash.
 /// The value is a `Result` containing a tuple with the following elements:
 /// - `String`: The class name.
-/// - `Vec<FieldElement>`: The program from the network.
+/// - `Vec<Felt>`: The program from the network.
 /// - `(u32, u32, u32)`: The Cairo version from the network.
 /// - `Option<ContractClass>`: The Sierra contract class compiled from the source code.
 /// - `Option<PathBuf>`: The path to the debug info file compiled from the source code.
@@ -30,7 +28,7 @@ type ClassVerificationData = HashMap<
     String,
     Result<(
         String,
-        Vec<FieldElement>,
+        Vec<Felt>,
         (u32, u32, u32),
         Option<ContractClass>,
         Option<PathBuf>,

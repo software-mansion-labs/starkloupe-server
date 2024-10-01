@@ -1,6 +1,5 @@
 use anyhow::{Error, Result};
 use byteorder::{ByteOrder, LittleEndian};
-use cairo_felt::{Felt252, PRIME_STR};
 use cairo_lang_casm::{
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
@@ -13,17 +12,18 @@ use cairo_lang_sierra_to_casm::{
 };
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
-    felt252_serde::sierra_from_felt252s,
 };
 use cairo_vm::{
     types::instruction::{Instruction, Op1Addr},
-    vm::{decoding::decoder::decode_instruction, trace::trace_entry::TraceEntry},
+    utils::PRIME_STR,
+    vm::{decoding::decoder::decode_instruction, trace::trace_entry::RelocatedTraceEntry},
 };
 use itertools::chain;
 use num_bigint::BigUint;
 use serde::Serialize;
-use starknet_api::hash::StarkFelt;
+use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
+use walnut_shared::felt252_serde::sierra_from_felt252s;
 
 pub fn compile_sierra_contract_class(
     contract_class: ContractClass,
@@ -82,13 +82,13 @@ pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<us
 }
 
 pub fn get_pc_mappings(
-    relocated_memory: &Vec<Option<Felt252>>,
-    vm_trace: &Vec<TraceEntry>,
+    relocated_memory: &Vec<Option<Felt>>,
+    vm_trace: &Vec<RelocatedTraceEntry>,
 ) -> Result<(HashMap<usize, Instruction>, HashMap<usize, usize>)> {
     let max_pc_entry = vm_trace.iter().max_by(|a, b| a.pc.cmp(&b.pc));
 
-    let max_pc = match max_pc_entry {
-        Some(max_entry) => max_entry.pc,
+    let max_pc: usize = match max_pc_entry {
+        Some(max_entry) => max_entry.pc.try_into()?,
         None => {
             println!("No entries in the trace");
             0
@@ -109,8 +109,13 @@ pub fn get_pc_mappings(
 
         let (instruction_encoding_felt, _) = get_instruction_encoding(pc, &relocated_memory)
             .expect("Failed to get instruction encoding");
-        let instruction_encoding_bytes_le = instruction_encoding_felt.to_le_bytes();
+        let instruction_encoding_bytes_le = instruction_encoding_felt.to_bytes_le();
         let instruction_encoding_u64 = LittleEndian::read_u64(&instruction_encoding_bytes_le[..]);
+
+        // TODO: Fix: can't convert instruction to u64 in transactions with Dojo world
+        // let instruction_encoding_u64 = instruction_encoding_felt.to_u64().ok_or_else(|| anyhow::anyhow!("Failed to convert instruction encoding to u64"))?;
+
+        // TODO: Fix: can't decode instruction in transactions with Dojo world
         let instruction = decode_instruction(instruction_encoding_u64)?;
         pc_inst_map.insert(pc, instruction.clone());
         if instruction.op1_addr == Op1Addr::Imm {
@@ -156,8 +161,8 @@ pub fn get_pc_to_ptr_sys_call_mappings(
 // pc + 1, if it exists in the memory).
 pub fn get_instruction_encoding(
     pc: usize,
-    memory: &[Option<Felt252>],
-) -> Result<(Felt252, Option<Felt252>)> {
+    memory: &[Option<Felt>],
+) -> Result<(Felt, Option<Felt>)> {
     if memory[pc].is_none() {
         return Err(Error::msg("Memory at pc is None"));
     }
@@ -208,11 +213,6 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
             .map(|func| func.to_string())
             .collect(),
     }
-}
-
-pub fn felt_to_stark_felt(felt: &Felt252) -> StarkFelt {
-    let biguint = format!("{:#x}", felt.to_biguint());
-    StarkFelt::try_from(biguint.as_str()).expect("Felt252 must be in StarkFelt's range.")
 }
 
 pub fn is_panic_result(return_type: &Option<String>) -> bool {

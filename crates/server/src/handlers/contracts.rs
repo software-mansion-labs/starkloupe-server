@@ -6,17 +6,16 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use starknet::core::types::{BlockId, BlockTag, FieldElement};
-use starknet::providers::Provider;
+use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
+use starknet_old::core::types as starknet_old_types;
+use starknet_providers::Provider;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use utoipa::ToSchema;
 use verification::{db::fetch_verified_class, s3::fetch_verified_class_with_data};
-use walnut_shared::extract_chain_id;
-use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client, pad_field_element_to_hex_string_length66,
-};
+use walnut_shared::{chain_id_to_readable_string, create_rpc_client, field_element_to_felt};
+use walnut_shared::{extract_chain_id, felt_to_field_element};
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct ContractResponseWithSourceCode {
@@ -73,12 +72,12 @@ async fn fetch_contract_data(
     let provider_client = create_rpc_client(chain_id);
     let class_hash = provider_client
         .get_class_hash_at(
-            BlockId::Tag(BlockTag::Latest),
-            FieldElement::from_str(contract_address).ok()?,
+            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+            felt_to_field_element(Felt::from_str(contract_address).ok()?),
         )
         .await
         .ok()?;
-    let class_hash_str = pad_field_element_to_hex_string_length66(class_hash);
+    let class_hash_str = field_element_to_felt(class_hash).to_fixed_hex_string();
 
     if let Ok(_is_verified) = fetch_verified_class(&state.db_pool, class_hash_str.clone()).await {
         let source_code = if query_params.include_source_code.unwrap_or(false) {

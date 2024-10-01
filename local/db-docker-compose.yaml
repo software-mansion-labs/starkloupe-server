@@ -1,0 +1,18 @@
+networks:
+  walnut-dev:
+
+services:
+  walnut_postgres:
+    restart: always
+    container_name: walnut_postgres
+    image: postgres:17.0-alpine
+    volumes:
+      - ./docker-volumes/postgres:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=walnut
+    networks:
+      - walnut-dev
+    ports:
+      - 1234:5432

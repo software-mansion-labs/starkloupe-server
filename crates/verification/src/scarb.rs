@@ -8,7 +8,9 @@ use std::{env, fs};
 use tracing::error;
 
 use crate::utils::Manifest;
-use crate::{ClassVerificationData, SUPPORTED_VERSIONS};
+use crate::ClassVerificationData;
+
+const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0), (2, 8, 2)];
 
 pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
@@ -44,24 +46,22 @@ pub fn compile_with_scarb(
     tmp_dir: &PathBuf,
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
-    match starknet_version {
-        version if SUPPORTED_VERSIONS.contains(&version) => {
-            let scarb_path = match version {
-                (2, 6, 3) => "binaries/scarb/scarb_cairo_v_2_6_3",
-                (2, 6, 4) => "binaries/scarb/scarb_cairo_v_2_6_4",
-                (2, 7, 0) => "binaries/scarb/scarb_cairo_v_2_7_0",
-                _ => unreachable!(),
-            };
-            run_scarb_build(tmp_dir, scarb_path)?;
-        }
-        _ => {
-            error!(
-                "Unsupported Cairo version {}.{}.{}",
-                starknet_version.0, starknet_version.1, starknet_version.2
-            );
-            return Err(anyhow::anyhow!("Unsupported Cairo version. Currently, we support versions 2.6.3, 2.6.4, 2.7.0 and will add support for more versions soon. Contact us if you need support for a different version: https://t.me/walnuthq"));
-        }
-    };
+    if !SUPPORTED_CAIRO_VERSIONS.contains(&starknet_version) {
+        error!(
+            "Unsupported Cairo version {}.{}.{}",
+            starknet_version.0, starknet_version.1, starknet_version.2
+        );
+        return Err(anyhow::anyhow!(
+            "Unsupported Cairo version. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            get_supported_cairo_versions()
+        ));
+    }
+
+    let scarb_path = format!(
+        "binaries/scarb/scarb_cairo_v_{}_{}_{}",
+        starknet_version.0, starknet_version.1, starknet_version.2
+    );
+    run_scarb_build(tmp_dir, &scarb_path)?;
 
     for (class_hash, class_result) in class_verification_data.iter_mut() {
         let (class_name, _, _, _, _, _) = match class_result.as_ref() {
@@ -101,7 +101,7 @@ pub fn compile_with_scarb(
         };
 
         let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
-            version if SUPPORTED_VERSIONS.contains(&version) => {
+            version if SUPPORTED_CAIRO_VERSIONS.contains(&version) => {
                 Some(tmp_dir.join("target/dev").join(format!(
                     "{}_{}.contract_class_debug.json",
                     manifest.package_name, class_name
@@ -125,4 +125,12 @@ pub fn compile_with_scarb(
     }
 
     Ok(())
+}
+
+fn get_supported_cairo_versions() -> String {
+    SUPPORTED_CAIRO_VERSIONS
+        .iter()
+        .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

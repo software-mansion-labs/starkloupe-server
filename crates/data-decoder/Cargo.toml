@@ -9,3 +9,4 @@ serde_json.workspace = true
 walnut-shared.workspace = true
 regex.workspace = true
 tracing.workspace = true
+starknet-types-core.workspace = true

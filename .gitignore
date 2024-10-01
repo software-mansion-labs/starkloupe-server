@@ -6,3 +6,5 @@ tmp
 .cache
 
 binaries/
+
+local/docker-volumes

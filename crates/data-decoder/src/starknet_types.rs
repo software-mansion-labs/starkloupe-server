@@ -9,7 +9,6 @@ pub enum EDataType {
     Array(Box<EDataType>),
     Struct(String),
     Tuple(Vec<String>),
-    SystemEnum(EEnumType),
     UserEnum(String),
 }
 
@@ -72,7 +71,6 @@ impl fmt::Display for EDataType {
                     inner_types.iter().map(|t| format!("{:?}", t)).collect();
                 write!(f, "Tuple<{}>", formatted_types.join(", "))
             }
-            EDataType::SystemEnum(name) => write!(f, "{:?}", name),
             EDataType::UserEnum(name) => write!(f, "{}", name),
         }
     }
@@ -155,9 +153,6 @@ impl EDataType {
         if s.starts_with("Tuple<") {
             let inner_types = extract_inner_types(s);
             return Self::Tuple(inner_types);
-        }
-        if let Some(enum_type) = EEnumType::from_str(s) {
-            return Self::SystemEnum(enum_type);
         }
         if let Some(items) = enum_items {
             if items.iter().any(|item| item.name == s) {

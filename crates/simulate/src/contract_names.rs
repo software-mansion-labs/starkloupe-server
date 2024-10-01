@@ -2,16 +2,15 @@ use crate::EventTrace;
 use crate::SimulationCallTrace;
 use futures::future::join_all;
 use serde_json::Value;
-use starknet::{
-    core::types::{BlockId, BlockTag, FieldElement, FunctionCall},
-    macros::selector,
-    providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider},
-};
-use starknet_api::{
-    core::{ChainId, ContractAddress},
-    hash::StarkFelt,
-};
+use starknet::core::types::Felt;
+use starknet::macros::selector;
+use starknet_api::core::{ChainId, ContractAddress};
+use starknet_old::core::types as starknet_old_types;
+use starknet_providers::jsonrpc::HttpTransport;
+use starknet_providers::JsonRpcClient;
+use starknet_providers::Provider;
 use std::collections::{HashMap, HashSet};
+use walnut_shared::felt_to_field_element;
 use walnut_shared::{bytes_to_text, get_voyager_api_url};
 
 pub struct ContractNamesFetcher {
@@ -72,23 +71,18 @@ impl ContractNamesFetcher {
     }
 
     async fn fetch_token_contract_names(&self) -> HashMap<ContractAddress, ContractName> {
-        let name_method_selector: FieldElement = selector!("name").into();
-        let symbol_method_selector: FieldElement = selector!("symbol").into();
+        let name_method_selector: Felt = selector!("name").into();
+        let symbol_method_selector: Felt = selector!("symbol").into();
 
         let futures = self.token_addresses.iter().map(|token_contract_address| {
-            let contract_address_felt: StarkFelt = (*token_contract_address).into();
-            let contract_address_field_element: FieldElement = contract_address_felt.into();
+            let contract_address_felt: Felt = (*token_contract_address).into();
 
             async move {
-                let token_name_future = self.query_contract_and_decode(
-                    contract_address_field_element,
-                    name_method_selector,
-                );
+                let token_name_future =
+                    self.query_contract_and_decode(contract_address_felt, name_method_selector);
 
-                let token_symbol_future = self.query_contract_and_decode(
-                    contract_address_field_element,
-                    symbol_method_selector,
-                );
+                let token_symbol_future =
+                    self.query_contract_and_decode(contract_address_felt, symbol_method_selector);
 
                 let (token_name, token_symbol) =
                     futures::join!(token_name_future, token_symbol_future);
@@ -114,8 +108,7 @@ impl ContractNamesFetcher {
         voyager_api_url: String,
     ) -> HashMap<ContractAddress, ContractName> {
         let futures = self.contract_addresses.iter().map(|contract_address| {
-            let contract_address_felt: StarkFelt = (*contract_address).into();
-            let contract_address_string: String = contract_address_felt.to_string();
+            let contract_address_string: String = (*contract_address).to_string();
             let voyager_api_url = voyager_api_url.clone();
             async move {
                 let contract_name_future =
@@ -139,18 +132,18 @@ impl ContractNamesFetcher {
 
     async fn query_contract_and_decode(
         &self,
-        token_contract_address: FieldElement,
-        entry_point_selector: FieldElement,
+        token_contract_address: Felt,
+        entry_point_selector: Felt,
     ) -> Option<String> {
         let call_result = self
             .provider_client
             .call(
-                FunctionCall {
-                    contract_address: token_contract_address,
-                    entry_point_selector,
+                starknet_old_types::FunctionCall {
+                    contract_address: felt_to_field_element(token_contract_address),
+                    entry_point_selector: felt_to_field_element(entry_point_selector),
                     calldata: vec![],
                 },
-                BlockId::Tag(BlockTag::Latest),
+                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
             )
             .await;
         if let Ok(call_result) = call_result {
