@@ -1,10 +1,33 @@
 use serde_json::{json, map::Map, Value};
 
+pub const SKIP_BUILTIN_TYPES: &[&str] = &[
+    "Const",
+    "Step",
+    "Hole",
+    "GasBuiltin",
+    "Unit",
+    "Snapshot",
+    "ContractState",
+    "ComponentState",
+    "Bitwise",
+    "BuiltinCosts",
+    "EcOp",
+    "RangeCheck",
+    "SegmentArena",
+    "Poseidon",
+    "Pedersen",
+    "RangeCheck96",
+    "CircuitAdd",
+    "CircuitMul",
+    "Gas",
+    "System",
+];
+
 pub fn create_result_obj(
     names: &[String],
     index: usize,
     data_type: &str,
-    value: Value, // Change this to accept Value directly
+    value: Value,
 ) -> Map<String, Value> {
     let mut result_obj = Map::new();
 

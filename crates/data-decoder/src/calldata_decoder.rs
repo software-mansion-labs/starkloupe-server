@@ -1,6 +1,6 @@
 use crate::common::create_result_obj;
 use crate::starknet_types::EDataType;
-use serde_json::{json, map::Map, Value};
+use serde_json::{map::Map, Value};
 use tracing::{info, warn};
 use walnut_shared::{EnumItems, StructItems};
 
@@ -20,19 +20,6 @@ pub fn decode_datas(
         };
         let e_data_type = EDataType::from_str(data_type, enum_items);
         match e_data_type {
-            EDataType::System(_) => {
-                let values: Value = datas[*data_index..]
-                    .iter()
-                    .map(|data| {
-                        let value = json!(data);
-                        *data_index += 1;
-                        value
-                    })
-                    .collect();
-                result.push(Value::Object(create_result_obj(
-                    names, index, data_type, values,
-                )));
-            }
             EDataType::Primitive(_) => {
                 let data = match datas.get(*data_index) {
                     Some(value) => value.clone(),
@@ -76,14 +63,14 @@ pub fn decode_datas(
                 *data_index += 1;
                 if let Some(enum_items) = enum_items {
                     for enum_item in enum_items {
-                        if enum_item.name.contains(&*data_type) {
+                        if enum_item.name.contains(data_type) {
                             if let Some(enum_member_item) = enum_item.members.get(enum_index) {
                                 let variant_name = enum_member_item.names.clone();
                                 let enum_type = enum_member_item.types.clone();
                                 let decoded_values = decode_datas(
-                                    &datas,
-                                    &vec![enum_type],
-                                    &vec![variant_name.clone()],
+                                    datas,
+                                    &[enum_type],
+                                    &[variant_name.clone()],
                                     struct_items,
                                     Some(enum_items),
                                     data_index,
@@ -120,7 +107,7 @@ pub fn decode_datas(
 
                 let mut decoded_data = Map::new();
                 for (index, item) in decoded_inner_values.iter().enumerate() {
-                    decoded_data.insert(index.to_string(), item.clone()); // Insert with index as the key
+                    decoded_data.insert(index.to_string(), item.clone());
                 }
 
                 result.push(Value::Object(create_result_obj(
@@ -205,7 +192,6 @@ fn calldata_array(
     *data_index += 1;
 
     for _ in 0..array_length {
-        // Decode each item based on its type
         let decoded_item =
             decode_struct_item(struct_items, enum_items, datas, &inner_type, data_index);
 
@@ -218,14 +204,9 @@ fn calldata_array(
         if is_empty {
             let data = match datas.get(*data_index) {
                 Some(value) => value.to_string(),
-                None => {
-                    // Handle the case when the data is missing (e.g., logging or fallback)
-                    //warn!("No data found at index {}", *data_index);
-                    "None".to_string()
-                }
+                None => "None".to_string(),
             };
             *data_index += 1;
-
             decoded_array.push(Value::String(data));
         } else {
             decoded_array.push(decoded_item);

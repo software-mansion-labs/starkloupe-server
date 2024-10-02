@@ -37,8 +37,8 @@ pub struct DebuggerExecutionTraceEntryWithContractCall {
 pub struct DebuggerExecutionTraceEntryWithLocation {
     pub sierra_index: usize,
     pub location_index: usize,
-    pub results: Vec<InternalFnCallIO>,
-    pub arguments: Vec<InternalFnCallIO>,
+    pub results: Option<Value>,
+    pub arguments: Option<Value>,
     pub function_id: Option<String>,
 }
 
@@ -177,7 +177,7 @@ pub fn get_internal_call_trace(
                 None => (Vec::new(), Vec::new()),
             };
 
-            tree.set_results_to_current_node(results.clone(), results_decoded);
+            tree.set_results_to_current_node(results.clone(), results_decoded.clone());
             // Return to the parent function call
             tree.move_to_parent();
         } else {
@@ -207,8 +207,8 @@ pub fn get_internal_call_trace(
                         debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
                             DebuggerExecutionTraceEntryWithLocation {
                                 sierra_index,
-                                results: results.clone(),
-                                arguments: arguments.clone(),
+                                results: Some(json!(results_decoded.clone())),
+                                arguments: Some(json!(arguments_decoded.clone())),
                                 location_index,
                                 function_id: Some(parent_function_id.clone()),
                             },
@@ -226,8 +226,9 @@ pub fn get_internal_call_trace(
                                 matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
                             }) {
                                 last_with_location.function_id = Some(parent_function_id.clone());
-                                last_with_location.results = results.clone();
-                                last_with_location.arguments = arguments.clone();
+                                last_with_location.results = Some(json!(results_decoded.clone()));
+                                last_with_location.arguments =
+                                    Some(json!(arguments_decoded.clone()));
                             }
                         }
                     // If current step has a different Cairo location than the last step with Cairo location
@@ -235,8 +236,8 @@ pub fn get_internal_call_trace(
                         debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
                             DebuggerExecutionTraceEntryWithLocation {
                                 sierra_index,
-                                results: results.clone(),
-                                arguments: arguments.clone(),
+                                results: Some(json!(results_decoded.clone())),
+                                arguments: Some(json!(arguments_decoded.clone())),
                                 location_index,
                                 function_id: Some(parent_function_id.clone()),
                             },

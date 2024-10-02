@@ -1,9 +1,13 @@
 use crate::common::create_result_obj;
 use crate::starknet_types::EDataType;
-use serde_json::{json, map::Map, Value};
+use crate::{simplify_type_name, skip_builtin_type_declaration};
+use cairo_lang_sierra::ids::GenericTypeId;
+use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
+use fancy_regex::Regex;
+use serde_json::{map::Map, Value};
 use starknet_types_core::felt::Felt as Felt252;
 use tracing::{info, warn};
-use walnut_shared::{EnumItems, StructItems};
+use walnut_shared::{Datas, EnumItems, StructItems};
 
 pub fn internal_decode_datas(
     datas: &mut Vec<String>,
@@ -22,19 +26,6 @@ pub fn internal_decode_datas(
         };
         let e_data_type = EDataType::from_str(data_type, enum_items);
         match e_data_type {
-            EDataType::System(_) => {
-                let values: Value = datas[*data_index..]
-                    .iter()
-                    .map(|data| {
-                        let value = json!(data);
-                        *data_index += 1;
-                        value
-                    })
-                    .collect();
-                result.push(Value::Object(create_result_obj(
-                    names, index, data_type, values,
-                )));
-            }
             EDataType::Primitive(_) => {
                 let data = match datas.get(*data_index) {
                     Some(value) => value.clone(),
@@ -43,10 +34,7 @@ pub fn internal_decode_datas(
                         "Invalid data".to_string()
                     }
                 };
-                dbg!("Increase data_index");
                 *data_index += 1;
-                dbg!(&data);
-                dbg!(&data_index);
                 result.push(Value::Object(create_result_obj(
                     names,
                     index,
@@ -83,7 +71,7 @@ pub fn internal_decode_datas(
                 *data_index += 1;
                 if let Some(enum_items) = enum_items {
                     for enum_item in enum_items {
-                        if enum_item.name.contains(&*data_type) {
+                        if enum_item.name.contains(data_type) {
                             if let Some(enum_member_item) = enum_item.members.get(enum_index) {
                                 let variant_name = enum_member_item.names.clone();
                                 let enum_type = enum_member_item.types.clone();
@@ -110,62 +98,64 @@ pub fn internal_decode_datas(
             }
             EDataType::Tuple(inner_types) => {
                 let mut decoded_inner_values = Vec::new();
-
-                // Check if there's only one inner type and more than one data element
-                // This happen from sierra return "type":
-                // "core::panics::PanicResult::<(core::bool,)>" -> Tuple<core::bool>",
-                if inner_types.len() == 1 && datas.len() > 1 {
-                    if let Some(last_data) = datas.last() {
-                        // Push the last element from datas into decoded_inner_values
-                        decoded_inner_values.push(json!(last_data));
+                if inner_types.len() == 1 && inner_types[0] == "bool" {
+                    // If it's a single inner type and it's a bool, we need toget last value from datas
+                    if let Some(last_value) = datas.pop() {
+                        decoded_inner_values.push(Value::String(last_value));
                     }
                 } else {
                     for inner_type in inner_types {
-                        if inner_type.starts_with("Option::<") {
-                            dbg!(&inner_type);
-                            if let Some(stripped_inner) = inner_type
-                                .strip_prefix("Option::<")
-                                .and_then(|s| s.strip_suffix('>'))
-                            {
-                                dbg!(&datas);
-                                dbg!(&data_index);
-                                dbg!(&stripped_inner);
-                                let _removed = datas.remove(*data_index);
-                                dbg!(&datas);
+                        if skip_builtin_type_declaration(inner_type.as_str()) {
+                            continue;
+                        }
+                        let inner_type_ref =
+                            if inner_type == "Unit" || inner_type.contains("ContractState") {
+                                Value::Array(vec![])
+                            } else if inner_type.starts_with("Option::<") {
+                                // Handle Option::<...> type
+                                if let Some(stripped_inner) = inner_type
+                                    .strip_prefix("Option::<")
+                                    .and_then(|s| s.strip_suffix('>'))
+                                {
+                                    // Decode the inner value inside Option
+                                    let _removed = datas.remove(*data_index); // Remove the current data element that  represent Option
+                                    let decoded_inner = internal_decode_datas(
+                                        datas,
+                                        &[stripped_inner.to_string()],
+                                        names,
+                                        struct_items,
+                                        enum_items,
+                                        data_index,
+                                        relocated_memory,
+                                    );
+                                    decoded_inner
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or(Value::String("None".to_string()))
+                                } else {
+                                    Value::String("None".to_string())
+                                }
+                            } else {
                                 let decoded_inner = internal_decode_datas(
                                     datas,
-                                    &[stripped_inner.to_string()],
+                                    &[inner_type.to_string()],
                                     names,
                                     struct_items,
                                     enum_items,
                                     data_index,
                                     relocated_memory,
                                 );
-                                if let Some(inner_value) = decoded_inner.first() {
-                                    decoded_inner_values.push(inner_value.clone());
-                                }
-                            }
-                        } else {
-                            let decoded_inner = internal_decode_datas(
-                                datas,
-                                &[inner_type.to_string()],
-                                names,
-                                struct_items,
-                                enum_items,
-                                data_index,
-                                relocated_memory,
-                            );
-                            // Push the first decoded value for other cases
-                            if let Some(inner_value) = decoded_inner.first() {
-                                decoded_inner_values.push(inner_value.clone());
-                            }
-                        }
+                                decoded_inner.first().cloned().unwrap_or(Value::Null)
+                            };
+
+                        decoded_inner_values.push(inner_type_ref);
                     }
                 }
-                let mut decoded_data = Map::new();
-                for (index, item) in decoded_inner_values.iter().enumerate() {
-                    decoded_data.insert(index.to_string(), item.clone()); // Insert with index as the key
-                }
+                let decoded_data: Map<String, Value> = decoded_inner_values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, item)| (index.to_string(), item))
+                    .collect();
 
                 result.push(Value::Object(create_result_obj(
                     names,
@@ -227,10 +217,11 @@ fn decode_internal_struct_item(
                 relocated_memory,
             );
 
-            let mut result = Map::new();
-            for (index, item) in decoded_struct.iter().enumerate() {
-                result.insert(index.to_string(), item.clone()); // Insert with index as the key
-            }
+            let result: Map<String, Value> = decoded_struct
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| (index.to_string(), item))
+                .collect();
 
             // Return the constructed Value::Object
             return Value::Object(result);
@@ -255,7 +246,7 @@ fn internal_array(
         let mut extracted_values = Vec::new();
         extracted_values = datas[..*data_index].to_vec();
 
-        let memory_values = extract_memory_values(relocated_memory.as_ref(), datas, data_index);
+        let memory_values = extract_memory_values(relocated_memory, datas, data_index);
         extracted_values.extend(memory_values);
         extracted_values.extend(datas[*data_index + 2..].iter().cloned());
         datas.clear();
@@ -263,8 +254,8 @@ fn internal_array(
     }
 
     let array_length = match datas.get(*data_index) {
-        Some(str_value) => str_value.parse::<usize>().unwrap_or(0),
-        None => 0, // Fallback value if no string is found
+        Some(length) => length.parse::<usize>().unwrap_or(0),
+        None => 0,
     };
     *data_index += 1;
 
@@ -285,12 +276,11 @@ fn internal_array(
         };
 
         if is_empty {
-            let data = match datas.get(*data_index) {
-                Some(value) => value.to_string(),
-                None => "None".to_string(),
-            };
-            *data_index += 1;
-            decoded_array.push(Value::String(data));
+            if let Some(value) = datas.get(*data_index) {
+                let data = value.to_string();
+                *data_index += 1;
+                decoded_array.push(Value::String(data));
+            }
         } else {
             decoded_array.push(decoded_item);
         }
@@ -304,7 +294,7 @@ fn internal_array(
     ))
 }
 
-pub fn extract_memory_values(
+fn extract_memory_values(
     relocated_memory: &Vec<Option<Felt252>>,
     values: &[String],
     value_index: &usize,
@@ -351,7 +341,6 @@ pub fn extract_memory_values(
         let size = end_index - start_index;
         memory_values.push(size.to_string());
 
-        // Push the values from the memory, from start_index to end_index
         for index in start_index..end_index {
             if let Some(Some(inner_value)) = relocated_memory.get(index) {
                 memory_values.push(inner_value.to_string());
@@ -359,4 +348,100 @@ pub fn extract_memory_values(
         }
     }
     memory_values
+}
+
+pub fn build_data_items_from_type_declaration(
+    type_declaration: &Option<TypeDeclaration>,
+    type_declarations: &[TypeDeclaration],
+) -> (Option<Vec<EnumItems>>, Option<Vec<StructItems>>) {
+    let type_declaration = match type_declaration {
+        Some(decl) => decl,
+        None => return (None, None),
+    };
+
+    let mut enum_items: Vec<EnumItems> = Vec::new();
+    let mut variants: Vec<Datas> = Vec::new();
+    let mut struct_items: Vec<StructItems> = Vec::new();
+    let mut members: Vec<Datas> = Vec::new();
+
+    let struct_name = type_declaration
+        .id
+        .debug_name
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
+
+    let simplified_struct_name = simplify_type_name(struct_name.as_str());
+    for arg in &type_declaration.long_id.generic_args {
+        if let GenericArg::Type(concrete_type_id) = arg {
+            if let Some(nested_type_declaration) = type_declarations
+                .iter()
+                .find(|type_decl| type_decl.id.id == concrete_type_id.id)
+                .cloned()
+            {
+                let nested_type_name = nested_type_declaration
+                    .id
+                    .debug_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_string();
+                let simplified_nested_type_name = simplify_type_name(nested_type_name.as_str());
+
+                // Handle Enum types only if the main type is an Enum
+                if type_declaration.long_id.generic_id == GenericTypeId::from_string("Enum") {
+                    variants.push(Datas {
+                        names: "".to_string(),
+                        types: simplified_nested_type_name.clone(),
+                    });
+                    let enum_type_name = type_declaration
+                        .id
+                        .debug_name
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_string();
+                    let simplified_enum_type_name = simplify_type_name(enum_type_name.as_str());
+                    enum_items = vec![EnumItems {
+                        name: simplified_enum_type_name,
+                        members: variants.clone(),
+                    }];
+                }
+
+                // Handle Struct types for both Enum and Struct cases
+                members.push(Datas {
+                    names: "".to_string(),
+                    types: simplified_nested_type_name.clone(),
+                });
+
+                let (_, nested_struct_items) = build_data_items_from_type_declaration(
+                    &Some(nested_type_declaration),
+                    type_declarations,
+                );
+
+                if let Some(nested_struct_items) = nested_struct_items {
+                    struct_items.extend(nested_struct_items);
+                }
+            }
+        }
+    }
+
+    if !members.is_empty() {
+        struct_items.push(StructItems {
+            name: simplified_struct_name,
+            members,
+        });
+    }
+
+    (Some(enum_items), Some(struct_items))
+}
+
+pub fn clean_return_tuple_type(simplified_type_name: &str) -> String {
+    // Regex for matching and removing Option::<...>
+    let re_option = Regex::new(r"Option::<([^>]+)>").unwrap();
+
+    // Step 1: Remove `Option::<...>` and extract inner content
+    let cleaned_option_type = re_option
+        .replace_all(simplified_type_name, "$1")
+        .to_string();
+
+    cleaned_option_type
 }

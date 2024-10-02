@@ -1,7 +1,8 @@
 use blockifier::abi::abi_utils::selector_from_name;
+use data_decoder::simplify_type_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
-use walnut_shared::{simplify_type_name, Datas, EnumItems, EventItems, StructItems};
+use walnut_shared::{Datas, EnumItems, EventItems, StructItems};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,

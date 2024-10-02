@@ -10,7 +10,7 @@ use cairo_lang_casm::{
 use cairo_lang_sierra::{
     extensions::core::{CoreLibfunc, CoreType},
     ids::ConcreteTypeId,
-    program::{GenFunction, Program, StatementIdx},
+    program::{GenFunction, GenericArg, Program, StatementIdx},
     program_registry::ProgramRegistry,
 };
 use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
@@ -18,6 +18,10 @@ use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::internal_function_decoder::internal_decode_datas;
+use data_decoder::internal_function_decoder::{
+    build_data_items_from_type_declaration, clean_return_tuple_type,
+};
+use data_decoder::{simplify_type_name, skip_builtin_type_declaration};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
@@ -26,7 +30,6 @@ use serde_json::Value;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
-use walnut_shared::build_data_items_from_type_declaration;
 use walnut_shared::decode_felt;
 
 use crate::{
@@ -204,30 +207,37 @@ impl Mappings {
                         let type_id = &invoke_ref.ty;
                         if let Some(type_declaration) = type_declarations
                             .iter()
-                            .find(|type_decl| type_decl.id.id == type_id.id)
+                            .find(|type_decl| {
+                                let debug_name = type_decl.id.debug_name.as_deref().unwrap_or("");
+                                skip_builtin_type_declaration(debug_name) == false
+                                    && type_decl.id.id == type_id.id
+                            })
                             .cloned()
                         {
                             let (enum_items, struct_items) = build_data_items_from_type_declaration(
                                 &Some(type_declaration.clone()),
                                 &type_declarations,
                             );
+                            let simplified_type_name = simplify_type_name(type_names.as_str());
+                            arguments.push(InternalFnCallIO {
+                                type_name: Some(simplified_type_name.clone()),
+                                value: values.clone(),
+                            });
+
                             let mut data_index = 0;
                             let argument_decoded = internal_decode_datas(
                                 &mut values,
-                                &vec![type_names.clone()],
+                                &vec![simplified_type_name.clone()],
                                 &vec![],
                                 struct_items.as_ref(),
                                 enum_items.as_ref(),
                                 &mut data_index,
                                 relocated_memory,
                             );
-                            arguments.push(InternalFnCallIO {
-                                type_name: Some(type_names.clone()),
-                                value: values,
-                            });
+
                             if argument_decoded.is_empty() {
                                 arguments_decoded.push(json!({
-                                    "type_name": type_names,
+                                    "type_name": simplified_type_name,
                                     "value": []
                                 }));
                             } else {
@@ -299,7 +309,7 @@ impl Mappings {
                             &ApChange::Known(0),
                         );
 
-                        let result_type = self
+                        let mut result_type = self
                             .type_names
                             .get(&return_ref.ty)
                             .map(|n| n.to_string())
@@ -313,22 +323,45 @@ impl Mappings {
                                 .clone()
                                 .unwrap();
                             let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
-                            values = vec!["1".to_string(), panic_reason_decoded];
+                            result_type = "Panic".to_string();
+                            values = vec![panic_reason_decoded];
                         }
 
                         if let Some(type_declaration) = type_declarations
                             .iter()
-                            .find(|type_decl| type_decl.id.id == return_ref.ty.id)
+                            .find(|type_decl| {
+                                let debug_name = type_decl.id.debug_name.as_deref().unwrap_or("");
+                                skip_builtin_type_declaration(debug_name) == false
+                                    && type_decl.id.id == return_ref.ty.id
+                            })
                             .cloned()
                         {
                             let (enum_items, struct_items) = build_data_items_from_type_declaration(
                                 &Some(type_declaration.clone()),
                                 &type_declarations,
                             );
+                            let mut simplified_type_name = simplify_type_name(result_type.as_str());
+                            if values[0] == "0" {
+                                if let Some(GenericArg::Type(return_type)) =
+                                    type_declaration.long_id.generic_args.get(1)
+                                {
+                                    if let Some(debug_name) = &return_type.debug_name {
+                                        simplified_type_name = simplify_type_name(debug_name);
+                                    }
+                                }
+                                values.remove(0);
+                            }
+                            let final_return_type =
+                                clean_return_tuple_type(simplified_type_name.as_str());
+                            results.push(InternalFnCallIO {
+                                type_name: Some(final_return_type.clone()),
+                                value: values.clone(),
+                            });
+
                             let mut data_index = 0;
                             let result_decoded = internal_decode_datas(
                                 &mut values,
-                                &vec![result_type.clone()],
+                                &vec![simplified_type_name.to_string().clone()],
                                 &vec![],
                                 struct_items.as_ref(),
                                 enum_items.as_ref(),
@@ -336,13 +369,9 @@ impl Mappings {
                                 relocated_memory,
                             );
 
-                            results.push(InternalFnCallIO {
-                                type_name: Some(result_type.clone()),
-                                value: values,
-                            });
                             if result_decoded.is_empty() {
                                 results_decoded.push(json!({
-                                    "type_name": result_type,
+                                    "type_name": Some(final_return_type),
                                     "value": []
                                 }));
                             } else {
@@ -350,11 +379,6 @@ impl Mappings {
                                     .get(0)
                                     .map(|value| results_decoded.push(json!(value)));
                             }
-                        } else {
-                            results.push(InternalFnCallIO {
-                                type_name: Some(result_type),
-                                value: values,
-                            });
                         }
                     }
                 }

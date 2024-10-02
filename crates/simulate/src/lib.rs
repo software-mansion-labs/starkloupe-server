@@ -1104,6 +1104,8 @@ fn get_function_result(
                 &mut 0,
             );
             additional_info.function_result = Some(json!(decoded_result));
+        } else {
+            error!("Failed to decode return data");
         }
     }
 }

@@ -1,38 +1,14 @@
-use regex::Regex;
+use fancy_regex::Regex;
 use std::fmt;
 use walnut_shared::EnumItems;
 
 #[derive(Debug)]
 pub enum EDataType {
-    System(ESystemType),
     Primitive(EPrimitiveType),
     Array(Box<EDataType>),
     Struct(String),
     Tuple(Vec<String>),
     UserEnum(String),
-}
-
-#[derive(Debug)]
-pub enum ESystemType {
-    Const,
-    Step,
-    Hole,
-    GasBuiltin,
-    Unit,
-    Snapshot,
-    ContractState,
-    ComponentState,
-    Bitwise,
-    EcOp,
-    RangeCheck,
-    SegmentArena,
-    Poseidon,
-    Pedersen,
-    RangeCheck96,
-    CircuitAdd,
-    CircuitMul,
-    Gas,
-    System,
 }
 
 #[derive(Debug)]
@@ -55,6 +31,7 @@ pub enum EPrimitiveType {
     EthAddress,
     ClassHash,
     Bytes31,
+    Panic,
 }
 
 #[derive(Debug)]
@@ -67,44 +44,15 @@ pub enum EEnumType {
 impl fmt::Display for EDataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EDataType::System(system) => write!(f, "{:?}", system),
             EDataType::Primitive(primitive) => write!(f, "{:?}", primitive),
             EDataType::Array(inner_type) => write!(f, "Array<{:?}>", inner_type),
             EDataType::Struct(name) => write!(f, "{}", name),
             EDataType::Tuple(inner_types) => {
                 let formatted_types: Vec<String> =
                     inner_types.iter().map(|t| format!("{:?}", t)).collect();
-                write!(f, "Tuple<{}>", formatted_types.join(", "))
+                write!(f, "({})", formatted_types.join(", "))
             }
             EDataType::UserEnum(name) => write!(f, "{}", name),
-        }
-    }
-}
-
-impl ESystemType {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "Const" => Some(Self::Const),
-            "Step" => Some(Self::Step),
-            "Hole" => Some(Self::Hole),
-            "GasBuiltin" => Some(Self::GasBuiltin),
-            "Unit" => Some(Self::Unit),
-            "Bitwise" => Some(Self::Bitwise),
-            "EcOp" => Some(Self::EcOp),
-            "RangeCheck" => Some(Self::RangeCheck),
-            "SegmentArena" => Some(Self::SegmentArena),
-            "Poseidon" => Some(Self::Poseidon),
-            "Pedersen" => Some(Self::Pedersen),
-            "RangeCheck96" => Some(Self::RangeCheck96),
-            "CircuitAdd" => Some(Self::CircuitAdd),
-            "CircuitMul" => Some(Self::CircuitMul),
-            "Gas" => Some(Self::Gas),
-            "System" => Some(Self::System),
-            "ContractState" => Some(Self::ContractState),
-            _ if s.contains("()") => Some(Self::Unit),
-            _ if s.contains("Snapshot") => Some(Self::Snapshot),
-            _ if s.contains("ComponentState") => Some(Self::ComponentState),
-            _ => None,
         }
     }
 }
@@ -132,6 +80,7 @@ impl EPrimitiveType {
             "EthAddress" => Some(Self::EthAddress),
             "ClassHash" => Some(Self::ClassHash),
             "bytes31" => Some(Self::Bytes31),
+            "Panic" => Some(Self::Panic),
             _ => None,
         }
     }
@@ -153,16 +102,16 @@ impl EDataType {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
             return Self::Primitive(primitive);
         }
-        if s.starts_with("Array::<")
-            || s.starts_with("Array<")
-            || s.starts_with("Span::<")
+        if s.starts_with("Array<")
+            || s.starts_with("Array::<")
             || s.starts_with("Span<")
+            || s.starts_with("Span::<")
         {
             let inner_start_index = s.find('<').unwrap() + 1;
             let inner_type = &s[inner_start_index..s.len() - 1];
             return Self::Array(Box::new(Self::from_str(inner_type, enum_items)));
         }
-        if s.starts_with("Tuple") {
+        if s.starts_with("Tuple") || (s.starts_with("(") && s.ends_with(")")) {
             let inner_types = extract_inner_types(s);
             return Self::Tuple(inner_types);
         }
@@ -171,16 +120,13 @@ impl EDataType {
                 return Self::UserEnum(s.to_string());
             }
         }
-        if let Some(system) = ESystemType::from_str(s) {
-            return Self::System(system);
-        }
         Self::Struct(s.to_string())
     }
 }
 
 fn extract_inner_types(data_type: &str) -> Vec<String> {
     let re_inner_type = Regex::new(r"<\s*\(?\s*(.*[^\s\)])\s*\)?\s*>").unwrap();
-    if let Some(captures) = re_inner_type.captures(data_type) {
+    if let Ok(Some(captures)) = re_inner_type.captures(data_type) {
         let inner_content = captures.get(1).map_or("", |m| m.as_str());
         return inner_content
             .split(',')
