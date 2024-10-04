@@ -5,8 +5,6 @@ pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "Step",
     "Hole",
     "GasBuiltin",
-    "Unit",
-    "Snapshot",
     "ContractState",
     "ComponentState",
     "Bitwise",
@@ -21,6 +19,7 @@ pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "CircuitMul",
     "Gas",
     "System",
+    "()",
 ];
 
 pub fn create_result_obj(
@@ -30,14 +29,10 @@ pub fn create_result_obj(
     value: Value,
 ) -> Map<String, Value> {
     let mut result_obj = Map::new();
-
     if !names.is_empty() && !names[index].is_empty() {
         result_obj.insert("name".to_string(), json!(names[index]));
     }
     result_obj.insert("type".to_string(), json!(data_type));
-
-    // Directly insert the value (which could be Object, String, Array, etc.)
     result_obj.insert("value".to_string(), value);
-
     result_obj
 }
