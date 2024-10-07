@@ -6,10 +6,9 @@ use common::SKIP_BUILTIN_TYPES;
 use fancy_regex::Regex;
 
 pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
-    let simplified_type_name = simplify_type_name(type_name);
     SKIP_BUILTIN_TYPES
         .iter()
-        .any(|&builtin| simplified_type_name.starts_with(builtin))
+        .any(|&builtin| type_name.contains(builtin))
 }
 
 pub fn simplify_type_name(type_name: &str) -> String {

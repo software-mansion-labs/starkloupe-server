@@ -10,7 +10,7 @@ use cairo_lang_casm::{
 use cairo_lang_sierra::{
     extensions::core::{CoreLibfunc, CoreType},
     ids::ConcreteTypeId,
-    program::{GenFunction, Program, StatementIdx},
+    program::{GenFunction, Program, StatementIdx, TypeDeclaration},
     program_registry::ProgramRegistry,
 };
 use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
@@ -48,6 +48,7 @@ pub struct Mappings {
     pub type_sizes: TypeSizeMap,
     pub type_names: HashMap<ConcreteTypeId, SmolStr>,
     pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
+    pub type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration>,
 }
 
 impl Mappings {
@@ -82,6 +83,12 @@ impl Mappings {
             ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).unwrap();
         let type_sizes =
             get_type_size_map(&sierra_program, &sierra_program_registry).unwrap_or_default();
+        let mut type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration> = HashMap::new();
+
+        for declaration in &sierra_program.type_declarations {
+            type_declaration_map.insert(declaration.id.clone(), declaration.clone());
+        }
+
         // // Print relocated memory
         // let mut ordered_map: BTreeMap<usize, BigInt> = BTreeMap::new();
         // for (k, v) in &memory_map {
@@ -103,6 +110,7 @@ impl Mappings {
             type_sizes,
             type_names,
             sierra_statement_info: casm_program.debug_info.sierra_statement_info,
+            type_declaration_map,
         })
     }
 
@@ -183,7 +191,6 @@ impl Mappings {
     ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
         let mut arguments_decoded: Vec<Value> = Vec::new();
-        let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
                 StatementKindDebugInfo::Invoke(invoke_info) => {
@@ -213,7 +220,7 @@ impl Mappings {
                         let argument_decoded = internal_decode_datas(
                             &mut values,
                             type_id,
-                            type_declarations,
+                            &self.type_declaration_map,
                             relocated_memory,
                             &mut data_index,
                         );
@@ -270,7 +277,6 @@ impl Mappings {
     ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
         let mut results: Vec<InternalFnCallIO> = Vec::new();
         let mut results_decoded: Vec<Value> = Vec::new();
-        let type_declarations = &self.sierra_program.type_declarations;
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
             match &sierra_statement_info.additional_kind_info {
                 StatementKindDebugInfo::Return(return_info) => {
@@ -316,7 +322,7 @@ impl Mappings {
                             let result_decoded = internal_decode_datas(
                                 &mut values,
                                 type_id,
-                                type_declarations,
+                                &self.type_declaration_map,
                                 relocated_memory,
                                 &mut data_index,
                             );
