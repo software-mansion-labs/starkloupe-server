@@ -85,6 +85,12 @@ starknet-types-core = { version = "0.1.6", features = [
 ] }
 starknet-old = { package = "starknet", version = "0.10.0" }
 starknet = { git = "https://github.com/xJonathanLEI/starknet-rs", rev = "db1fa598232f0698d942cc974f481b5d888ac080" }
+sentry-tracing = "0.34.0"
+sentry-tower = { version = "0.34.0", features = [
+  "http",
+  "axum",
+  "axum-matched-path",
+] }
 
 # Cairo compiler
 cairo-lang-casm = "2.8.2"

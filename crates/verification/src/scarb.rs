@@ -8,6 +8,7 @@ use std::{env, fs};
 use tracing::error;
 
 use crate::utils::Manifest;
+
 use crate::ClassVerificationData;
 
 const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0), (2, 8, 2)];
@@ -47,12 +48,9 @@ pub fn compile_with_scarb(
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
     if !SUPPORTED_CAIRO_VERSIONS.contains(&starknet_version) {
-        error!(
-            "Unsupported Cairo version {}.{}.{}",
-            starknet_version.0, starknet_version.1, starknet_version.2
-        );
         return Err(anyhow::anyhow!(
-            "Unsupported Cairo version. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            "Unsupported Cairo version {}.{}.{}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            starknet_version.0, starknet_version.1, starknet_version.2,
             get_supported_cairo_versions()
         ));
     }

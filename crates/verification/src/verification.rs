@@ -11,7 +11,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
-use tracing::error;
+use tracing::{error, info};
 use uuid::Uuid;
 use walnut_shared::{felt_to_field_element, field_element_to_felt};
 
@@ -168,6 +168,41 @@ pub async fn initiate_verification(
         .execute(db_pool)
         .await
         .context("Failed to insert verification status entry")?;
+
+        match status {
+            EVerificationStatus::Pending => {
+                info!(
+                    class_hash = class_hash,
+                    verification_id = verification_status_id.to_string(),
+                    project_id = project_id,
+                    chain_id = chain_id,
+                    tags.verification_status = "pending",
+                    "Verification is pending",
+                );
+            }
+            EVerificationStatus::Success => {
+                info!(
+                    class_hash = class_hash,
+                    verification_id = verification_status_id.to_string(),
+                    project_id = project_id,
+                    chain_id = chain_id,
+                    tags.verification_status = "success",
+                    message = message,
+                    "Verification succeeded",
+                );
+            }
+            EVerificationStatus::Failed => {
+                error!(
+                    class_hash = class_hash,
+                    verification_id = verification_status_id.to_string(),
+                    project_id = project_id,
+                    chain_id = chain_id,
+                    tags.verification_status = "failed",
+                    "Verification failed: {}",
+                    message.clone().unwrap_or_default()
+                );
+            }
+        };
     }
 
     // Sort the classes to verify
@@ -223,6 +258,34 @@ pub async fn initiate_verification(
                     )
                     .execute(&db_pool_clone)
                     .await;
+
+                    match status {
+                        EVerificationStatus::Pending => {
+                            unreachable!();
+                        }
+                        EVerificationStatus::Success => {
+                            info!(
+                                class_hash = class_hash,
+                                verification_id = verification_status_id.to_string(),
+                                project_id = project_id,
+                                chain_id = chain_id,
+                                tags.verification_status = "success",
+                                message = message,
+                                "Verification succeeded",
+                            );
+                        }
+                        EVerificationStatus::Failed => {
+                            error!(
+                                class_hash = class_hash,
+                                verification_id = verification_status_id.to_string(),
+                                project_id = project_id,
+                                chain_id = chain_id,
+                                tags.verification_status = "failed",
+                                "Verification failed: {}",
+                                message.clone().unwrap_or_default()
+                            );
+                        }
+                    };
                 }
             }
             Err(e) => {
@@ -238,6 +301,18 @@ pub async fn initiate_verification(
                 )
                 .execute(&db_pool_clone)
                 .await;
+
+                for class_hash in &pending_class_hashes {
+                    error!(
+                        class_hash = class_hash,
+                        verification_id = verification_status_id.to_string(),
+                        project_id = project_id,
+                        chain_id = chain_id,
+                        tags.verification_status = "failed",
+                        "Verification failed: {}",
+                        e.to_string()
+                    );
+                }
             }
         }
     });

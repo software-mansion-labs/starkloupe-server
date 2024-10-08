@@ -5,18 +5,8 @@ extern crate dotenv;
 
 use app_state::AppState;
 use aws_config::meta::region::RegionProviderChain;
-use axum::{
-    body::Body,
-    extract::State,
-    http::{header, HeaderValue, Method, Request, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Response},
-    routing::get,
-    routing::post,
-    Router,
-};
+use axum::{routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
-use db::Project;
 use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
@@ -38,6 +28,8 @@ use crate::handlers::{
     verification::{get_verification_status_handler, verify_handler_with_rpc},
 };
 
+use sentry;
+
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
 // https://crates.io/crates/redis-macros
@@ -45,102 +37,20 @@ use crate::handlers::{
 // - https://github.com/tom-draper/api-analytics
 // https://docs.rs/axum-prometheus/latest/axum_prometheus/
 
-async fn auth_middleware<B>(
-    State(_state): State<Arc<AppState>>,
-    mut req: Request<B>,
-    next: Next<B>,
-) -> Result<Response, StatusCode> {
-    // TODO: We will get project from the DB.
-    if req.method() != Method::OPTIONS {
-        let project = match req.headers().get("x-api-key") {
-            Some(key) => {
-                if key == "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" {
-                    // Walnut Project
-                    Ok(Project {
-                        id: 1,
-                        name: String::from("Walnut"),
-                        slug: String::from("walnut"),
-                    })
-                } else if key == "walnut_YPuxeJ7eMTX_8yfAjTjfVvv3K1dyaRdZJF"
-                    || key == "walnut_9tkxeupzdAj_8K1zPzun4QaFaiGFQvZhmT"
-                {
-                    // Briq Project
-                    Ok(Project {
-                        id: 2,
-                        name: String::from("Briq"),
-                        slug: String::from("briq"),
-                    })
-                } else if key == "walnut_6mV1ro7dfrR_HmKxouxqXfVoSy37ip1caz" {
-                    // Jediswap
-                    Ok(Project {
-                        id: 3,
-                        name: String::from("Jediswap"),
-                        slug: String::from("jediswap"),
-                    })
-                } else if key == "walnut_LSBhhfrvdhy_CJUpRxe2hA7QHmPUMqhp33" {
-                    // Starknet Id
-                    Ok(Project {
-                        id: 4,
-                        name: String::from("Starknet Id"),
-                        slug: String::from("starknet-id"),
-                    })
-                } else if key == "walnut_NbiV2gLJ2yS_XPNHFEg51bMzYH2psq4chs" {
-                    // HH India: Satyam Bansal (@satyambnsal)
-                    Ok(Project {
-                        id: 5,
-                        name: String::from("@satyambnsal"),
-                        slug: String::from("satyambnsal"),
-                    })
-                } else if key == "walnut_Pqz5bFL2wSb_9uQZXpBXgLqEPZHTz04QzN" {
-                    // Carmine
-                    Ok(Project {
-                        id: 6,
-                        name: String::from("Carmine"),
-                        slug: String::from("carmine"),
-                    })
-                } else if key == "walnut_64vz74v5zPb_osGq4TZSEW3jD8DoK2TJx4" {
-                    Ok(Project {
-                        id: 7,
-                        name: String::from("LayerAkira"),
-                        slug: String::from("layerakira"),
-                    })
-                } else {
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-            }
-            _ => Err(StatusCode::UNAUTHORIZED),
-        }?;
-
-        req.extensions_mut().insert(project);
-    }
-
-    Ok(next.run(req).await)
-}
-
-async fn forward_post_request(url: &str, req: Request<Body>) -> impl IntoResponse {
-    let client = reqwest::Client::new();
-    let res = client.post(url).body(req.into_body()).send().await.unwrap();
-    let bytes = res.bytes().await.unwrap();
-
-    let mut response: Response<Body> = Response::new(bytes.into());
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-
-    response
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
+    let _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
+        release: sentry::release_name!(),
+        sample_rate: 1.0,
+        ..sentry::ClientOptions::default()
+    }));
+
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,server=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().json())
+        .with(tracing_subscriber::EnvFilter::new("info"))
+        .with(tracing_subscriber::fmt::layer())
+        .with(sentry_tracing::layer())
         .init();
 
     let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
@@ -197,8 +107,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/",
             axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),
         )
-        .layer(prometheus_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(sentry_tower::NewSentryLayer::<axum::http::Request<_>>::new_from_top())
+        .layer(prometheus_layer)
         .route("/_ah/warmup", get(|| async { "OK" }))
         .layer(CorsLayer::permissive());
 
