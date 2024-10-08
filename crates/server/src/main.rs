@@ -41,11 +41,13 @@ use sentry;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
-    let _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
-        release: sentry::release_name!(),
-        sample_rate: 1.0,
-        ..sentry::ClientOptions::default()
-    }));
+    if !cfg!(debug_assertions) {
+        let _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
+            release: sentry::release_name!(),
+            sample_rate: 1.0,
+            ..sentry::ClientOptions::default()
+        }));
+    }
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("info"))
