@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
+use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -116,10 +117,20 @@ pub async fn verify_handler(
 ) -> Response {
     let chain_id = match extract_chain_id(chain_id.as_str()) {
         Ok(chain_id) => chain_id,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                chain_id = chain_id.as_str(),
+                tags.verification_status = "failed",
+                "Verification failed: {}",
+                e.to_string(),
+            );
+            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+        }
     };
     let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
+    let contract_address_clone = payload.contract_address.clone();
+
     match verify_by_contract_address(
         &state.db_pool,
         &state.s3_client,
@@ -139,7 +150,15 @@ pub async fn verify_handler(
             );
             (StatusCode::OK, Json(response_message)).into_response()
         }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                contract_address = contract_address_clone,
+                tags.verification_status = "failed",
+                "Verification failed: {}",
+                e.to_string(),
+            );
+            (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+        }
     }
 }
 
@@ -201,17 +220,40 @@ pub async fn verify_handler_with_rpc(
 ) -> Response {
     let api_key = match get_api_token(&headers) {
         Ok(token) => token,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                tags.verification_status = "failed",
+                "Verification failed: {}",
+                e.to_string(),
+            );
+            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+        }
     };
 
     let project_id = match check_api_key(&api_key) {
         Ok(project_id) => project_id,
-        Err(e) => return (StatusCode::UNAUTHORIZED, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                api_key = api_key,
+                tags.verification_status = "failed",
+                "Verification failed: {}",
+                e.to_string(),
+            );
+            return (StatusCode::UNAUTHORIZED, Json(e.to_string())).into_response();
+        }
     };
 
     let rpc_url = match Url::parse(&payload.rpc_url) {
         Ok(url) => url,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                project_id = project_id,
+                tags.verification_status = "failed",
+                "Verification failed: Failed to parse RPC URL: {}",
+                e.to_string(),
+            );
+            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+        }
     };
 
     let provider_client = create_rpc_client_from_url(rpc_url);
@@ -266,6 +308,14 @@ pub async fn verify_handler_with_rpc(
             );
             (StatusCode::OK, Json(response_message)).into_response()
         }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(e) => {
+            error!(
+                project_id = project_id,
+                tags.verification_status = "failed",
+                "Verification failed: {}",
+                e.to_string(),
+            );
+            (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+        }
     }
 }
