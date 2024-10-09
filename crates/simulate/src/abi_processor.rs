@@ -149,10 +149,10 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let simplified_member_name = simplify_type_name(member_type);
+                        let simplified_member_type = simplify_type_name(member_type);
                         let data = Datas {
                             names: member_name.to_string(),
-                            types: simplified_member_name.to_string(),
+                            types: simplified_member_type.to_string(),
                         };
                         datas.push(data);
                     }

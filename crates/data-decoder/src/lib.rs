@@ -3,45 +3,61 @@ mod common;
 pub mod internal_function_decoder;
 mod starknet_types;
 use common::SKIP_BUILTIN_TYPES;
-use fancy_regex::Regex;
 
 pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
     SKIP_BUILTIN_TYPES
         .iter()
-        .any(|&builtin| type_name.contains(builtin))
+        .any(|&builtin| type_name.starts_with(builtin))
 }
 
-pub fn simplify_type_name(type_name: &str) -> String {
-    // Regex for removing leading namespaces
-    let namespace_regex = Regex::new(r"(\w+::)+(?=\w+)").unwrap();
-    // Regex for cleaning up generics
-    let generic_regex = Regex::new(r"<([^<>]*)>").unwrap();
-    // Regex for cleaning up parentheses with trailing commas
-    let bracket_spaces_regex = Regex::new(r"^\(\s*(.*?)\s*,*\s*\),*$").unwrap();
-
-    // Step 1: Remove leading namespaces using the namespace regex
-    let mut simplified = namespace_regex.replace_all(type_name, "").to_string();
-
-    // Step 2: Process generics by cleaning up inside the <...>
-    simplified = generic_regex
-        .replace_all(&simplified, |caps: &fancy_regex::Captures| {
-            let mut inside = caps.get(1).unwrap().as_str().trim().to_string();
-
-            // Step 3: Handle the edge case of parentheses with trailing commas
-            if let Ok(Some(bracket_match)) = bracket_spaces_regex.captures(&inside) {
-                inside = bracket_match.get(1).unwrap().as_str().trim().to_string();
+pub fn simplify_type_name(type_str: &str) -> String {
+    let type_str = if (type_str.starts_with("Tuple<")
+        || type_str.starts_with("core::panics::PanicResult::<"))
+        && type_str.ends_with(">")
+    {
+        if let Some(start) = type_str.find('<') {
+            let inner_type_str = &type_str[start + 1..type_str.len() - 1];
+            if inner_type_str.starts_with("(") && inner_type_str.ends_with(")") {
+                &inner_type_str[1..inner_type_str.len() - 1]
+            } else {
+                inner_type_str
             }
+        } else {
+            type_str
+        }
+    } else {
+        type_str
+    };
 
-            // Step 4: Remove leading namespaces inside generics
-            format!("<{}>", inside.replace(r"(\w+::)+", ""))
+    let types: Vec<&str> = type_str.split(", ").collect();
+
+    let parsed_types: Vec<String> = types
+        .iter()
+        .map(|&t| {
+            if let Some(first_angle_bracket) = t.find('<') {
+                let main_type = &t[..first_angle_bracket]; // Before first '<'
+                let inner_type = &t[first_angle_bracket + 1..t.len() - 1]; // Inside '<>'
+                let main_type_name = main_type
+                    .rsplit("::")
+                    .find(|&part| !part.is_empty())
+                    .unwrap_or(main_type);
+
+                let parsed_inner_type = simplify_type_name(inner_type); // Nested inner type
+                format!("{}<{}>", main_type_name, parsed_inner_type)
+            } else {
+                t.rsplit("::")
+                    .find(|&part| !part.is_empty())
+                    .unwrap_or(t)
+                    .to_string()
+            }
         })
-        .to_string();
-
-    // Step 5: Handle the specific case to remove <, ( from start and end
-    let surrounding_regex = Regex::new(r"^<(\(?)(.*?)(\)?)>$").unwrap();
-    if let Ok(Some(caps)) = surrounding_regex.captures(&simplified) {
-        return caps.get(2).unwrap().as_str().trim().to_string();
+        .collect();
+    if !parsed_types.is_empty() {
+        if parsed_types.len() > 1 {
+            return format!("({})", parsed_types.join(", "));
+        }
+        return parsed_types.first().unwrap().clone();
     }
 
-    simplified.trim().to_string()
+    String::new()
 }

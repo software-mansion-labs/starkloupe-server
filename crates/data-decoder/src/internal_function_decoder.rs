@@ -4,7 +4,6 @@ use crate::common::create_result_obj;
 use crate::{simplify_type_name, skip_builtin_type_declaration};
 use cairo_lang_sierra::ids::{ConcreteTypeId, GenericTypeId};
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
-use fancy_regex::Regex;
 use serde_json::json;
 use serde_json::Value;
 use starknet_types_core::felt::Felt as Felt252;
@@ -22,6 +21,7 @@ pub fn internal_decode_datas(
         let debug_name =
             simplify_type_name(type_declaration.id.debug_name.as_deref().unwrap_or(""));
         let generic_type_id = &type_declaration.long_id.generic_id;
+
         if !skip_builtin_type_declaration(debug_name.as_str()) {
             if type_declaration.long_id.generic_args.is_empty() {
                 if let Some(value) = values.get(*data_index) {
@@ -31,8 +31,8 @@ pub fn internal_decode_datas(
                         debug_name.as_str(),
                         Value::String(value.to_string()),
                     )));
+                    *data_index += 1;
                 }
-                *data_index += 1;
                 return result;
             }
             if *generic_type_id == GenericTypeId::from_string("Enum") {
@@ -74,12 +74,10 @@ pub fn internal_decode_datas(
                 }
             } else if *generic_type_id == GenericTypeId::from_string("Array") {
                 let mut array_length = 0;
-
                 if !relocated_memory.is_empty() && *data_index + 1 < values.len() {
                     let (size, memory_values) =
                         extract_memory_values(relocated_memory, values, data_index);
                     array_length = size;
-
                     values.splice(*data_index..*data_index + 2, memory_values);
                 }
 
@@ -222,8 +220,6 @@ fn extract_memory_values(
     values: &[String],
     value_index: &usize,
 ) -> (usize, Vec<String>) {
-    let mut size = 0;
-    let mut memory_values = Vec::new();
     if let (Some(start_index), Some(end_index)) = (
         values
             .get(*value_index)
@@ -233,34 +229,17 @@ fn extract_memory_values(
             .and_then(|v| v.parse::<usize>().ok()),
     ) {
         if end_index >= start_index {
-            if start_index == end_index {
-                size = 1;
-                if let Some(Some(inner_value)) = relocated_memory.get(start_index) {
-                    memory_values.push(inner_value.to_string());
-                }
-            } else {
-                size = end_index - start_index;
-                memory_values = Vec::with_capacity(size); // Preallocate space
-                for index in start_index..end_index {
-                    if let Some(Some(inner_value)) = relocated_memory.get(index) {
-                        memory_values.push(inner_value.to_string());
-                    }
-                }
-            }
+            let size = end_index - start_index + 1;
+            let memory_values: Vec<String> = (start_index..=end_index)
+                .filter_map(|index| {
+                    relocated_memory
+                        .get(index)
+                        .and_then(|v| (*v).map(|inner| inner.to_string()))
+                })
+                .collect();
+
+            return (size, memory_values);
         }
     }
-
-    (size, memory_values)
-}
-
-pub fn clean_return_tuple_type(simplified_type_name: &str) -> String {
-    // Regex for matching and removing Option::<...>
-    let re_option = Regex::new(r"Option::<([^>]+)>").unwrap();
-
-    // Step 1: Remove `Option::<...>` and extract inner content
-    let cleaned_option_type = re_option
-        .replace_all(simplified_type_name, "$1")
-        .to_string();
-
-    cleaned_option_type
+    (0, Vec::new())
 }
