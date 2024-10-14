@@ -22,7 +22,7 @@ pub async fn send_telegram_notification(tx_id: &str, chain_id: &ChainId) -> Resu
 
     let payload = serde_json::json!({
         "chat_id": telegram_walnut_notifications_chat_id,
-        "text": format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}?skip_tracking=true"),
+        "text": format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true"),
     });
 
     let res = client.post(telegram_bot_api_url)
