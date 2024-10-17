@@ -1,9 +1,9 @@
 use crate::{mappings::Mappings, utils::is_panic_result};
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use data_decoder::common::DecodedValue;
 use indextree::{Arena, NodeId};
 use serde::Serialize;
-use serde_json::json;
 use serde_json::Value;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
@@ -37,8 +37,8 @@ pub struct DebuggerExecutionTraceEntryWithContractCall {
 pub struct DebuggerExecutionTraceEntryWithLocation {
     pub sierra_index: usize,
     pub location_index: usize,
-    pub results: Option<Value>,
-    pub arguments: Option<Value>,
+    pub results: Option<Vec<DecodedValue>>,
+    pub arguments: Option<Vec<DecodedValue>>,
     pub function_id: Option<String>,
 }
 
@@ -121,10 +121,10 @@ pub fn get_internal_call_trace(
 
         // Arguments at the current step (can be empty)
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
-        let mut arguments_decoded: Vec<Value> = Vec::new();
+        let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
         // Results at the current step (can be empty)
         let mut results: Vec<InternalFnCallIO> = Vec::new();
-        let mut results_decoded: Vec<Value> = Vec::new();
+        let mut results_decoded: Vec<DecodedValue> = Vec::new();
 
         if new_fp > prev_fp {
             // If the FP register increases, that means we have entered a nested function call
@@ -152,7 +152,7 @@ pub fn get_internal_call_trace(
                 fp: new_fp,
                 cairo_location: cairo_locations.first().cloned(),
                 arguments: arguments.clone(),
-                arguments_decoded: Some(json!(arguments_decoded)),
+                arguments_decoded: Some(arguments_decoded.clone()),
                 results: Vec::new(),
                 results_decoded: None,
                 is_panic_result: false,
@@ -207,8 +207,8 @@ pub fn get_internal_call_trace(
                         debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
                             DebuggerExecutionTraceEntryWithLocation {
                                 sierra_index,
-                                results: Some(json!(results_decoded.clone())),
-                                arguments: Some(json!(arguments_decoded.clone())),
+                                results: Some(results_decoded.clone()),
+                                arguments: Some(arguments_decoded.clone()),
                                 location_index,
                                 function_id: Some(parent_function_id.clone()),
                             },
@@ -226,9 +226,8 @@ pub fn get_internal_call_trace(
                                 matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
                             }) {
                                 last_with_location.function_id = Some(parent_function_id.clone());
-                                last_with_location.results = Some(json!(results_decoded.clone()));
-                                last_with_location.arguments =
-                                    Some(json!(arguments_decoded.clone()));
+                                last_with_location.results = Some(results_decoded.clone());
+                                last_with_location.arguments = Some(arguments_decoded.clone());
                             }
                         }
                     // If current step has a different Cairo location than the last step with Cairo location
@@ -236,8 +235,8 @@ pub fn get_internal_call_trace(
                         debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
                             DebuggerExecutionTraceEntryWithLocation {
                                 sierra_index,
-                                results: Some(json!(results_decoded.clone())),
-                                arguments: Some(json!(arguments_decoded.clone())),
+                                results: Some(results_decoded.clone()),
+                                arguments: Some(arguments_decoded.clone()),
                                 location_index,
                                 function_id: Some(parent_function_id.clone()),
                             },
@@ -281,9 +280,9 @@ pub struct InternalFnCallTraceEntry {
     pub fn_name: Option<String>,
     pub fp: usize,
     pub results: Vec<InternalFnCallIO>,
-    pub results_decoded: Option<Value>,
+    pub results_decoded: Option<Vec<DecodedValue>>,
     pub arguments: Vec<InternalFnCallIO>,
-    pub arguments_decoded: Option<Value>,
+    pub arguments_decoded: Option<Vec<DecodedValue>>,
     pub cairo_location: Option<CodeLocation>,
     pub is_panic_result: bool,
     pub debugger_execution_trace_step_index: usize,
@@ -403,12 +402,12 @@ impl InternalFnCallTraceTree {
     fn set_results_to_current_node(
         &mut self,
         results: Vec<InternalFnCallIO>,
-        results_decoded: Vec<Value>,
+        results_decoded: Vec<DecodedValue>,
     ) {
         if let Some(node) = self.arena.get_mut(self.current_node) {
             let data = node.get_mut();
             data.results = results;
-            data.results_decoded = Some(json!(results_decoded));
+            data.results_decoded = Some(results_decoded);
         }
     }
 

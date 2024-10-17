@@ -1,5 +1,6 @@
 pub mod abi_processor;
 pub mod contract_names;
+pub mod event_abi;
 pub mod state;
 pub mod utils;
 
@@ -34,7 +35,9 @@ use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
 use cheatnet::state::CheatnetState;
 use contract_names::ContractNamesFetcher;
-use data_decoder::calldata_decoder::decode_datas;
+use data_decoder::calldata_decoder::decode_calldata;
+use data_decoder::common::DecodedValue;
+use event_abi::{EventAbi, EventAbiStore};
 use internal_tracing::call_trace::InternalFnCallTraceEntryNode;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
 use internal_tracing::debugger_data_maps_full_class_to_class;
@@ -45,8 +48,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
-use serde_json::Value;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::ContractClass;
@@ -72,6 +73,7 @@ use starknet_providers::Provider;
 use starknet_providers::ProviderError;
 use starknet_selector_decoder::get_selector;
 use state::ForkStateReader;
+use std::borrow::Cow;
 use std::cell::Ref;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -496,13 +498,6 @@ fn run_simulation(
     Ok(cheatnet_state)
 }
 
-#[derive(Serialize, Debug, Clone)]
-pub struct EventAbi {
-    event_name: String,
-    event_arguments_names: Vec<String>,
-    event_arguments_types: Vec<String>,
-}
-
 #[derive(Serialize, Debug)]
 pub struct SimulationCallTraceAdditionalInfo {
     contract_name: Option<String>,
@@ -513,12 +508,11 @@ pub struct SimulationCallTraceAdditionalInfo {
     erc20_token_name: Option<String>,
     erc20_token_symbol: Option<String>,
     error_message: Option<String>,
-    function_result: Option<Value>,
-    function_return_result_types: Option<Vec<String>>,
-    function_arguments_names: Option<Vec<String>>,
-    function_arguments_types: Option<Vec<String>>,
-    calldata_decoded: Option<Value>,
-    event_abi: Option<Vec<EventAbi>>,
+    function_result_decoded: Option<Vec<DecodedValue>>,
+    function_return_result_types: Option<Vec<Cow<'static, str>>>,
+    function_arguments_names: Option<Vec<Cow<'static, str>>>,
+    function_arguments_types: Option<Vec<Cow<'static, str>>>,
+    calldata_decoded: Option<Vec<DecodedValue>>,
     call_debugger_data: Option<ContractCallDebuggerData>,
     class_hash: Option<String>,
     sierra_version: Option<String>,
@@ -588,7 +582,7 @@ fn get_simulation_info(
         }
     };
 
-    let mut call_trace = get_simulation_call_trace(
+    let (mut call_trace, event_store) = get_simulation_call_trace(
         fork_state_reader,
         first_nested_call.borrow(),
         0,
@@ -596,7 +590,7 @@ fn get_simulation_info(
         &mut class_hashes,
     );
 
-    let events_trace = get_event_trace(&cheatnet_state.detected_events, &call_trace);
+    let events_trace = get_event_trace(&cheatnet_state.detected_events, &event_store);
 
     let mut execution_result: ExecutionResult = ExecutionResult::Succeeded;
     update_error_message(
@@ -625,7 +619,7 @@ fn get_simulation_call_trace(
     nested_level: usize,
     max_nested_error_level: &mut usize,
     class_hashes: &mut Vec<String>,
-) -> SimulationCallTrace {
+) -> (SimulationCallTrace, EventAbiStore) {
     let mut nested_calls = Vec::new();
     if call_trace_ref.nested_calls.is_empty()
         && matches!(&call_trace_ref.result, CallResult::Failure(_))
@@ -642,7 +636,7 @@ fn get_simulation_call_trace(
     for nested_call in &call_trace_ref.nested_calls {
         match nested_call {
             CallTraceNode::EntryPointCall(call_trace) => {
-                let nested_trace = get_simulation_call_trace(
+                let (nested_trace, _) = get_simulation_call_trace(
                     fork_state_reader,
                     call_trace.borrow(),
                     nested_level + 1,
@@ -661,30 +655,34 @@ fn get_simulation_call_trace(
         class_hashes.push(class_hash.0.to_fixed_hex_string());
     }
 
-    SimulationCallTrace {
+    let (additional_info, event_store) = get_additional_info(
+        fork_state_reader,
+        call_trace_ref.entry_point.class_hash,
+        call_trace_ref.entry_point.entry_point_selector,
+        call_trace_ref.result.clone(),
+        call_trace_ref.entry_point.calldata.clone(),
+    );
+
+    let call_trace = SimulationCallTrace {
         entry_point: call_trace_ref.entry_point.clone(),
         used_execution_resources: call_trace_ref.used_execution_resources.clone(),
         nested_calls,
         nested_level,
         result: call_trace_ref.result.clone(),
         fn_calls: Vec::new(),
-        additional_info: get_additional_info(
-            fork_state_reader,
-            call_trace_ref.entry_point.class_hash,
-            call_trace_ref.entry_point.entry_point_selector,
-            call_trace_ref.result.clone(),
-            call_trace_ref.entry_point.calldata.clone(),
-        ),
+        additional_info,
         _vm_trace: call_trace_ref
             .vm_trace
             .as_ref()
             .map(|vm_trace| clone_vm_trace(vm_trace)),
         _relocated_memory: call_trace_ref.vm_memory.clone(),
         contract_call_id: String::new(),
-    }
+    };
+
+    (call_trace, event_store)
 }
 
-fn get_event_trace(events: &Vec<Event>, call_trace: &SimulationCallTrace) -> Vec<EventTrace> {
+fn get_event_trace(events: &Vec<Event>, event_store: &EventAbiStore) -> Vec<EventTrace> {
     let mut events_trace: Vec<EventTrace> = Vec::new();
     for event in events {
         let contract_name = event.from.to_string();
@@ -696,52 +694,38 @@ fn get_event_trace(events: &Vec<Event>, call_trace: &SimulationCallTrace) -> Vec
             event_keys = keys_hex[1..].to_vec();
         }
         let event_datas = felt_vec_to_hex_vec(event.data.to_vec());
-        let event_abi = find_call_trace(call_trace, &contract_name);
-        let filtered_event_abi = event_abi.as_ref().and_then(|events| {
-            events
-                .iter()
-                .find(|abi| {
-                    let selector = selector_from_name(abi.event_name.as_str());
-                    selector.0.to_fixed_hex_string() == event_name
-                })
-                .cloned()
+
+        let filtered_event_abi = event_store.event_abis.iter().find(|abi| {
+            let selector = selector_from_name(abi.event_name.as_str());
+            selector.0.to_fixed_hex_string() == event_name
         });
-        let mut event_arguments_names: Vec<String> = Vec::new();
-        if filtered_event_abi.is_some() {
-            event_name = filtered_event_abi.as_ref().unwrap().event_name.clone();
-            event_arguments_names = filtered_event_abi
-                .as_ref()
-                .unwrap()
-                .event_arguments_names
-                .clone();
+
+        if let Some(abi) = &filtered_event_abi {
+            event_name = abi.event_name.clone();
+            let event_arguments_names = abi.event_arguments_names.clone();
+
+            let event_trace = EventTrace {
+                contract_name,
+                event_name,
+                event_arguments_names,
+                event_keys,
+                event_datas,
+            };
+            events_trace.push(event_trace);
         }
-        let event_trace = EventTrace {
-            contract_name,
-            event_name,
-            event_arguments_names,
-            event_keys,
-            event_datas,
-        };
-        events_trace.push(event_trace);
     }
 
     events_trace
 }
 
-fn find_call_trace(call_trace: &SimulationCallTrace, contract_name: &str) -> Option<Vec<EventAbi>> {
-    if call_trace.entry_point.storage_address.0.to_string() == contract_name {
-        return call_trace.additional_info.event_abi.clone();
-    }
-
-    if !call_trace.nested_calls.is_empty() {
-        for nested_call in &call_trace.nested_calls {
-            if let Some(found_trace) = find_call_trace(nested_call, contract_name) {
-                return Some(found_trace);
-            }
-        }
-    }
-
-    None
+fn find_call_trace(event_store: &EventAbiStore, contract_name: &str) -> Option<Vec<EventAbi>> {
+    event_store
+        .event_abis
+        .iter()
+        .filter(|event_abi| event_abi.event_name == contract_name)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into()
 }
 
 pub async fn simulate_by_data(
@@ -954,7 +938,7 @@ fn get_additional_info(
     entry_point_selector: EntryPointSelector,
     result: CallResult,
     calldata: Calldata,
-) -> SimulationCallTraceAdditionalInfo {
+) -> (SimulationCallTraceAdditionalInfo, EventAbiStore) {
     let mut additional_info = SimulationCallTraceAdditionalInfo {
         contract_name: None,
         entry_point_function_name: None,
@@ -965,11 +949,10 @@ fn get_additional_info(
         erc20_token_symbol: None,
         error_message: None,
         function_return_result_types: None,
-        function_result: None,
+        function_result_decoded: None,
         function_arguments_names: None,
         function_arguments_types: None,
         calldata_decoded: None,
-        event_abi: None,
         call_debugger_data: None,
         class_hash: class_hash.map(|class_hash| class_hash.0.to_fixed_hex_string()),
         sierra_version: None,
@@ -1012,12 +995,12 @@ fn get_additional_info(
         }
     }
 
-    get_event_data(&mut additional_info, &event_items);
+    let event_store = get_event_data(&event_items);
     get_function_name(&mut additional_info, &entry_point_selector);
     get_function_result(&mut additional_info, &result, &struct_items, &enum_items);
     get_function_arguments(&mut additional_info, &calldata, &struct_items, &enum_items);
 
-    additional_info
+    (additional_info, event_store)
 }
 
 fn extract_version(sierra_program: &[Felt]) -> (Option<String>, Option<String>) {
@@ -1037,13 +1020,10 @@ fn extract_version(sierra_program: &[Felt]) -> (Option<String>, Option<String>) 
     (Some(sierra_version), Some(cairo_version))
 }
 
-//TODO better way to get event data do not include all in response - uneffecient
-fn get_event_data(
-    additional_info: &mut SimulationCallTraceAdditionalInfo,
-    event_items: &Vec<EventItems>,
-) {
+fn get_event_data(event_items: &Vec<EventItems>) -> EventAbiStore {
+    let mut event_store = EventAbiStore::default();
+
     if !event_items.is_empty() {
-        let mut event_abis: Vec<EventAbi> = Vec::new();
         for event_item in event_items {
             if !event_item.name.is_empty() {
                 let event_name = event_item.name.to_string();
@@ -1062,11 +1042,12 @@ fn get_event_data(
                     event_arguments_names,
                     event_arguments_types,
                 };
-                event_abis.push(event_abi);
+                event_store.add_event_abi(event_abi);
             }
         }
-        additional_info.event_abi = Some(event_abis);
     }
+
+    event_store
 }
 
 fn get_function_name(
@@ -1091,19 +1072,16 @@ fn get_function_result(
     enum_items: &Vec<EnumItems>,
 ) {
     if let CallResult::Success { ret_data } = call_result {
-        let ret_hex = felt_vec_to_hex_vec(ret_data.to_vec());
-        if let Some(function_return_result_types) =
-            additional_info.function_return_result_types.clone()
-        {
-            let decoded_result = decode_datas(
-                &ret_hex,
-                &function_return_result_types,
-                &vec![],
+        if let Some(function_return_result_types) = &additional_info.function_return_result_types {
+            let decoded_result = decode_calldata(
+                ret_data,
+                function_return_result_types,
+                &[],
                 Some(struct_items),
                 Some(enum_items),
                 &mut 0,
             );
-            additional_info.function_result = Some(json!(decoded_result));
+            additional_info.function_result_decoded = decoded_result;
         }
     }
 }
@@ -1115,20 +1093,19 @@ fn get_function_arguments(
     enum_items: &Vec<EnumItems>,
 ) {
     if let (Some(function_arguments_types), Some(function_arguments_names)) = (
-        additional_info.function_arguments_types.clone(),
-        additional_info.function_arguments_names.clone(),
+        &additional_info.function_arguments_types,
+        &additional_info.function_arguments_names,
     ) {
-        let calldata_hex: Vec<String> = calldata.0.iter().map(|x| x.to_hex_string()).collect();
-        let decoded_arguments = decode_datas(
-            &calldata_hex,
-            &function_arguments_types,
-            &function_arguments_names,
+        let decoded_arguments = decode_calldata(
+            &calldata.0.to_vec(),
+            function_arguments_types,
+            function_arguments_names,
             Some(struct_items),
             Some(enum_items),
             &mut 0,
         );
 
-        additional_info.calldata_decoded = Some(json!(decoded_arguments));
+        additional_info.calldata_decoded = decoded_arguments;
     }
 }
 

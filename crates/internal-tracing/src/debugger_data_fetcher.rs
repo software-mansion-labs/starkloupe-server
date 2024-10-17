@@ -1,10 +1,10 @@
+use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass};
 use anyhow::Result;
 use futures::future;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
+use tracing::error;
 use verification::{db::fetch_verified_classes, s3::key_for_class_hash, VerifiedClassData};
-
-use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass};
 
 async fn fetch_and_parse_file(
     client: &aws_sdk_s3::Client,
@@ -44,7 +44,13 @@ pub async fn fetch_classes_debugger_data(
         )
     });
 
-    let results = future::try_join_all(fetches).await.unwrap();
+    let results = match future::try_join_all(fetches).await {
+        Ok(results) => results,
+        Err(e) => {
+            error!("Failed to fetch and parse files: {:?}", e);
+            Vec::new()
+        }
+    };
 
     for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
         let class_debugger_data =

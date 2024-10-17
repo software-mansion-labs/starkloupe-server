@@ -17,13 +17,16 @@ use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKin
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use data_decoder::internal_function_decoder::internal_decode_datas;
-use data_decoder::{simplify_type_name, skip_builtin_type_declaration};
+use data_decoder::{
+    common::{
+        create_decoded_value, simplify_type_name, skip_builtin_type_declaration, DecodedValue,
+        DecodedValueType,
+    },
+    internal_function_decoder::decode_internal_datas,
+};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
-use serde_json::json;
-use serde_json::Value;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
@@ -143,8 +146,7 @@ impl Mappings {
                 locations_set.extend(cairo_info.cairo_locations.clone());
             }
         }
-        let locations: Vec<_> = locations_set.into_iter().collect();
-        return locations;
+        locations_set.into_iter().collect()
     }
 
     pub fn get_cairo_locations_at_sierra_index(
@@ -156,8 +158,7 @@ impl Mappings {
         if let Some(cairo_info) = sierra_statements_to_cairo_info.get(&sierra_index) {
             locations_set.extend(cairo_info.cairo_locations.clone());
         }
-        let locations: Vec<_> = locations_set.into_iter().collect();
-        return locations;
+        locations_set.into_iter().collect()
     }
 
     pub fn get_sierra_execution_trace(
@@ -188,82 +189,80 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
-    ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
-        let mut arguments: Vec<InternalFnCallIO> = Vec::new();
-        let mut arguments_decoded: Vec<Value> = Vec::new();
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
+        let mut arguments: Vec<InternalFnCallIO> = vec![];
+        let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
-            match &sierra_statement_info.additional_kind_info {
-                StatementKindDebugInfo::Invoke(invoke_info) => {
-                    for (_invoke_ref_index, invoke_ref) in invoke_info.ref_values.iter().enumerate()
-                    {
-                        let mut values = get_values_from_cell_expressions(
-                            relocated_memory,
-                            trace_entry,
-                            &invoke_ref.expression.cells,
-                            &ApChange::Known(0),
-                        );
-                        let type_names = self
-                            .type_names
-                            .get(&invoke_ref.ty)
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| "".to_string());
+            if let StatementKindDebugInfo::Invoke(invoke_info) =
+                &sierra_statement_info.additional_kind_info
+            {
+                for invoke_ref in invoke_info.ref_values.iter() {
+                    let values = get_values_from_cell_expressions(
+                        relocated_memory,
+                        trace_entry,
+                        &invoke_ref.expression.cells,
+                        &ApChange::Known(0),
+                    );
+                    let type_names = self
+                        .type_names
+                        .get(&invoke_ref.ty)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
 
-                        let simplified_type_name = simplify_type_name(type_names.as_str());
-                        if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
-                            arguments.push(InternalFnCallIO {
-                                type_name: Some(simplified_type_name.clone()),
-                                value: values.clone(),
-                            });
-                        }
-                        let type_id = &invoke_ref.ty;
-                        let mut data_index: usize = 0;
-                        let argument_decoded = internal_decode_datas(
-                            &mut values,
-                            type_id,
-                            &self.type_declaration_map,
-                            relocated_memory,
-                            &mut data_index,
-                        );
-                        argument_decoded
-                            .get(0)
-                            .map(|value| arguments_decoded.push(json!(value)));
+                    let simplified_type_name = simplify_type_name(type_names.as_str());
+                    if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
+                        arguments.push(InternalFnCallIO {
+                            type_name: Some(simplified_type_name.clone()),
+                            value: values.iter().map(|v| v.to_string()).collect(),
+                        });
                     }
-
-                    // for (branch_index, branch_change) in
-                    //     invoke_info.result_branch_changes.iter().enumerate()
-                    // {
-                    //     for (output_reference_index, output_reference_value) in
-                    //         branch_change.refs.iter().enumerate()
-                    //     {
-                    //         let values = get_values_from_cell_expressions(
-                    //             relocated_memory,
-                    //             trace_entry,
-                    //             &output_reference_value.expression.cells,
-                    //             &branch_change.ap_change,
-                    //         );
-                    //         dbg!(values);
-                    //     }
-                    // }
+                    let type_id = &invoke_ref.ty;
+                    let mut data_index: usize = 0;
+                    if let Some(argument_decoded) = decode_internal_datas(
+                        &values,
+                        type_id,
+                        &self.type_declaration_map,
+                        relocated_memory,
+                        &mut data_index,
+                    ) {
+                        arguments_decoded.push(argument_decoded);
+                    }
                 }
-                _ => {} // StatementKindDebugInfo::Return(return_info) => {
-                        //     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
-                        //     {
-                        //         let values = get_values_from_cell_expressions(
-                        //             relocated_memory,
-                        //             trace_entry,
-                        //             &return_ref.expression.cells,
-                        //             &ApChange::Known(0),
-                        //         );
-                        //         results.push(InternalFnCallIO {
-                        //             type_name: self
-                        //                 .type_names
-                        //                 .get(&return_ref.ty)
-                        //                 .clone()
-                        //                 .map(|n| n.to_string()),
-                        //             value: values,
-                        //         })
-                        //     }
-                        // }
+
+                // for (branch_index, branch_change) in
+                //     invoke_info.result_branch_changes.iter().enumerate()
+                // {
+                //     for (output_reference_index, output_reference_value) in
+                //         branch_change.refs.iter().enumerate()
+                //     {
+                //         let values = get_values_from_cell_expressions(
+                //             relocated_memory,
+                //             trace_entry,
+                //             &output_reference_value.expression.cells,
+                //             &branch_change.ap_change,
+                //         );
+                //         dbg!(values);
+                //     }
+                // }
+                // StatementKindDebugInfo::Return(return_info) => {
+                //     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
+                //     {
+                //         let values = get_values_from_cell_expressions(
+                //             relocated_memory,
+                //             trace_entry,
+                //             &return_ref.expression.cells,
+                //             &ApChange::Known(0),
+                //         );
+                //         results.push(InternalFnCallIO {
+                //             type_name: self
+                //                 .type_names
+                //                 .get(&return_ref.ty)
+                //                 .clone()
+                //                 .map(|n| n.to_string()),
+                //             value: values,
+                //         })
+                //     }
+                // }
             }
         }
         (arguments, arguments_decoded)
@@ -274,65 +273,61 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
-    ) -> (Vec<InternalFnCallIO>, Vec<Value>) {
-        let mut results: Vec<InternalFnCallIO> = Vec::new();
-        let mut results_decoded: Vec<Value> = Vec::new();
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
+        let mut results: Vec<InternalFnCallIO> = vec![];
+        let mut results_decoded: Vec<DecodedValue> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
-            match &sierra_statement_info.additional_kind_info {
-                StatementKindDebugInfo::Return(return_info) => {
-                    for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
-                    {
-                        let mut values = get_values_from_cell_expressions(
+            if let StatementKindDebugInfo::Return(return_info) =
+                &sierra_statement_info.additional_kind_info
+            {
+                for return_ref in return_info.ref_values.iter() {
+                    let values = get_values_from_cell_expressions(
+                        relocated_memory,
+                        trace_entry,
+                        &return_ref.expression.cells,
+                        &ApChange::Known(0),
+                    );
+
+                    let result_type = self
+                        .type_names
+                        .get(&return_ref.ty)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
+
+                    let simplified_type_name = simplify_type_name(result_type.as_str());
+                    if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
+                        results.push(InternalFnCallIO {
+                            type_name: Some(simplified_type_name.clone()),
+                            value: values.iter().map(|v| v.to_string()).collect(),
+                        });
+                    }
+
+                    if is_panic_result(&Some(result_type.clone())) && values[0] == Felt::ONE {
+                        let index = values[1].to_string().parse::<usize>().unwrap();
+                        let panic_reason = relocated_memory
+                            .get(index)
+                            .and_then(|opt| *opt)
+                            .expect("Failed to get panic reason from relocated_memory");
+                        let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
+                        results_decoded.push(create_decoded_value(
+                            None,
+                            "Panic",
+                            DecodedValueType::String(panic_reason_decoded),
+                        ));
+                    } else {
+                        let type_id = &return_ref.ty;
+                        let mut data_index: usize = 0;
+                        if let Some(decoded_element) = decode_internal_datas(
+                            &values,
+                            type_id,
+                            &self.type_declaration_map,
                             relocated_memory,
-                            trace_entry,
-                            &return_ref.expression.cells,
-                            &ApChange::Known(0),
-                        );
-
-                        let mut result_type = self
-                            .type_names
-                            .get(&return_ref.ty)
-                            .map(|n| n.to_string())
-                            .unwrap_or_else(|| "".to_string());
-
-                        let simplified_type_name = simplify_type_name(result_type.as_str());
-                        if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
-                            results.push(InternalFnCallIO {
-                                type_name: Some(simplified_type_name.clone()),
-                                value: values.clone(),
-                            });
-                        }
-
-                        if is_panic_result(&Some(result_type.clone())) && values[0] == "1" {
-                            let panic_reason: Felt = relocated_memory
-                                .get(values[1].parse::<usize>().unwrap())
-                                .unwrap()
-                                .clone()
-                                .unwrap();
-                            let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
-                            result_type = "Panic".to_string();
-                            values = vec![panic_reason_decoded];
-                            results_decoded.push(json!({
-                                "type": result_type,
-                                "value": values,
-                            }));
-                        } else {
-                            let type_id = &return_ref.ty;
-                            let mut data_index: usize = 0;
-                            let result_decoded = internal_decode_datas(
-                                &mut values,
-                                type_id,
-                                &self.type_declaration_map,
-                                relocated_memory,
-                                &mut data_index,
-                            );
-                            result_decoded
-                                .get(0)
-                                .map(|value| results_decoded.push(json!(value)));
+                            &mut data_index,
+                        ) {
+                            results_decoded.push(decoded_element);
                         }
                     }
                 }
-                _ => {}
             }
         }
         (results, results_decoded)
@@ -343,7 +338,7 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         trace_entry: &RelocatedTraceEntry,
     ) -> Option<ESysCall> {
-        let pc = trace_entry.pc as usize;
+        let pc = trace_entry.pc;
         let ptr_sys_call = self.pc_to_ptr_sys_calls.get(&pc);
         match ptr_sys_call {
             Some(ptr_sys_call) => {
@@ -354,7 +349,7 @@ impl Mappings {
                     &ApChange::Known(0),
                 )
                 .unwrap();
-                let mut ptr = value.parse::<usize>().unwrap();
+                let mut ptr = value.to_string().parse::<usize>().unwrap();
                 let felt_value = relocated_memory.get(ptr).unwrap();
                 ptr += 1;
                 let selector = SyscallSelector::try_from(felt_value.unwrap());
@@ -366,11 +361,10 @@ impl Mappings {
                                 let _felt_value = relocated_memory.get(ptr).unwrap();
                                 ptr += 1;
                                 let felt_value: Felt =
-                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                    (*relocated_memory.get(ptr).unwrap()).unwrap();
                                 let contract_address = felt_value.to_fixed_hex_string();
                                 ptr += 1;
-                                let felt_value =
-                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                let felt_value = (*relocated_memory.get(ptr).unwrap()).unwrap();
                                 let function_selector = felt_value.to_fixed_hex_string();
                                 let contract_call = ContractCall {
                                     contract_address,
@@ -398,11 +392,10 @@ pub fn get_values_from_cell_expressions(
     trace_entry: &RelocatedTraceEntry,
     cell_expressions: &Vec<CellExpression>,
     ap_change: &ApChange,
-) -> Vec<String> {
-    let mut value_vec: Vec<String> = Vec::new();
+) -> Vec<Felt> {
+    let mut value_vec: Vec<Felt> = Vec::new();
     for cell_expression in cell_expressions {
-        let value =
-            get_value_from_cell_expression(&memory, &trace_entry, &cell_expression, &ap_change);
+        let value = get_value_from_cell_expression(memory, trace_entry, cell_expression, ap_change);
         match value {
             Ok(value) => {
                 value_vec.push(value);
@@ -457,13 +450,12 @@ pub fn get_value_from_cell_expression(
     trace_entry: &RelocatedTraceEntry,
     cell_expression: &CellExpression,
     ap_change: &ApChange,
-) -> Result<String, GetCellRefValueError> {
+) -> Result<Felt, GetCellRefValueError> {
     match cell_expression {
         CellExpression::Deref(cell_ref) => {
             get_cell_ref_value(memory, trace_entry, cell_ref, ap_change)
-                .map(|value| value.to_string())
         }
-        CellExpression::Immediate(imm) => Ok(format!("0x{:x}", imm)),
+        CellExpression::Immediate(imm) => Ok(Felt::from(imm.clone())),
         CellExpression::DoubleDeref(cell_ref, offset) => {
             match get_cell_ref_value(memory, trace_entry, cell_ref, ap_change) {
                 Ok(cell_ref_value_felt) => {
@@ -473,10 +465,10 @@ pub fn get_value_from_cell_expression(
                             .ok_or(GetCellRefValueError::OtherError(
                                 "Failed to convert cell_ref_value_felt to i128".to_string(),
                             ))?;
-                    let addr = cell_ref_value + offset.clone() as i128;
+                    let addr = cell_ref_value + *offset as i128;
                     let value = memory.get(addr as usize).cloned();
                     if let Some(Some(value)) = value {
-                        Ok(value.to_string())
+                        Ok(value)
                     } else {
                         Err(GetCellRefValueError::MemoryAddressNotFound)
                     }
@@ -512,7 +504,7 @@ pub fn get_value_from_cell_expression(
                                 CellOperator::Sub => Ok(a - b),
                             };
                             match value {
-                                Ok(value) => Ok(value.to_string()),
+                                Ok(value) => Ok(value),
                                 Err(e) => Err(e),
                             }
                         }
@@ -523,11 +515,4 @@ pub fn get_value_from_cell_expression(
             }
         }
     }
-}
-
-fn extend_to_16_bytes(mut buf: Vec<u8>) -> Vec<u8> {
-    if buf.len() < 16 {
-        buf.resize(16, 0);
-    }
-    buf
 }

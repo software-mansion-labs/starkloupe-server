@@ -30,6 +30,6 @@ starknet-types-core.workspace = true
 smol_str.workspace = true
 starknet.workspace = true
 itertools.workspace = true
+tracing.workspace = true
 byteorder = "1.5.0"
 indextree = "4.6.1"
-regex.workspace = true

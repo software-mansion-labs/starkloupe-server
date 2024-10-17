@@ -1,4 +1,3 @@
-use fancy_regex::Regex;
 use std::fmt;
 use walnut_shared::EnumItems;
 
@@ -124,14 +123,19 @@ impl EDataType {
     }
 }
 
-fn extract_inner_types(data_type: &str) -> Vec<String> {
-    let re_inner_type = Regex::new(r"<\s*\(?\s*(.*[^\s\)])\s*\)?\s*>").unwrap();
-    if let Ok(Some(captures)) = re_inner_type.captures(data_type) {
-        let inner_content = captures.get(1).map_or("", |m| m.as_str());
-        return inner_content
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect();
-    }
-    vec![]
+pub fn extract_inner_types(data_type: &str) -> Vec<String> {
+    let inner_content = data_type
+        .strip_prefix("Tuple<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(data_type);
+
+    let inner_content = inner_content
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(inner_content);
+
+    inner_content
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect()
 }

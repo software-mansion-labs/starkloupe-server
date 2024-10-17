@@ -1,245 +1,300 @@
+use crate::common::{
+    create_decoded_value, simplify_type_name, skip_builtin_type_declaration, DecodedValue,
+    DecodedValueType,
+};
+use cairo_lang_sierra::ids::ConcreteTypeId;
+use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
+use num_traits::cast::ToPrimitive;
+use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
 
-use crate::common::create_result_obj;
-use crate::{simplify_type_name, skip_builtin_type_declaration};
-use cairo_lang_sierra::ids::{ConcreteTypeId, GenericTypeId};
-use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
-use serde_json::json;
-use serde_json::Value;
-use starknet_types_core::felt::Felt as Felt252;
-
-pub fn internal_decode_datas(
-    values: &mut Vec<String>,
+pub fn decode_internal_datas(
+    values: &[Felt],
     type_id: &ConcreteTypeId,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-    relocated_memory: &[Option<Felt252>],
+    relocated_memory: &[Option<Felt>],
     data_index: &mut usize,
-) -> Vec<Value> {
-    let mut result = Vec::new();
+) -> Option<DecodedValue> {
+    let type_declaration = type_declaration_map.get(type_id)?;
+    let generic_type_id = &type_declaration.long_id.generic_id;
+    let debug_name = simplify_type_name(type_declaration.id.debug_name.as_deref().unwrap_or(""));
 
-    if let Some(type_declaration) = type_declaration_map.get(type_id) {
-        let debug_name =
-            simplify_type_name(type_declaration.id.debug_name.as_deref().unwrap_or(""));
-        let generic_type_id = &type_declaration.long_id.generic_id;
+    if skip_builtin_type_declaration(debug_name.as_str()) {
+        return None;
+    }
 
-        if !skip_builtin_type_declaration(debug_name.as_str()) {
-            if type_declaration.long_id.generic_args.is_empty() {
-                if let Some(value) = values.get(*data_index) {
-                    result.push(Value::Object(create_result_obj(
-                        &[],
-                        *data_index,
-                        debug_name.as_str(),
-                        Value::String(value.to_string()),
-                    )));
-                    *data_index += 1;
-                }
-                return result;
-            }
-            if *generic_type_id == GenericTypeId::from_string("Enum") {
-                if debug_name == "bool" {
-                    handle_bool_case(values, data_index, &mut result);
-                } else {
-                    handle_enum_case(
-                        values,
-                        type_declaration,
-                        data_index,
-                        relocated_memory,
-                        type_declaration_map,
-                        &mut result,
-                    );
-                }
-            } else if *generic_type_id == GenericTypeId::from_string("Struct") {
-                let mut decoded_struct_values = serde_json::Map::new();
-                for (i, arg) in type_declaration.long_id.generic_args.iter().enumerate() {
-                    if let GenericArg::Type(concrete_type_id) = arg {
-                        let decoded_value = internal_decode_datas(
-                            values,
-                            concrete_type_id,
-                            type_declaration_map,
-                            relocated_memory,
-                            data_index,
-                        );
-                        for decoded_field in decoded_value {
-                            decoded_struct_values.insert(i.to_string(), decoded_field.clone());
-                        }
-                    }
-                }
-                if !decoded_struct_values.is_empty() {
-                    result.push(Value::Object(create_result_obj(
-                        &[],
-                        *data_index,
-                        &debug_name,
-                        Value::Object(decoded_struct_values),
-                    )));
-                }
-            } else if *generic_type_id == GenericTypeId::from_string("Array") {
-                let mut array_length = 0;
-                if !relocated_memory.is_empty() && *data_index + 1 < values.len() {
-                    let (size, memory_values) =
-                        extract_memory_values(relocated_memory, values, data_index);
-                    array_length = size;
-                    values.splice(*data_index..*data_index + 2, memory_values);
-                }
+    if type_declaration.long_id.generic_args.is_empty() {
+        return values.get(*data_index).map(|value| {
+            *data_index += 1;
+            create_decoded_value(None, &debug_name, DecodedValueType::Single(*value))
+        });
+    }
 
-                let decoded_array_values = decode_array_elements(
-                    type_declaration,
-                    array_length,
+    match generic_type_id.0.as_str() {
+        "Enum" => decode_enum(
+            values,
+            &debug_name,
+            type_declaration,
+            data_index,
+            type_declaration_map,
+            relocated_memory,
+        ),
+        "Struct" => {
+            if debug_name.starts_with("Span<") {
+                // Handle Span types specially
+                decode_span(
                     values,
-                    relocated_memory,
+                    &debug_name,
+                    type_declaration,
                     data_index,
                     type_declaration_map,
-                );
-                if !decoded_array_values.is_empty() {
-                    result.push(Value::Object(create_result_obj(
-                        &[],
-                        *data_index,
-                        &debug_name,
-                        Value::Array(decoded_array_values),
-                    )));
-                }
-            } else if *generic_type_id == GenericTypeId::from_string("Snapshot") {
-                let decoded_snapshot_values = decode_snapshot_elements(
-                    type_declaration,
-                    values,
-                    data_index,
                     relocated_memory,
+                )
+            } else {
+                decode_struct(
+                    values,
+                    &debug_name,
+                    type_declaration,
+                    data_index,
                     type_declaration_map,
-                );
-                result.extend(decoded_snapshot_values);
+                    relocated_memory,
+                )
             }
         }
+        "Array" => decode_array(
+            type_declaration,
+            &debug_name,
+            relocated_memory,
+            values,
+            data_index,
+            type_declaration_map,
+        ),
+        "Snapshot" => decode_snapshot(
+            type_declaration,
+            values,
+            data_index,
+            relocated_memory,
+            type_declaration_map,
+        ),
+        _ => None,
     }
-
-    result
 }
 
-fn handle_bool_case(values: &mut [String], data_index: &mut usize, result: &mut Vec<Value>) {
-    *data_index += 1;
-    if let Some(bool_value) = values
-        .get(*data_index)
-        .and_then(|val| val.parse::<u8>().ok())
-    {
-        let bool_result = create_result_obj(&[], *data_index, "bool", json!(bool_value));
-        result.push(json!(bool_result));
-    }
-}
-
-fn handle_enum_case(
-    values: &mut Vec<String>,
+fn decode_enum(
+    values: &[Felt],
+    debug_name: &str,
     type_declaration: &TypeDeclaration,
     data_index: &mut usize,
-    relocated_memory: &[Option<Felt252>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-    result: &mut Vec<Value>,
-) {
+    relocated_memory: &[Option<Felt>],
+) -> Option<DecodedValue> {
+    if debug_name == "bool" {
+        if let Some(bool_value) = values.get(*data_index) {
+            *data_index += 1;
+            return Some(create_decoded_value(
+                None,
+                "bool",
+                DecodedValueType::Bool(*bool_value != Felt::ZERO),
+            ));
+        }
+    }
     if let Some(value) = values.get(*data_index) {
-        if let Ok(index) = value.parse::<usize>() {
+        if let Some(index) = value.to_usize() {
             if let Some(GenericArg::Type(concrete_type_id)) =
                 type_declaration.long_id.generic_args.get(index + 1)
             {
                 *data_index += 1;
-                let decoded_enum_value = internal_decode_datas(
+                let decoded_enum_value = decode_internal_datas(
                     values,
                     concrete_type_id,
                     type_declaration_map,
                     relocated_memory,
                     data_index,
                 );
-                result.extend(decoded_enum_value);
+                return decoded_enum_value;
             }
         }
     }
+    None
 }
 
-fn decode_array_elements(
+fn decode_span(
+    values: &[Felt],
+    debug_name: &str,
     type_declaration: &TypeDeclaration,
-    array_length: usize,
-    values: &mut Vec<String>,
-    relocated_memory: &[Option<Felt252>],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-) -> Vec<Value> {
-    let mut decoded_array_values = Vec::new();
-    for _ in 0..array_length {
-        for arg in &type_declaration.long_id.generic_args {
-            if let GenericArg::Type(concrete_type_id) = arg {
-                let decoded_element = internal_decode_datas(
-                    values,
-                    concrete_type_id,
-                    type_declaration_map,
-                    relocated_memory,
-                    data_index,
-                );
-                decoded_array_values.extend(
-                    decoded_element
-                        .iter()
-                        .filter_map(|e| e.get("value").cloned())
-                        .collect::<Vec<Value>>(),
-                );
-            }
-        }
+    relocated_memory: &[Option<Felt>],
+) -> Option<DecodedValue> {
+    // Span is a struct with one field, which is the inner array
+    // The inner array type is the second generic argument
+    if let Some(GenericArg::Type(inner_type_id)) = type_declaration.long_id.generic_args.get(1) {
+        decode_internal_datas(
+            values,
+            inner_type_id,
+            type_declaration_map,
+            relocated_memory,
+            data_index,
+        )
+        .map(|decoded_value| create_decoded_value(None, debug_name, decoded_value.value))
+    } else {
+        None
     }
-    decoded_array_values
 }
 
-fn decode_snapshot_elements(
+fn decode_struct(
+    values: &[Felt],
+    debug_name: &str,
     type_declaration: &TypeDeclaration,
-    values: &mut Vec<String>,
     data_index: &mut usize,
-    relocated_memory: &[Option<Felt252>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-) -> Vec<Value> {
-    let mut decoded_snapshot_values = Vec::new();
+    relocated_memory: &[Option<Felt>],
+) -> Option<DecodedValue> {
+    let mut decoded_struct_values =
+        HashMap::with_capacity(type_declaration.long_id.generic_args.len());
 
-    for arg in &type_declaration.long_id.generic_args {
+    for (i, arg) in type_declaration.long_id.generic_args.iter().enumerate() {
         if let GenericArg::Type(concrete_type_id) = arg {
-            let decoded_snapshot = internal_decode_datas(
+            if let Some(decoded_value) = decode_internal_datas(
                 values,
                 concrete_type_id,
                 type_declaration_map,
                 relocated_memory,
                 data_index,
-            );
-
-            for element in decoded_snapshot {
-                if let Some(obj) = element.as_object() {
-                    // Try to retrieve the 'value' field from the decoded element
-                    if let Some(inner_value) = obj.get("value") {
-                        decoded_snapshot_values.push(inner_value.clone());
+            ) {
+                if let DecodedValueType::Struct(inner_map) = decoded_value.value {
+                    for (key, value) in inner_map {
+                        decoded_struct_values.insert(key, value);
                     }
+                } else {
+                    decoded_struct_values.insert(i.to_string(), decoded_value);
                 }
             }
         }
     }
 
-    decoded_snapshot_values
+    (!decoded_struct_values.is_empty()).then(|| {
+        create_decoded_value(
+            None,
+            debug_name,
+            DecodedValueType::Struct(decoded_struct_values),
+        )
+    })
+}
+
+fn decode_array(
+    type_declaration: &TypeDeclaration,
+    debug_name: &str,
+    relocated_memory: &[Option<Felt>],
+    values: &[Felt],
+    data_index: &mut usize,
+    type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+) -> Option<DecodedValue> {
+    let current_index: usize = *data_index;
+
+    let (extracted_length, memory_values) =
+        extract_memory_values(relocated_memory, values, data_index);
+
+    if memory_values.is_empty() {
+        return None;
+    }
+    *data_index = current_index + 2;
+    let decoded_array_values = decode_array_elements_from_memory(
+        type_declaration,
+        extracted_length,
+        &memory_values,
+        relocated_memory,
+        type_declaration_map,
+    );
+
+    let decoded_value = create_decoded_value(
+        None,
+        debug_name,
+        DecodedValueType::Array(decoded_array_values),
+    );
+
+    Some(decoded_value)
+}
+
+fn decode_snapshot(
+    type_declaration: &TypeDeclaration,
+    values: &[Felt],
+    data_index: &mut usize,
+    relocated_memory: &[Option<Felt>],
+    type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+) -> Option<DecodedValue> {
+    if let Some(GenericArg::Type(inner_type_id)) = type_declaration.long_id.generic_args.first() {
+        decode_internal_datas(
+            values,
+            inner_type_id,
+            type_declaration_map,
+            relocated_memory,
+            data_index,
+        )
+    } else {
+        None
+    }
+}
+
+fn decode_array_elements_from_memory(
+    type_declaration: &TypeDeclaration,
+    array_length: usize,
+    memory_values: &[Felt],
+    relocated_memory: &[Option<Felt>],
+    type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+) -> Vec<DecodedValueType> {
+    let mut decoded_array_values = Vec::with_capacity(array_length);
+    if let Some(GenericArg::Type(concrete_type_id)) = type_declaration.long_id.generic_args.first()
+    {
+        let mut index: usize = 0;
+        for _ in 0..array_length {
+            if index >= memory_values.len() {
+                break;
+            }
+            let values_slice = &memory_values[index..];
+            let mut local_data_index = 0;
+
+            if let Some(decoded_value) = decode_internal_datas(
+                values_slice,
+                concrete_type_id,
+                type_declaration_map,
+                relocated_memory,
+                &mut local_data_index,
+            ) {
+                decoded_array_values.push(decoded_value.value);
+                index += local_data_index;
+            }
+        }
+    }
+
+    decoded_array_values
 }
 
 fn extract_memory_values(
-    relocated_memory: &[Option<Felt252>],
-    values: &[String],
+    relocated_memory: &[Option<Felt>],
+    values: &[Felt],
     value_index: &usize,
-) -> (usize, Vec<String>) {
-    if let (Some(start_index), Some(end_index)) = (
-        values
-            .get(*value_index)
-            .and_then(|v| v.parse::<usize>().ok()),
-        values
-            .get(*value_index + 1)
-            .and_then(|v| v.parse::<usize>().ok()),
-    ) {
-        if end_index >= start_index {
-            let size = end_index - start_index + 1;
-            let memory_values: Vec<String> = (start_index..=end_index)
-                .filter_map(|index| {
-                    relocated_memory
-                        .get(index)
-                        .and_then(|v| (*v).map(|inner| inner.to_string()))
-                })
-                .collect();
+) -> (usize, Vec<Felt>) {
+    if let Some(slice) = values.get(*value_index..*value_index + 2) {
+        if let (Some(start_index), Some(end_index)) = (slice[0].to_usize(), slice[1].to_usize()) {
+            if end_index > start_index {
+                let size = end_index - start_index;
+                let memory_values: Vec<Felt> = (start_index..=end_index)
+                    .filter_map(|index| relocated_memory.get(index).and_then(|&v| v))
+                    .collect();
 
-            return (size, memory_values);
+                return (size, memory_values);
+            }
+            if end_index == start_index {
+                return (
+                    1,
+                    vec![relocated_memory
+                        .get(start_index)
+                        .and_then(|&v| v)
+                        .unwrap_or(Felt::ZERO)],
+                );
+            }
         }
     }
-    (0, Vec::new())
+    (0, vec![])
 }

@@ -1,7 +1,8 @@
 use blockifier::abi::abi_utils::selector_from_name;
-use data_decoder::simplify_type_name;
+use data_decoder::common::simplify_type_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
+use std::borrow::Cow;
 use walnut_shared::{Datas, EnumItems, EventItems, StructItems};
 
 pub struct AbiProcessor {
@@ -9,9 +10,9 @@ pub struct AbiProcessor {
     pub entry_point_function_name: Option<String>,
     pub entry_point_interface_name: Option<String>,
     pub is_erc20_token: bool,
-    pub function_arguments_names: Option<Vec<String>>,
-    pub function_arguments_types: Option<Vec<String>>,
-    pub function_return_result_types: Option<Vec<String>>,
+    pub function_arguments_names: Option<Vec<Cow<'static, str>>>,
+    pub function_arguments_types: Option<Vec<Cow<'static, str>>>,
+    pub function_return_result_types: Option<Vec<Cow<'static, str>>>,
     view_and_external_fn_names: Vec<String>,
     pub struct_items: Vec<StructItems>,
     pub enum_items: Vec<EnumItems>,
@@ -36,10 +37,11 @@ impl AbiProcessor {
     }
 
     pub fn process_abi(&mut self, abi: String) {
-        self.process_abi_event(&serde_json::from_str(abi.as_str()).unwrap());
-        self.process_abi_struct(&serde_json::from_str(abi.as_str()).unwrap());
-        self.process_abi_enum(&serde_json::from_str(abi.as_str()).unwrap());
-        self.process_abi_internal(&serde_json::from_str(abi.as_str()).unwrap());
+        let parsed_abi: Vec<Value> = serde_json::from_str(&abi).unwrap();
+        self.process_abi_event(&parsed_abi);
+        self.process_abi_struct(&parsed_abi);
+        self.process_abi_enum(&parsed_abi);
+        self.process_abi_internal(&parsed_abi);
         self.check_if_erc20_token();
     }
 
@@ -245,13 +247,13 @@ impl AbiProcessor {
                     if let Some(Value::String(name)) = input_obj.get("name") {
                         self.function_arguments_names
                             .get_or_insert(Vec::new())
-                            .push(name.clone());
+                            .push(Cow::Owned(name.clone()));
                     }
                     if let Some(Value::String(arg_type)) = input_obj.get("type") {
                         let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_arguments_types
                             .get_or_insert(Vec::new())
-                            .push(simplified_arg_type.clone());
+                            .push(Cow::Owned(simplified_arg_type));
                     }
                 }
             }
@@ -266,7 +268,7 @@ impl AbiProcessor {
                         let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_return_result_types
                             .get_or_insert(Vec::new())
-                            .push(simplified_arg_type.clone());
+                            .push(Cow::Owned(simplified_arg_type));
                     }
                 }
             }
