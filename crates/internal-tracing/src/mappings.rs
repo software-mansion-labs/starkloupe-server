@@ -76,22 +76,18 @@ impl Mappings {
             get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
         let memory_map: HashMap<usize, BigInt> = relocated_memory
             .iter()
-            .filter_map(|x| x.as_ref().map(|_| x.clone().unwrap()))
-            .map(|x| x.to_bigint())
             .enumerate()
-            .map(|(i, v)| (i + 1, v))
+            .filter_map(|(i, x)| x.as_ref().map(|v| (i + 1, v.to_bigint())))
             .collect();
-
         let sierra_program_registry: ProgramRegistry<CoreType, CoreLibfunc> =
             ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).unwrap();
         let type_sizes =
             get_type_size_map(&sierra_program, &sierra_program_registry).unwrap_or_default();
-        let mut type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration> = HashMap::new();
-
-        for declaration in &sierra_program.type_declarations {
-            type_declaration_map.insert(declaration.id.clone(), declaration.clone());
-        }
-
+        let type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration> = sierra_program
+            .type_declarations
+            .iter()
+            .map(|declaration| (declaration.id.clone(), declaration.clone()))
+            .collect();
         // // Print relocated memory
         // let mut ordered_map: BTreeMap<usize, BigInt> = BTreeMap::new();
         // for (k, v) in &memory_map {
