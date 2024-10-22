@@ -1,4 +1,4 @@
-use serde::ser::{Serialize, SerializeStruct, Serializer};
+use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
 
@@ -37,7 +37,7 @@ pub enum DecodedValueType {
     Single(Felt),
     Bool(bool),
     Array(Vec<DecodedValueType>),
-    Struct(HashMap<String, DecodedValue>),
+    Struct(HashMap<usize, DecodedValue>),
     Enum(Box<DecodedValue>),
 }
 
@@ -63,7 +63,15 @@ impl Serialize for DecodedValueType {
             DecodedValueType::Single(value) => value.serialize(serializer),
             DecodedValueType::Bool(value) => serializer.serialize_bool(*value),
             DecodedValueType::Array(values) => values.serialize(serializer),
-            DecodedValueType::Struct(fields) => fields.serialize(serializer),
+            DecodedValueType::Struct(fields) => {
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (key, decoded_value) in fields {
+                    let field_key = key.to_string();
+
+                    map.serialize_entry(&field_key, &decoded_value)?;
+                }
+                map.end()
+            }
             DecodedValueType::Enum(value) => value.serialize(serializer),
         }
     }
@@ -74,11 +82,21 @@ impl Serialize for DecodedValue {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("DecodedValue", 3)?;
-        state.serialize_field("name", &self.name)?;
-        state.serialize_field("type_name", &self.type_name)?;
-        state.serialize_field("value", &self.value)?;
-        state.end()
+        match &self.value {
+            DecodedValueType::Struct(fields) => {
+                let mut state = serializer.serialize_struct("DecodedValue", 2)?;
+                state.serialize_field("type_name", &self.type_name)?;
+                state.serialize_field("value", &fields)?;
+                state.end()
+            }
+            _ => {
+                let mut state = serializer.serialize_struct("DecodedValue", 3)?;
+                state.serialize_field("name", &self.name)?;
+                state.serialize_field("type_name", &self.type_name)?;
+                state.serialize_field("value", &self.value)?;
+                state.end()
+            }
+        }
     }
 }
 

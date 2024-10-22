@@ -232,7 +232,7 @@ fn decode_struct_map(
             ) {
                 let mut decoded_struct_values = HashMap::new();
                 for (key, value) in decoded_struct.into_iter().enumerate() {
-                    decoded_struct_values.insert(key.to_string(), value); // Avoid cloning here
+                    decoded_struct_values.insert(key, value);
                 }
 
                 return Some(DecodedValueType::Struct(decoded_struct_values));
