@@ -2,7 +2,6 @@ use anyhow::Result;
 use blockifier::execution::{
     deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
 };
-use byteorder::{ByteOrder, LittleEndian};
 use cairo_lang_casm::{
     ap_change::ApChange,
     cell_expression::{CellExpression, CellOperator},
@@ -474,11 +473,4 @@ pub fn get_value_from_cell_expression(
             }
         }
     }
-}
-
-fn extend_to_16_bytes(mut buf: Vec<u8>) -> Vec<u8> {
-    if buf.len() < 16 {
-        buf.resize(16, 0);
-    }
-    buf
 }

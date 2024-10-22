@@ -24,3 +24,4 @@ cairo-lang-starknet-classes.workspace = true
 num-integer.workspace = true
 starknet-types-core.workspace = true
 starknet-old.workspace = true
+starknet-selector-decoder.workspace = true

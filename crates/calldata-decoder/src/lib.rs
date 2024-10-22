@@ -1,13 +1,13 @@
 mod starknet_types;
 use serde_json::{json, map::Map, Value};
 use starknet_types::EDataType;
-use walnut_shared::StructItems;
+use walnut_shared::StructAbi;
 
 pub fn decode_datas(
     datas: &Vec<String>,
     types: &Vec<String>,
     names: &Vec<String>,
-    struct_items: &Vec<StructItems>,
+    struct_abis: &Vec<StructAbi>,
     data_index: &mut usize,
 ) -> Vec<Value> {
     let mut result = Vec::new();
@@ -35,12 +35,8 @@ pub fn decode_datas(
                 let mut decoded_array = Vec::new();
                 for _ in 0..array_length {
                     // For the struct type include the type and name of struct memebers
-                    let mut decoded_item = decode_struct_item(
-                        struct_items,
-                        datas,
-                        &inner_type.to_string(),
-                        data_index,
-                    );
+                    let mut decoded_item =
+                        decode_struct_item(struct_abis, datas, &inner_type.to_string(), data_index);
                     if decoded_item.is_empty() {
                         //For the primitive types include only the value
                         // TODO: Fix as index can be out of range here
@@ -67,7 +63,7 @@ pub fn decode_datas(
                 )))
             }
             EDataType::Struct(_) => {
-                let decoded_item = decode_struct_item(struct_items, datas, data_type, data_index);
+                let decoded_item = decode_struct_item(struct_abis, datas, data_type, data_index);
                 result.push(Value::Object(create_result_obj(
                     names,
                     index,
@@ -81,25 +77,25 @@ pub fn decode_datas(
 }
 
 fn decode_struct_item(
-    struct_items: &Vec<StructItems>,
+    struct_abis: &Vec<StructAbi>,
     datas: &Vec<String>,
     data_type: &str,
     data_index: &mut usize,
 ) -> Vec<Value> {
-    if let Some(struct_item) = struct_items.iter().find(|item| item.name == *data_type) {
+    if let Some(struct_abi) = struct_abis.iter().find(|item| item.name == *data_type) {
         decode_datas(
             datas,
-            &struct_item
-                .members
+            &struct_abi
+                .parameters
                 .iter()
-                .map(|m| m.types.clone())
+                .map(|m| m.type_name.clone())
                 .collect(),
-            &struct_item
-                .members
+            &struct_abi
+                .parameters
                 .iter()
-                .map(|m| m.names.clone())
+                .map(|m| m.name.clone())
                 .collect(),
-            struct_items,
+            struct_abis,
             data_index,
         )
     } else {

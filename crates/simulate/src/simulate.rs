@@ -1,0 +1,472 @@
+use blockifier::abi::abi_utils::selector_from_name;
+use blockifier::bouncer::BouncerConfig;
+use blockifier::context::BlockContext;
+use blockifier::context::ChainInfo;
+use blockifier::context::FeeTokenAddresses;
+use blockifier::context::TransactionContext;
+use blockifier::execution::common_hints::ExecutionMode;
+use blockifier::execution::entry_point::CallEntryPoint;
+use blockifier::execution::entry_point::CallType;
+use blockifier::execution::entry_point::EntryPointExecutionContext;
+use blockifier::state::cached_state::CachedState;
+use blockifier::state::errors::StateError;
+use blockifier::transaction::constants;
+use blockifier::transaction::objects::CommonAccountFields;
+use blockifier::transaction::objects::CurrentTransactionInfo;
+use blockifier::transaction::objects::TransactionInfo;
+use blockifier::transaction::transaction_types::TransactionType;
+use blockifier::versioned_constants::VersionedConstants;
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
+use cheatnet::state::BlockInfoReader;
+use cheatnet::state::CheatnetState;
+use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
+use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
+use internal_tracing::SimulationDebuggerData;
+use num_traits::ToPrimitive;
+use sqlx::Pool;
+use sqlx::Postgres;
+use starknet::core::types::ContractClass;
+use starknet::core::types::ExecutionResult;
+use starknet::core::types::Felt;
+use starknet_api::block::BlockNumber;
+use starknet_api::block::BlockTimestamp;
+use starknet_api::core::{ChainId, ContractAddress, PatriciaKey};
+use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::deprecated_contract_class::EntryPointType;
+use starknet_api::transaction::Resource;
+use starknet_api::transaction::ResourceBounds;
+use starknet_api::transaction::ResourceBoundsMapping;
+use starknet_api::transaction::{Calldata, TransactionHash};
+use starknet_api::{contract_address, felt, patricia_key};
+use starknet_providers::Provider;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::usize;
+use url::Url;
+use walnut_shared::decode_felt;
+use walnut_shared::felt_to_field_element;
+use walnut_shared::felt_vec_to_hex_vec;
+use walnut_shared::{
+    chain_id_to_readable_string, create_rpc_client_from_url, ETH_FEE_TOKEN_ADDRESS,
+    STRK_FEE_TOKEN_ADDRESS,
+};
+
+use crate::abi_processor::AbiProcessor;
+use crate::contract_calls_map::ContractCallsMap;
+use crate::contract_calls_map::ContractCallsMapBuilder;
+use crate::contract_names::ContractNamesFetcher;
+use crate::debugger_trace::DebuggerTraceBuilder;
+use crate::function_calls::create_function_calls_map;
+use crate::state::ForkStateReader;
+use crate::transaction_extraction::extract_block_txs_info;
+use crate::transaction_extraction::extract_submitted_tx;
+use crate::transaction_extraction::extract_transaction_receipt;
+use crate::utils::transaction_type_to_string;
+use crate::ContractCall;
+use crate::ContractCallEvent;
+use crate::EventAbi;
+use crate::SimulationArgs;
+use crate::SimulationInfo;
+use crate::TransactionSimulationError;
+use crate::TransactionSimulationResult;
+
+pub async fn simulate(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    args: SimulationArgs,
+) -> Result<(SimulationInfo, BlockTimestamp, usize), TransactionSimulationError> {
+    let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
+    let chain_id = args.chain_id.clone();
+    let (block_timestamp, transaction_index) =
+        extract_block_txs_info(&provider_client, &args).await?;
+
+    let mut cached_fork_state = CachedState::new(
+        ForkStateReader::new(
+            args.rpc_url.clone(),
+            args.block_number.0.clone(),
+            transaction_index,
+        )
+        .map_err(|e| {
+            TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
+        })?,
+    );
+
+    let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
+
+    let ContractCallsMapBuilder {
+        mut contract_calls_map,
+        next_call_id,
+        deepest_failed_contract_call_id,
+        cheatnet_state_detected_events,
+        ..
+    } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state);
+
+    let class_hashes = contract_calls_map.collect_all_class_hashes();
+
+    let classes_debugger_data = fetch_classes_debugger_data(db_pool, s3_client, class_hashes).await;
+
+    let mut function_calls_map = create_function_calls_map(
+        &mut contract_calls_map,
+        next_call_id,
+        &classes_debugger_data,
+    );
+
+    let mut event_abis: Vec<EventAbi> = Vec::new();
+
+    for call in contract_calls_map.0.values_mut() {
+        if let Some(class_hash) = call.entry_point.class_hash {
+            let contract_class = cached_fork_state
+                .state
+                .in_memory_fork_cache
+                .borrow()
+                .get_contract_class(class_hash)
+                .ok();
+            if let Some(contract_class) = contract_class {
+                match contract_class {
+                    ContractClass::Sierra(class) => {
+                        let mut abi_processor =
+                            AbiProcessor::new(call.entry_point.entry_point_selector);
+                        abi_processor.process_abi(class.abi);
+                        call.entry_point_name = abi_processor.entry_point_function_name;
+                        call.entry_point_interface_name = abi_processor.entry_point_interface_name;
+                        call.is_erc20_token = abi_processor.is_erc20_token;
+                        call.arguments_names = abi_processor.function_arguments_names;
+                        call.arguments_types = abi_processor.function_arguments_types;
+                        call.result_types = abi_processor.function_return_result_types;
+                        event_abis.extend(abi_processor.event_abis.into_iter());
+                        let (sierra_version, cairo_version) =
+                            extract_sierra_and_cairo_versions(&class.sierra_program);
+                        call.sierra_version = sierra_version;
+                        call.cairo_version = cairo_version;
+                        call.decode_call_result(&abi_processor.struct_abis);
+                        call.decode_call_arguments(&abi_processor.struct_abis);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let events = get_events_from_cheatnet_state(
+        cheatnet_state_detected_events,
+        &event_abis,
+        &contract_calls_map,
+    );
+
+    ContractNamesFetcher::new(provider_client, chain_id.as_ref())
+        .set_contract_names(&mut contract_calls_map)
+        .await;
+
+    let execution_result =
+        get_execution_result(&mut contract_calls_map.0, deepest_failed_contract_call_id)?;
+
+    if let ExecutionResult::Reverted { reason, .. } = &execution_result {
+        if let Some(call) = contract_calls_map
+            .0
+            .get_mut(&deepest_failed_contract_call_id.unwrap())
+        {
+            call.error_message = Some(reason.clone());
+        }
+    }
+
+    let debugger_trace =
+        DebuggerTraceBuilder::build(&1, &mut function_calls_map, &mut contract_calls_map);
+
+    let simulation_info = SimulationInfo {
+        contract_calls_map,
+        function_calls_map,
+        events,
+        execution_result,
+        simulation_debugger_data: Some(SimulationDebuggerData {
+            classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
+            debugger_trace,
+        }),
+    };
+
+    Ok((simulation_info, block_timestamp, transaction_index))
+}
+
+fn run_simulation(
+    args: SimulationArgs,
+    cached_fork_state: &mut CachedState<ForkStateReader>,
+) -> Result<CheatnetState, TransactionSimulationError> {
+    let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
+
+    let mut execute_call = CallEntryPoint {
+        entry_point_type: EntryPointType::External,
+        entry_point_selector,
+        calldata: Calldata(args.calldata.into()),
+        class_hash: None,
+        code_address: None,
+        storage_address: args.sender_address,
+        caller_address: ContractAddress::default(),
+        call_type: CallType::Call,
+        initial_gas: u64::MAX,
+    };
+
+    let block_info = cached_fork_state.state.get_block_info()?;
+    let chain_info = if let Some(chain_id) = args.chain_id {
+        ChainInfo {
+            chain_id,
+            fee_token_addresses: FeeTokenAddresses {
+                strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
+                eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
+            },
+        }
+    } else {
+        ChainInfo::default()
+    };
+
+    let transaction_context = Arc::new(TransactionContext {
+        block_context: BlockContext::new(
+            block_info.clone(),
+            chain_info,
+            VersionedConstants::latest_constants().clone(),
+            BouncerConfig::default(),
+        ),
+        tx_info: TransactionInfo::Current(CurrentTransactionInfo {
+            common_fields: CommonAccountFields {
+                transaction_hash: TransactionHash::default(),
+                version: args.transaction_version,
+                signature: args.transaction_signature.unwrap_or_default(),
+                nonce: args.nonce.unwrap_or_default(),
+                sender_address: args.sender_address,
+                only_query: false,
+            },
+            resource_bounds: ResourceBoundsMapping(BTreeMap::from([
+                (
+                    Resource::L1Gas,
+                    ResourceBounds {
+                        max_amount: 0,
+                        max_price_per_unit: 1,
+                    },
+                ),
+                (
+                    Resource::L2Gas,
+                    ResourceBounds {
+                        max_amount: 0,
+                        max_price_per_unit: 0,
+                    },
+                ),
+            ])),
+            tip: Default::default(),
+            nonce_data_availability_mode: DataAvailabilityMode::L1,
+            fee_data_availability_mode: DataAvailabilityMode::L1,
+            paymaster_data: Default::default(),
+            account_deployment_data: Default::default(),
+        }),
+    });
+
+    let mut context =
+        EntryPointExecutionContext::new(transaction_context, ExecutionMode::Execute, false)?;
+
+    let mut cheatnet_state = CheatnetState {
+        block_info,
+        ..Default::default()
+    };
+
+    cheatnet_state.trace_data.is_vm_trace_needed = true;
+
+    let _execution_result = execute_call_entry_point(
+        &mut execute_call,
+        cached_fork_state,
+        &mut cheatnet_state,
+        &mut ExecutionResources::default(),
+        &mut context,
+    );
+
+    Ok(cheatnet_state)
+}
+
+pub async fn simulate_by_calldata(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    args: SimulationArgs,
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
+    let nonce: Option<u64> = match args.nonce {
+        Some(nonce) => nonce.0.to_u64(),
+        None => None,
+    };
+    let readable_chain_id = args.chain_id.as_ref().map(chain_id_to_readable_string);
+    let block_number = args.block_number.0;
+    let sender_address = args.sender_address.0.to_string();
+    let calldata = args
+        .calldata
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>();
+
+    let transaction_version: usize = args.transaction_version.0.to_u64().unwrap() as usize;
+    let (simulation_result, block_timestamp, transaction_index_in_block) =
+        simulate(db_pool, s3_client, args).await?;
+
+    Ok(TransactionSimulationResult {
+        simulation_result,
+        chain_id: readable_chain_id,
+        block_number,
+        block_timestamp: block_timestamp.0,
+        transaction_index_in_block,
+        nonce,
+        sender_address,
+        calldata,
+        transaction_version,
+        transaction_type: transaction_type_to_string(TransactionType::InvokeFunction),
+    })
+}
+
+pub async fn simulate_transaction_by_hash(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    rpc_url: Url,
+    tx_hash: String,
+    chain_id: Option<ChainId>,
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
+    let provider_client = create_rpc_client_from_url(rpc_url.clone());
+    let transaction_hash = Felt::from_str(tx_hash.as_str()).unwrap();
+    let transaction = provider_client
+        .get_transaction_by_hash(felt_to_field_element(transaction_hash))
+        .await;
+    if let Ok(transaction) = transaction {
+        if let Some((
+            nonce,
+            sender_address,
+            calldata,
+            transaction_version,
+            transaction_type,
+            signature,
+        )) = extract_submitted_tx(transaction)
+        {
+            let transaction_receipt = provider_client
+                .get_transaction_receipt(felt_to_field_element(transaction_hash))
+                .await;
+
+            if let Ok(transaction_receipt) = transaction_receipt {
+                if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
+                    let (simulation_result, block_timestamp, transaction_index_in_block) =
+                        simulate(
+                            db_pool,
+                            s3_client,
+                            SimulationArgs {
+                                rpc_url,
+                                chain_id: chain_id.clone(),
+                                block_number: BlockNumber(block_number),
+                                nonce: Some(nonce),
+                                sender_address,
+                                calldata: calldata.0.to_vec(),
+                                transaction_version,
+                                transaction_signature: Some(signature),
+                            },
+                        )
+                        .await?;
+                    let calldata = calldata
+                        .0
+                        .iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<String>>();
+                    let nonce = nonce.0.to_u64();
+                    return Ok(TransactionSimulationResult {
+                        simulation_result,
+                        chain_id: chain_id.as_ref().map(chain_id_to_readable_string),
+                        block_number,
+                        block_timestamp: block_timestamp.0,
+                        transaction_index_in_block,
+                        nonce,
+                        sender_address: sender_address.0.to_string(),
+                        calldata,
+                        transaction_version: transaction_version.0.to_u64().unwrap() as usize,
+                        transaction_type: transaction_type_to_string(transaction_type),
+                    });
+                }
+            }
+        }
+    }
+    Err(TransactionSimulationError::TransactionHashNotFound)
+}
+
+fn extract_sierra_and_cairo_versions(sierra_program: &[Felt]) -> (Option<String>, Option<String>) {
+    if sierra_program.len() < 6 {
+        return (None, None);
+    }
+    let sierra_version = format!(
+        "{}.{}.{}",
+        sierra_program[0], sierra_program[1], sierra_program[2]
+    );
+
+    let cairo_version = format!(
+        "{}.{}.{}",
+        sierra_program[3], sierra_program[4], sierra_program[5]
+    );
+
+    (Some(sierra_version), Some(cairo_version))
+}
+
+// TODO
+fn get_events_from_cheatnet_state(
+    cheatnet_state_detected_events: Vec<Event>,
+    event_abis: &Vec<EventAbi>,
+    contract_calls_map: &ContractCallsMap,
+) -> Vec<ContractCallEvent> {
+    let mut events: Vec<ContractCallEvent> = Vec::new();
+    for cheatnet_state_event in cheatnet_state_detected_events {
+        let event_selector = cheatnet_state_event.keys[0].clone();
+        let event_data_hex = felt_vec_to_hex_vec(cheatnet_state_event.data.to_vec());
+        let event_abi = event_abis.iter().find(|abi| {
+            let selector = selector_from_name(&abi.name).0;
+            selector == event_selector
+        });
+
+        let contract_call = contract_calls_map
+            .0
+            .values()
+            .find(|call| call.entry_point.storage_address == cheatnet_state_event.from)
+            .unwrap();
+
+        if let Some(event_abi) = event_abi {
+            let event = ContractCallEvent {
+                contract_call_id: contract_call.call_id,
+                name: event_abi.name.clone(),
+                keys: felt_vec_to_hex_vec(cheatnet_state_event.keys.to_vec()),
+                parameters: event_abi.parameters.clone(),
+                data: event_data_hex,
+            };
+            events.push(event);
+        }
+    }
+
+    events
+}
+
+fn get_execution_result(
+    contract_calls_map: &HashMap<u32, ContractCall>,
+    deepest_contract_call_id: Option<u32>,
+) -> Result<ExecutionResult, TransactionSimulationError> {
+    if let Some(deepest_contract_call_id) = deepest_contract_call_id {
+        if let Some(call) = contract_calls_map.get(&deepest_contract_call_id) {
+            if let CallResult::Failure(failure) = &call.result {
+                match failure {
+                    CallFailure::Panic { panic_data } => match decode_felt(panic_data.to_vec()) {
+                        Ok(decoded) => Ok(ExecutionResult::Reverted { reason: decoded }),
+                        Err(_) => Err(TransactionSimulationError::OtherError(
+                            "Failed to decode revert reason".to_string(),
+                        )),
+                    },
+                    CallFailure::Error { msg } => Ok(ExecutionResult::Reverted {
+                        reason: msg.to_string(),
+                    }),
+                }
+            } else {
+                Ok(ExecutionResult::Succeeded)
+            }
+        } else {
+            unreachable!("deepest_contract_call_id not found in contract_calls_map");
+        }
+    } else {
+        Ok(ExecutionResult::Succeeded)
+    }
+}

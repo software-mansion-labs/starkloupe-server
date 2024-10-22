@@ -9,24 +9,25 @@ use starknet::core::types::{BlockId, BlockTag, ContractStorageDiffItem, Felt, St
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
+use starknet_selector_decoder::get_selector;
 use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
-pub struct EventItems {
+pub struct EventAbi {
     pub name: String,
-    pub members: Vec<Datas>,
+    pub parameters: Vec<Parameter>,
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct Datas {
-    pub names: String,
-    pub types: String,
+pub struct Parameter {
+    pub name: String,
+    pub type_name: String,
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct StructItems {
+pub struct StructAbi {
     pub name: String,
-    pub members: Vec<Datas>,
+    pub parameters: Vec<Parameter>,
 }
 
 pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
@@ -210,4 +211,15 @@ pub fn old_storage_diffs_to_storage_diffs(
                 .collect(),
         })
         .collect()
+}
+
+pub fn get_name_of_entry_point_selector(entry_point_selector: &Felt) -> Option<String> {
+    // additional_info.entry_point_function_selector = Some(entry_point_selector.0.to_string()); TODO
+
+    let entry_point_selector_str = entry_point_selector.to_fixed_hex_string();
+    let selector = get_selector(&entry_point_selector_str);
+    match selector {
+        Some(name) => Some(name.to_string()),
+        None => None,
+    }
 }

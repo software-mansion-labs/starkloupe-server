@@ -1,12 +1,13 @@
-use crate::{mappings::Mappings, utils::is_panic_result};
+use crate::{
+    function_call::FunctionCall, function_calls_map::FunctionCallsMap, mappings::Mappings,
+    utils::is_panic_result,
+};
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use indextree::{Arena, NodeId};
 use serde::Serialize;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
-use walnut_shared::{get_contract_call_id, get_internal_function_call_id};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ContractCall {
@@ -20,24 +21,26 @@ pub enum ESysCall {
 }
 
 #[derive(Debug, Serialize)]
-pub enum DebuggerExecutionTraceEntry {
-    WithLocation(DebuggerExecutionTraceEntryWithLocation),
-    WithContractCall(DebuggerExecutionTraceEntryWithContractCall),
+pub enum DebuggerTraceEntry {
+    WithLocation(DebuggerTraceEntryWithLocation),
+    WithContractCall(DebuggerTraceEntryWithContractCall),
 }
 
 #[derive(Debug, Serialize)]
-pub struct DebuggerExecutionTraceEntryWithContractCall {
-    pub contract_call: ContractCall,
-    pub contract_call_id: String,
+pub struct DebuggerTraceEntryWithContractCall {
+    pub contract_call_id: u32,
+    pub reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct DebuggerExecutionTraceEntryWithLocation {
+#[derive(Debug, Serialize, Clone)]
+pub struct DebuggerTraceEntryWithLocation {
     pub sierra_index: usize,
     pub location_index: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
-    pub function_id: Option<String>,
+    pub contract_call_id: u32,
+    pub fp: usize,
+    pub function_call_id: u32,
 }
 
 pub fn get_internal_call_trace(
@@ -45,11 +48,11 @@ pub fn get_internal_call_trace(
     relocated_memory: &Vec<Option<Felt>>,
     vm_trace: &Vec<RelocatedTraceEntry>,
     sierra_statements_to_cairo_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
-    parent_contract_call_id: &String,
-) -> Result<(
-    InternalFnCallTraceEntryNode,
-    Vec<DebuggerExecutionTraceEntry>,
-)> {
+    function_calls_map: &mut FunctionCallsMap,
+    next_call_id: &mut u32,
+    contract_call_id: u32,
+    contract_call_children_ids: &[u32],
+) -> Result<(Vec<DebuggerTraceEntry>, u32)> {
     let first_vm_trace_entry = vm_trace.first().unwrap();
     let mut prev_fp = first_vm_trace_entry.fp;
 
@@ -69,25 +72,35 @@ pub fn get_internal_call_trace(
             _ => Vec::new(),
         };
 
-    let mut tree = InternalFnCallTraceTree::new(
-        InternalFnCallTraceEntry {
-            id: get_internal_function_call_id(&parent_contract_call_id, first_vm_trace_entry.fp),
-            fn_name: entrypoint_function
-                .and_then(|f| f.id.debug_name.clone())
-                .and_then(|n| Some(n.to_string())),
-            fp: prev_fp,
-            cairo_location: entrypoint_cairo_locations.first().cloned(),
-            arguments: Vec::new(),
-            results: Vec::new(),
-            is_panic_result: false,
-            debugger_execution_trace_step_index: 0,
-            nested_calls_ids: Vec::new(),
-        },
-        parent_contract_call_id.to_owned(),
-    );
+    let mut deepest_panic_result_level = -1;
+    let mut deepest_panic_result_call_id: Option<u32> = None;
+    let mut nesting_level = 0;
+
+    let root_function_call_id = *next_call_id;
+    let root_function_call = FunctionCall {
+        call_id: root_function_call_id,
+        parent_call_id: 0,
+        children_call_ids: Vec::new(),
+        contract_call_id,
+        fn_name: entrypoint_function
+            .and_then(|f| f.id.debug_name.clone())
+            .and_then(|n| Some(n.to_string())),
+        fp: prev_fp,
+        is_deepest_panic_result: false,
+        arguments: Vec::new(),
+        results: Vec::new(),
+        code_location: entrypoint_cairo_locations.first().cloned(),
+        debugger_trace_step_index: None,
+        is_hidden: true, // Hide root function call
+    };
+    *next_call_id += 1;
+    function_calls_map
+        .0
+        .insert(root_function_call_id, root_function_call);
+    let mut current_call_id = root_function_call_id;
 
     // Execution trace of the current contract call that contains data for the debugger
-    let mut debugger_execution_trace: Vec<DebuggerExecutionTraceEntry> = Vec::new();
+    let mut debugger_execution_trace: Vec<DebuggerTraceEntry> = Vec::new();
     // Previous Cairo location: we update this variable only with a Some CodeLocation
     let mut prev_cairo_location: Option<CodeLocation> = None;
 
@@ -96,8 +109,6 @@ pub fn get_internal_call_trace(
     let mut contract_call_index = 0;
 
     for (i, trace_entry) in vm_trace.iter().enumerate() {
-        let new_fp = trace_entry.fp;
-
         // Active Sierra indexes at the current step
         let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
         let first_sierra_index = sierra_indexes
@@ -121,7 +132,7 @@ pub fn get_internal_call_trace(
         let mut results: Vec<InternalFnCallIO> = Vec::new();
         // Contract Call at current step (can be empty)
 
-        if new_fp > prev_fp {
+        if trace_entry.fp > prev_fp {
             // If the FP register increases, that means we have entered a nested function call
             let function =
                 first_sierra_index.and_then(|si| mappings.get_sierra_function_at_sierra_index(&si));
@@ -139,23 +150,40 @@ pub fn get_internal_call_trace(
                 None => Vec::new(),
             };
 
-            let call_entry = InternalFnCallTraceEntry {
-                id: get_internal_function_call_id(&parent_contract_call_id, new_fp),
-                fn_name: function
-                    .and_then(|f| f.id.debug_name.clone())
-                    .and_then(|n| Some(n.to_string())),
-                fp: new_fp,
-                cairo_location: cairo_locations.first().cloned(),
-                arguments: arguments.clone(),
-                results: Vec::new(),
-                is_panic_result: false,
-                debugger_execution_trace_step_index: debugger_execution_trace.len(),
-                nested_calls_ids: Vec::new(),
-            };
+            if function.is_some() {
+                let new_function_call_id = *next_call_id;
+                let function_call = FunctionCall {
+                    call_id: new_function_call_id,
+                    parent_call_id: current_call_id,
+                    children_call_ids: Vec::new(),
+                    contract_call_id,
 
-            // Add the nested call and set it as the current node
-            tree.enter_nested_call(call_entry);
-        } else if new_fp < prev_fp {
+                    fn_name: function
+                        .and_then(|f| f.id.debug_name.clone())
+                        .and_then(|n| Some(n.to_string())),
+                    fp: trace_entry.fp,
+                    is_deepest_panic_result: false,
+                    arguments: arguments.clone(),
+                    results: Vec::new(),
+                    code_location: cairo_locations.first().cloned(),
+                    debugger_trace_step_index: None,
+                    is_hidden: false,
+                };
+                *next_call_id += 1;
+                function_calls_map
+                    .0
+                    .insert(new_function_call_id, function_call);
+                function_calls_map
+                    .0
+                    .get_mut(&current_call_id)
+                    .unwrap()
+                    .children_call_ids
+                    .push(new_function_call_id);
+                current_call_id = new_function_call_id;
+
+                nesting_level += 1;
+            }
+        } else if trace_entry.fp < prev_fp {
             // If the FP register decreases, that means we have exited the function call
             let prev_trace_entry = &vm_trace[i - 1];
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
@@ -170,19 +198,43 @@ pub fn get_internal_call_trace(
                 None => Vec::new(),
             };
 
-            tree.set_results_to_current_node(results.clone());
-            // Return to the parent function call
-            tree.move_to_parent();
+            let parent_call_id = function_calls_map
+                .0
+                .get(&current_call_id)
+                .unwrap()
+                .parent_call_id;
+
+            if parent_call_id != 0 {
+                let parent_call = function_calls_map.0.get(&parent_call_id).unwrap();
+
+                if parent_call.fp == trace_entry.fp {
+                    for result in results.iter() {
+                        if nesting_level > deepest_panic_result_level {
+                            if is_panic_result(&result.type_name) && result.value[0] == "1" {
+                                deepest_panic_result_level = nesting_level;
+                                deepest_panic_result_call_id = Some(current_call_id);
+                            }
+                        }
+                    }
+
+                    let current_function_call =
+                        function_calls_map.0.get_mut(&current_call_id).unwrap();
+                    current_function_call.results = results.clone();
+
+                    // Return to the parent function call
+                    current_call_id = parent_call_id;
+
+                    nesting_level -= 1;
+                }
+            }
         } else {
-            let current_function = tree.get_current_node_data();
+            let current_function_call = function_calls_map.0.get_mut(&current_call_id).unwrap();
             if let Some(cairo_location) = cairo_locations.first() {
-                if current_function.cairo_location.is_none() {
-                    tree.set_cairo_location_to_current_node(cairo_location.clone());
+                if current_function_call.code_location.is_none() {
+                    current_function_call.code_location = Some(cairo_location.clone());
                 }
             }
         }
-        prev_fp = trace_entry.fp;
-        let parent_function_id = get_internal_function_call_id(&parent_contract_call_id, prev_fp);
 
         if let Some(sierra_indexes) = sierra_indexes {
             for sierra_index in sierra_indexes {
@@ -197,13 +249,15 @@ pub fn get_internal_call_trace(
                 for (location_index, cairo_location) in cairo_locations.iter().enumerate() {
                     // If current step is the first step with Cairo location
                     if prev_cairo_location.is_none() {
-                        debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
-                            DebuggerExecutionTraceEntryWithLocation {
+                        debugger_execution_trace.push(DebuggerTraceEntry::WithLocation(
+                            DebuggerTraceEntryWithLocation {
                                 sierra_index,
                                 results: results.clone(),
                                 arguments: arguments.clone(),
                                 location_index,
-                                function_id: Some(parent_function_id.clone()),
+                                contract_call_id,
+                                fp: trace_entry.fp,
+                                function_call_id: current_call_id,
                             },
                         ));
                         // If current step has the same Cairo location as the last step with Cairo location
@@ -213,25 +267,26 @@ pub fn get_internal_call_trace(
                         // If there are arguments or results
                         if results.len() > 0 || arguments.len() > 0 {
                             // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
-                            if let Some(DebuggerExecutionTraceEntry::WithLocation(
-                                last_with_location,
-                            )) = debugger_execution_trace.iter_mut().rev().find(|entry| {
-                                matches!(entry, DebuggerExecutionTraceEntry::WithLocation(_))
-                            }) {
-                                last_with_location.function_id = Some(parent_function_id.clone());
+                            if let Some(DebuggerTraceEntry::WithLocation(last_with_location)) =
+                                debugger_execution_trace.iter_mut().rev().find(|entry| {
+                                    matches!(entry, DebuggerTraceEntry::WithLocation(_))
+                                })
+                            {
                                 last_with_location.results = results.clone();
                                 last_with_location.arguments = arguments.clone();
                             }
                         }
                     // If current step has a different Cairo location than the last step with Cairo location
                     } else {
-                        debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithLocation(
-                            DebuggerExecutionTraceEntryWithLocation {
+                        debugger_execution_trace.push(DebuggerTraceEntry::WithLocation(
+                            DebuggerTraceEntryWithLocation {
                                 sierra_index,
                                 results: results.clone(),
                                 arguments: arguments.clone(),
                                 location_index,
-                                function_id: Some(parent_function_id.clone()),
+                                contract_call_id,
+                                fp: trace_entry.fp,
+                                function_call_id: current_call_id,
                             },
                         ));
                     }
@@ -244,180 +299,40 @@ pub fn get_internal_call_trace(
 
         let system_call = mappings.get_system_call_at_trace_step(relocated_memory, trace_entry);
         match system_call {
-            Some(ESysCall::ContractCall(contract)) => {
-                let contract_call_id =
-                    get_contract_call_id(Some(parent_contract_call_id), contract_call_index);
-                tree.push_contract_call_to_calls_order(&contract_call_id);
-                debugger_execution_trace.push(DebuggerExecutionTraceEntry::WithContractCall(
-                    DebuggerExecutionTraceEntryWithContractCall {
-                        contract_call: contract,
-                        contract_call_id,
+            Some(ESysCall::ContractCall(_contract)) => {
+                function_calls_map
+                    .0
+                    .get_mut(&current_call_id)
+                    .unwrap()
+                    .children_call_ids
+                    .push(contract_call_children_ids[contract_call_index]);
+                debugger_execution_trace.push(DebuggerTraceEntry::WithContractCall(
+                    DebuggerTraceEntryWithContractCall {
+                        contract_call_id: contract_call_children_ids[contract_call_index],
+                        reason: None,
                     },
                 ));
                 contract_call_index += 1;
             }
             None => {}
         }
+
+        prev_fp = trace_entry.fp;
     }
 
-    tree.set_deepest_panic_result();
+    if let Some(deepest_panic_result_call_id) = &deepest_panic_result_call_id {
+        let deepest_panic_call = function_calls_map
+            .0
+            .get_mut(deepest_panic_result_call_id)
+            .unwrap();
+        deepest_panic_call.is_deepest_panic_result = true;
+    }
 
-    Ok((tree.get_root_serializable(), debugger_execution_trace))
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InternalFnCallTraceEntry {
-    pub id: String,
-    pub fn_name: Option<String>,
-    pub fp: usize,
-    pub results: Vec<InternalFnCallIO>,
-    pub arguments: Vec<InternalFnCallIO>,
-    pub cairo_location: Option<CodeLocation>,
-    pub is_panic_result: bool,
-    pub debugger_execution_trace_step_index: usize,
-    pub nested_calls_ids: Vec<String>,
+    Ok((debugger_execution_trace, root_function_call_id))
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InternalFnCallIO {
     pub type_name: Option<String>,
     pub value: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InternalFnCallTraceEntryNode {
-    pub data: InternalFnCallTraceEntry,
-    pub nested_calls: Vec<InternalFnCallTraceEntryNode>,
-}
-
-#[derive(Debug)]
-struct InternalFnCallTraceTree {
-    arena: Arena<InternalFnCallTraceEntry>,
-    current_node: NodeId,
-    root: NodeId,
-    contract_call_id: String,
-}
-
-impl InternalFnCallTraceTree {
-    fn new(root_entry: InternalFnCallTraceEntry, contract_call_id: String) -> Self {
-        let mut arena = Arena::new();
-        let root = arena.new_node(root_entry);
-        InternalFnCallTraceTree {
-            arena,
-            current_node: root,
-            root,
-            contract_call_id,
-        }
-    }
-
-    fn find_max_panic_depth(&mut self, node_id: NodeId, depth: usize, max_depth: &mut usize) {
-        if let Some(node) = self.arena.get(node_id) {
-            let data = &node.get();
-
-            for result in data.results.iter() {
-                if is_panic_result(&result.type_name)
-                    && result.value[0] == "1"
-                    && depth > *max_depth
-                {
-                    *max_depth = depth;
-                }
-            }
-
-            let mut child_id = node.first_child();
-            while let Some(id) = child_id {
-                self.find_max_panic_depth(id, depth + 1, max_depth);
-                child_id = self.arena.get(id).and_then(|n| n.next_sibling());
-            }
-        }
-    }
-
-    fn mark_deepest_panic_node(&mut self, node_id: NodeId, depth: usize, max_depth: usize) {
-        if let Some(node) = self.arena.get_mut(node_id) {
-            let data = &mut node.get_mut();
-
-            data.is_panic_result = false;
-
-            for result in data.results.iter() {
-                if depth == max_depth
-                    && is_panic_result(&result.type_name)
-                    && result.value[0] == "1"
-                {
-                    data.is_panic_result = true;
-                }
-            }
-
-            let mut child_id = node.first_child();
-            while let Some(id) = child_id {
-                self.mark_deepest_panic_node(id, depth + 1, max_depth);
-                child_id = self.arena.get(id).and_then(|n| n.next_sibling());
-            }
-        }
-    }
-
-    fn set_deepest_panic_result(&mut self) {
-        let mut max_depth = 0;
-        self.find_max_panic_depth(self.root, 0, &mut max_depth);
-        self.mark_deepest_panic_node(self.root, 0, max_depth);
-    }
-
-    fn enter_nested_call(&mut self, entry: InternalFnCallTraceEntry) {
-        let contract_call_id = self.contract_call_id.clone();
-        if let Some(node) = self.arena.get_mut(self.current_node) {
-            let data = node.get_mut();
-            data.nested_calls_ids
-                .push(get_internal_function_call_id(&contract_call_id, entry.fp));
-        }
-
-        let child = self.arena.new_node(entry);
-        self.current_node.append(child, &mut self.arena);
-        self.current_node = child;
-    }
-
-    fn push_contract_call_to_calls_order(&mut self, contract_call_id: &String) {
-        if let Some(node) = self.arena.get_mut(self.current_node) {
-            let data = node.get_mut();
-            data.nested_calls_ids.push(contract_call_id.to_string());
-        }
-    }
-
-    fn move_to_parent(&mut self) {
-        let mut ancestors = self.current_node.ancestors(&self.arena);
-        ancestors.next();
-        if let Some(parent) = ancestors.next() {
-            self.current_node = parent;
-        }
-    }
-
-    fn set_results_to_current_node(&mut self, results: Vec<InternalFnCallIO>) {
-        if let Some(node) = self.arena.get_mut(self.current_node) {
-            let data = node.get_mut();
-            data.results = results;
-        }
-    }
-
-    fn get_serializable(&self, node_id: NodeId) -> InternalFnCallTraceEntryNode {
-        let mut nested_calls = Vec::new();
-        for child_node_id in node_id.children(&self.arena) {
-            nested_calls.push(self.get_serializable(child_node_id));
-        }
-        InternalFnCallTraceEntryNode {
-            data: self.arena[node_id].get().clone(),
-            nested_calls,
-        }
-    }
-
-    fn get_root_serializable(&self) -> InternalFnCallTraceEntryNode {
-        self.get_serializable(self.root)
-    }
-
-    fn get_current_node_data(&self) -> &InternalFnCallTraceEntry {
-        &self.arena[self.current_node].get()
-    }
-
-    fn set_cairo_location_to_current_node(&mut self, cairo_location: CodeLocation) {
-        if let Some(node) = self.arena.get_mut(self.current_node) {
-            let data = node.get_mut();
-            data.cairo_location = Some(cairo_location);
-        }
-    }
 }

@@ -1,5 +1,3 @@
-use crate::EventTrace;
-use crate::SimulationCallTrace;
 use futures::future::join_all;
 use serde_json::Value;
 use starknet::core::types::Felt;
@@ -12,6 +10,8 @@ use starknet_providers::Provider;
 use std::collections::{HashMap, HashSet};
 use walnut_shared::felt_to_field_element;
 use walnut_shared::{bytes_to_text, get_voyager_api_url};
+
+use crate::contract_calls_map::ContractCallsMap;
 
 pub struct ContractNamesFetcher {
     provider_client: JsonRpcClient<HttpTransport>,
@@ -41,32 +41,24 @@ impl ContractNamesFetcher {
         }
     }
 
-    pub async fn enhance_trace_with_contract_names(
-        &mut self,
-        simulation_call_trace: &mut SimulationCallTrace,
-        event_traces: &mut Vec<EventTrace>,
-    ) {
-        self.get_contract_addresses(simulation_call_trace);
+    pub async fn set_contract_names(&mut self, contract_calls_map: &mut ContractCallsMap) {
+        self.collect_contract_addresses(contract_calls_map);
         self.token_contract_names = self.fetch_token_contract_names().await;
         if let Some(voyager_api_url) = &self.voyager_api_url {
             self.contract_names = self.fetch_contract_names(voyager_api_url.clone()).await;
         }
-        self.update_simulation_call_trace(simulation_call_trace);
-        for event_trace in &mut event_traces.iter_mut() {
-            self.update_event_trace_with_contract_names(simulation_call_trace, event_trace);
-        }
+        self.update_simulation_call_trace(contract_calls_map);
     }
 
-    fn get_contract_addresses(&mut self, simulation_call_trace: &SimulationCallTrace) {
-        if simulation_call_trace.additional_info.is_erc20_token {
-            self.token_addresses
-                .insert(simulation_call_trace.entry_point.storage_address);
-        } else {
-            self.contract_addresses
-                .insert(simulation_call_trace.entry_point.storage_address);
-        }
-        for nested_call in &simulation_call_trace.nested_calls {
-            self.get_contract_addresses(nested_call);
+    fn collect_contract_addresses(&mut self, contract_calls_map: &mut ContractCallsMap) {
+        for call in contract_calls_map.0.values() {
+            if call.is_erc20_token {
+                self.token_addresses
+                    .insert(call.entry_point.storage_address);
+            } else {
+                self.contract_addresses
+                    .insert(call.entry_point.storage_address);
+            }
         }
     }
 
@@ -190,66 +182,21 @@ impl ContractNamesFetcher {
         }
     }
 
-    fn update_simulation_call_trace(&self, simulation_call_trace: &mut SimulationCallTrace) {
-        if let Some(contract_name) = self
-            .token_contract_names
-            .get(&simulation_call_trace.entry_point.storage_address)
-        {
-            simulation_call_trace.additional_info.erc20_token_name = contract_name.name.clone();
-            simulation_call_trace.additional_info.erc20_token_symbol = contract_name.symbol.clone();
-        }
-
-        if let Some(contract_name) = self
-            .contract_names
-            .get(&simulation_call_trace.entry_point.storage_address)
-        {
-            simulation_call_trace.additional_info.contract_name = contract_name.name.clone();
-        }
-        for nested_call in &mut simulation_call_trace.nested_calls {
-            self.update_simulation_call_trace(nested_call);
-        }
-    }
-
-    fn update_event_trace_with_contract_names(
-        &self,
-        simulation_call_trace: &SimulationCallTrace,
-        event_trace: &mut EventTrace,
-    ) {
-        let storage_address_formatted = format!(
-            "0x{:0>64}",
-            simulation_call_trace
-                .entry_point
-                .storage_address
-                .0
-                .to_string()
-                .trim_start_matches("0x")
-        );
-        if storage_address_formatted == event_trace.contract_name {
-            let contract_name = simulation_call_trace.additional_info.contract_name.clone();
-            match contract_name {
-                Some(name) => {
-                    event_trace.contract_name = name;
+    fn update_simulation_call_trace(&self, contract_calls_map: &mut ContractCallsMap) {
+        for call in contract_calls_map.0.values_mut() {
+            if call.is_erc20_token {
+                if let Some(contract_name) = self
+                    .token_contract_names
+                    .get(&call.entry_point.storage_address)
+                {
+                    call.erc20_token_name = contract_name.name.clone();
+                    call.erc20_token_symbol = contract_name.symbol.clone();
                 }
-                None => {
-                    let token_name = simulation_call_trace
-                        .additional_info
-                        .erc20_token_name
-                        .clone()
-                        .unwrap_or_default();
-                    let token_symbol = simulation_call_trace
-                        .additional_info
-                        .erc20_token_symbol
-                        .clone()
-                        .unwrap_or_default();
-                    if !token_name.is_empty() && !token_symbol.is_empty() {
-                        event_trace.contract_name = format!("{} ({})", token_name, token_symbol);
-                    }
-                }
+            } else if let Some(contract_name) =
+                self.contract_names.get(&call.entry_point.storage_address)
+            {
+                call.contract_name = contract_name.name.clone();
             }
-        }
-
-        for nested_call in &simulation_call_trace.nested_calls {
-            self.update_event_trace_with_contract_names(nested_call, event_trace)
         }
     }
 }

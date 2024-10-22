@@ -1,7 +1,7 @@
 use blockifier::abi::abi_utils::selector_from_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
-use walnut_shared::{Datas, EventItems, StructItems};
+use walnut_shared::{EventAbi, Parameter, StructAbi};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,
@@ -12,8 +12,8 @@ pub struct AbiProcessor {
     pub function_arguments_types: Option<Vec<String>>,
     pub function_return_result_types: Option<Vec<String>>,
     view_and_external_fn_names: Vec<String>,
-    pub struct_items: Vec<StructItems>,
-    pub event_items: Vec<EventItems>,
+    pub struct_abis: Vec<StructAbi>,
+    pub event_abis: Vec<EventAbi>,
 }
 
 impl AbiProcessor {
@@ -27,8 +27,8 @@ impl AbiProcessor {
             function_arguments_types: None,
             function_return_result_types: None,
             view_and_external_fn_names: Vec::new(),
-            struct_items: Vec::new(),
-            event_items: Vec::new(),
+            struct_abis: Vec::new(),
+            event_abis: Vec::new(),
         }
     }
 
@@ -63,18 +63,18 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let event_item = EventItems {
+                let event_item = EventAbi {
                     name: name.rsplit("::").next().unwrap().to_string(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.event_items.push(event_item);
+                self.event_abis.push(event_item);
             }
         }
     }
@@ -87,9 +87,9 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
@@ -111,18 +111,18 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let event_item = EventItems {
+                let event_item = EventAbi {
                     name: name.rsplit("::").next().unwrap().to_string(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.event_items.push(event_item);
+                self.event_abis.push(event_item);
             }
         }
     }
@@ -145,18 +145,18 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let struct_item = StructItems {
+                let struct_item = StructAbi {
                     name: name.clone(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.struct_items.push(struct_item);
+                self.struct_abis.push(struct_item);
             }
         }
     }
