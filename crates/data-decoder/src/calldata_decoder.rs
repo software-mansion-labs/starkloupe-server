@@ -128,31 +128,45 @@ fn decode_enum(
         if let Some(variant_index) = variant_index_felt.to_usize() {
             *data_index += 1;
 
-            enums
-                .and_then(|e| e.iter().find(|item| item.name == data_type))
-                .and_then(|enum_item| enum_item.members.get(variant_index))
-                .and_then(|enum_member| {
+            if let Some(enum_item) =
+                enums.and_then(|e| e.iter().find(|item| item.name == data_type))
+            {
+                if let Some(enum_member) = enum_item.members.get(variant_index) {
                     let variant_name = &enum_member.names;
                     let variant_type = &enum_member.types;
 
-                    decode_calldata(
-                        &datas[*data_index..],
-                        &[Cow::Borrowed(variant_type)],
-                        &[Cow::Borrowed(variant_name)],
-                        structs,
-                        enums,
-                        data_index,
-                    )
-                    .and_then(|mut decoded_variants| decoded_variants.pop())
-                    .map(|decoded_variant| {
-                        create_decoded_value(
+                    if variant_type.trim().is_empty() {
+                        return Some(create_decoded_value(
                             Some(variant_name),
-                            variant_type,
-                            decoded_variant.value,
+                            data_type,
+                            DecodedValueType::String(variant_name.to_string()),
+                        ));
+                    } else {
+                        return decode_calldata(
+                            &datas[*data_index..],
+                            &[Cow::Borrowed(variant_type)],
+                            &[Cow::Borrowed(variant_name)],
+                            structs,
+                            enums,
+                            data_index,
                         )
-                    })
-                });
+                        .and_then(|mut decoded_variants| decoded_variants.pop())
+                        .map(|decoded_variant| {
+                            create_decoded_value(
+                                Some(variant_name),
+                                variant_type,
+                                decoded_variant.value,
+                            )
+                        });
+                    }
+                }
+            }
         }
+        return Some(create_decoded_value(
+            None,
+            data_type,
+            DecodedValueType::Single(*variant_index_felt),
+        ));
     }
     None
 }

@@ -186,15 +186,16 @@ impl AbiProcessor {
                     if let Value::Object(variant_obj) = variant {
                         let variant_name = variant_obj.get("name").unwrap().as_str().unwrap();
                         let variant_type = variant_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_variant_type = simplify_type_name(variant_type);
                         let data = Datas {
                             names: variant_name.to_string(),
-                            types: variant_type.to_string(),
+                            types: simplified_variant_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
                 let enum_items = EnumItems {
-                    name: name.clone(),
+                    name: simplify_type_name(name.as_str()),
                     members: datas,
                 };
                 self.enum_items.push(enum_items);

@@ -82,21 +82,11 @@ impl Serialize for DecodedValue {
     where
         S: Serializer,
     {
-        match &self.value {
-            DecodedValueType::Struct(fields) => {
-                let mut state = serializer.serialize_struct("DecodedValue", 2)?;
-                state.serialize_field("type_name", &self.type_name)?;
-                state.serialize_field("value", &fields)?;
-                state.end()
-            }
-            _ => {
-                let mut state = serializer.serialize_struct("DecodedValue", 3)?;
-                state.serialize_field("name", &self.name)?;
-                state.serialize_field("type_name", &self.type_name)?;
-                state.serialize_field("value", &self.value)?;
-                state.end()
-            }
-        }
+        let mut state = serializer.serialize_struct("DecodedValue", 3)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("type_name", &self.type_name)?;
+        state.serialize_field("value", &self.value)?;
+        state.end()
     }
 }
 
