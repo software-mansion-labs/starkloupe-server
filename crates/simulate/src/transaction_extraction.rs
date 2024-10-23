@@ -1,16 +1,30 @@
-use blockifier::transaction::transaction_types::TransactionType;
-use starknet::core::types::Felt;
-use starknet_api::block::BlockTimestamp;
-use starknet_api::core::{ContractAddress, Nonce};
-use starknet_api::transaction::TransactionVersion;
-use starknet_api::transaction::{Calldata, TransactionSignature};
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
-use std::usize;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::vec_field_element_to_vec_felt;
+
+use blockifier::blockifier::block::BlockInfo;
+use blockifier::bouncer::BouncerConfig;
+use blockifier::context::TransactionContext;
+use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
+use blockifier::transaction::objects::{
+    CommonAccountFields, CurrentTransactionInfo, TransactionInfo,
+};
+use blockifier::transaction::transaction_types::TransactionType;
+use blockifier::versioned_constants::VersionedConstants;
+use starknet::core::types::Felt;
+use starknet_api::block::BlockTimestamp;
+use std::sync::Arc;
+
+use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::transaction::{
+    Calldata, ResourceBoundsMapping, TransactionHash, TransactionSignature, TransactionVersion,
+};
+use starknet_api::{contract_address, felt, patricia_key};
+use walnut_shared::{ETH_FEE_TOKEN_ADDRESS, STRK_FEE_TOKEN_ADDRESS};
 
 use crate::SimulationArgs;
 use crate::TransactionSimulationError;
@@ -145,7 +159,7 @@ pub fn extract_transaction_index(
 }
 
 // TODO: Find a better way to do this
-pub fn match_transaction(tx: &starknet_old_types::Transaction, args: &SimulationArgs) -> bool {
+fn match_transaction(tx: &starknet_old_types::Transaction, args: &SimulationArgs) -> bool {
     let sender_address = Felt::from(*args.sender_address.0);
     let nonce = args.nonce.as_ref().map(|n| Felt::from(n.0));
     match tx {
@@ -249,4 +263,52 @@ pub fn match_transaction(tx: &starknet_old_types::Transaction, args: &Simulation
             }
         }
     }
+}
+
+pub fn extract_transaction_contex(
+    sender_address: &ContractAddress,
+    transaction_version: &TransactionVersion,
+    transaction_signature: &Option<TransactionSignature>,
+    transaction_hash: &Option<TransactionHash>,
+    nonce: &Option<Nonce>,
+    chain_id: Option<ChainId>,
+    block_info: &BlockInfo,
+) -> Arc<TransactionContext> {
+    // Create a chain-specific block context
+    let chain_info = if let Some(chain_id) = chain_id {
+        ChainInfo {
+            chain_id,
+            fee_token_addresses: FeeTokenAddresses {
+                strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
+                eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
+            },
+        }
+    } else {
+        ChainInfo::default()
+    };
+
+    Arc::new(TransactionContext {
+        block_context: BlockContext::new(
+            block_info.clone(),
+            chain_info,
+            VersionedConstants::latest_constants().clone(),
+            BouncerConfig::default(),
+        ),
+        tx_info: TransactionInfo::Current(CurrentTransactionInfo {
+            common_fields: CommonAccountFields {
+                transaction_hash: transaction_hash.unwrap_or_default(),
+                version: *transaction_version,
+                signature: transaction_signature.clone().unwrap_or_default(),
+                nonce: nonce.unwrap_or_default(),
+                sender_address: *sender_address,
+                only_query: false,
+            },
+            resource_bounds: ResourceBoundsMapping::default(),
+            tip: Default::default(),
+            nonce_data_availability_mode: DataAvailabilityMode::L1,
+            fee_data_availability_mode: DataAvailabilityMode::L1,
+            paymaster_data: Default::default(),
+            account_deployment_data: Default::default(),
+        }),
+    })
 }
