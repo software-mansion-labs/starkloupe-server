@@ -1,7 +1,6 @@
-use crate::common::{
-    create_decoded_value, simplify_type_name, skip_builtin_type_declaration, DecodedValue,
-    DecodedValueType,
-};
+use crate::constants::NONE_VALUE_MSG;
+use crate::utils::{simplify_type_name, skip_builtin_type_declaration};
+use crate::{create_decoded_value, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use num_traits::cast::ToPrimitive;
@@ -102,6 +101,13 @@ fn decode_enum(
         if let Some(index) = value.to_usize() {
             *data_index += 1;
             if let Some(GenericArg::Type(concrete_type_id)) = generic_args.get(index + 1) {
+                if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
+                    return Some(create_decoded_value(
+                        None,
+                        debug_name,
+                        DecodedValueType::String(NONE_VALUE_MSG.to_string()),
+                    ));
+                }
                 let decoded_enum_value = decode_internal_datas(
                     values,
                     concrete_type_id,

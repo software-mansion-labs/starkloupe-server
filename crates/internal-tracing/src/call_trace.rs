@@ -1,7 +1,7 @@
 use crate::{mappings::Mappings, utils::is_panic_result};
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use data_decoder::common::DecodedValue;
+use data_decoder::DecodedValue;
 use indextree::{Arena, NodeId};
 use serde::Serialize;
 use serde_json::Value;

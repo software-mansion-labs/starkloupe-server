@@ -1,5 +1,5 @@
 use blockifier::abi::abi_utils::selector_from_name;
-use data_decoder::common::simplify_type_name;
+use data_decoder::utils::simplify_type_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
 use std::borrow::Cow;

@@ -36,7 +36,7 @@ use cheatnet::state::CallTraceNode;
 use cheatnet::state::CheatnetState;
 use contract_names::ContractNamesFetcher;
 use data_decoder::calldata_decoder::decode_calldata;
-use data_decoder::common::DecodedValue;
+use data_decoder::DecodedValue;
 use event_abi::{EventAbi, EventAbiStore};
 use internal_tracing::call_trace::InternalFnCallTraceEntryNode;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
@@ -716,16 +716,6 @@ fn get_event_trace(events: &Vec<Event>, event_store: &EventAbiStore) -> Vec<Even
     }
 
     events_trace
-}
-
-fn find_call_trace(event_store: &EventAbiStore, contract_name: &str) -> Option<Vec<EventAbi>> {
-    event_store
-        .event_abis
-        .iter()
-        .filter(|event_abi| event_abi.event_name == contract_name)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into()
 }
 
 pub async fn simulate_by_data(

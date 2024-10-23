@@ -1,0 +1,22 @@
+pub const NONE_VALUE_MSG: &str = "NONE";
+pub const SKIP_BUILTIN_TYPES: &[&str] = &[
+    "Const",
+    "Step",
+    "Hole",
+    "GasBuiltin",
+    "ContractState",
+    "ComponentState",
+    "Bitwise",
+    "BuiltinCosts",
+    "EcOp",
+    "RangeCheck",
+    "SegmentArena",
+    "Poseidon",
+    "Pedersen",
+    "RangeCheck96",
+    "CircuitAdd",
+    "CircuitMul",
+    "Gas",
+    "System",
+    "()",
+];

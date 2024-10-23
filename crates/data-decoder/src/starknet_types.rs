@@ -44,7 +44,7 @@ impl fmt::Display for EDataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EDataType::Primitive(primitive) => write!(f, "{:?}", primitive),
-            EDataType::Array(inner_type) => write!(f, "Array<{:?}>", inner_type),
+            EDataType::Array(inner_type) => write!(f, "Array<{}>", inner_type),
             EDataType::Struct(name) => write!(f, "{}", name),
             EDataType::Tuple(inner_types) => {
                 let formatted_types: Vec<String> =

@@ -17,13 +17,9 @@ use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKin
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use data_decoder::{
-    common::{
-        create_decoded_value, simplify_type_name, skip_builtin_type_declaration, DecodedValue,
-        DecodedValueType,
-    },
-    internal_function_decoder::decode_internal_datas,
-};
+use data_decoder::internal_function_decoder::decode_internal_datas;
+use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
+use data_decoder::{create_decoded_value, DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
