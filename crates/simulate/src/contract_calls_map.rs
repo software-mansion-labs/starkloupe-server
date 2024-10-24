@@ -1,3 +1,4 @@
+use crate::contract_call::ContractCall;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
@@ -5,8 +6,6 @@ use cheatnet::state::CheatnetState;
 use serde::Serialize;
 use std::cell::Ref;
 use std::collections::HashMap;
-
-use crate::contract_call::ContractCall;
 
 #[derive(Debug, Serialize)]
 pub struct ContractCallsMap(pub HashMap<u32, ContractCall>);
