@@ -4,14 +4,14 @@ use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use walnut_shared::{EnumItems, StructItems};
+use walnut_shared::{EnumAbi, StructAbi};
 
 pub fn decode_calldata(
     datas: &[Felt],
     types: &[Cow<str>],
     names: &[Cow<str>],
-    structs: Option<&Vec<StructItems>>,
-    enums: Option<&Vec<EnumItems>>,
+    structs: Option<&[StructAbi]>,
+    enums: Option<&[EnumAbi]>,
     data_index: &mut usize,
 ) -> Option<Vec<DecodedValue>> {
     let mut result = Vec::new();
@@ -80,8 +80,8 @@ fn decode_array(
     name: Option<&str>,
     datas: &[Felt],
     data_index: &mut usize,
-    structs: Option<&Vec<StructItems>>,
-    enums: Option<&Vec<EnumItems>>,
+    structs: Option<&[StructAbi]>,
+    enums: Option<&[EnumAbi]>,
     data_type: &str,
     inner_type: &str,
 ) -> Option<DecodedValue> {
@@ -120,17 +120,17 @@ fn decode_enum(
     datas: &[Felt],
     data_index: &mut usize,
     data_type: &str,
-    enums: Option<&Vec<EnumItems>>,
-    structs: Option<&Vec<StructItems>>,
+    enums: Option<&[EnumAbi]>,
+    structs: Option<&[StructAbi]>,
 ) -> Option<DecodedValue> {
     if let Some(variant_index_felt) = datas.get(*data_index) {
         if let Some(enum_item) = enums.and_then(|e| e.iter().find(|item| item.name == data_type)) {
             if let Some(variant_index) = variant_index_felt.to_usize() {
                 *data_index += 1;
 
-                if let Some(enum_member) = enum_item.members.get(variant_index) {
-                    let variant_name = &enum_member.names;
-                    let variant_type = &enum_member.types;
+                if let Some(enum_member) = enum_item.parameters.get(variant_index) {
+                    let variant_name = &enum_member.name;
+                    let variant_type = &enum_member.type_name;
 
                     if variant_type.trim().is_empty() {
                         return Some(create_decoded_value(
@@ -175,8 +175,8 @@ fn decode_tuple(
     datas: &[Felt],
     data_index: &mut usize,
     inner_types: &[String],
-    structs: Option<&Vec<StructItems>>,
-    enums: Option<&Vec<EnumItems>>,
+    structs: Option<&[StructAbi]>,
+    enums: Option<&[EnumAbi]>,
 ) -> Option<DecodedValue> {
     let mut decoded_values: Vec<DecodedValueType> = Vec::new();
     for inner_type in inner_types {
@@ -205,8 +205,8 @@ fn decode_struct(
     datas: &[Felt],
     data_index: &mut usize,
     data_type: &str,
-    structs: Option<&Vec<StructItems>>,
-    enums: Option<&Vec<EnumItems>>,
+    structs: Option<&[StructAbi]>,
+    enums: Option<&[EnumAbi]>,
 ) -> Option<DecodedValue> {
     let struct_map = decode_struct_map(datas, data_index, data_type, structs, enums);
     (struct_map.is_some()).then(|| create_decoded_value(name, data_type, struct_map.unwrap()))
@@ -216,22 +216,22 @@ fn decode_struct_map(
     datas: &[Felt],
     data_index: &mut usize,
     data_type: &str,
-    structs: Option<&Vec<StructItems>>,
-    enums: Option<&Vec<EnumItems>>,
+    structs: Option<&[StructAbi]>,
+    enums: Option<&[EnumAbi]>,
 ) -> Option<DecodedValueType> {
     if let Some(structs) = structs {
         if let Some(struct_item) = structs.iter().find(|item| item.name.contains(data_type)) {
             // Collect the types and names as Vec<Cow<str>>
             let types: Vec<Cow<str>> = struct_item
-                .members
+                .parameters
                 .iter()
-                .map(|m| Cow::Borrowed(m.types.as_str())) // Borrowed &str to Cow<str>
+                .map(|m| Cow::Borrowed(m.type_name.as_str())) // Borrowed &str to Cow<str>
                 .collect();
 
             let names: Vec<Cow<str>> = struct_item
-                .members
+                .parameters
                 .iter()
-                .map(|m| Cow::Borrowed(m.names.as_str())) // Borrowed &str to Cow<str>
+                .map(|m| Cow::Borrowed(m.name.as_str())) // Borrowed &str to Cow<str>
                 .collect();
 
             if let Some(decoded_struct) =

@@ -1,5 +1,5 @@
 use std::fmt;
-use walnut_shared::EnumItems;
+use walnut_shared::EnumAbi;
 
 #[derive(Debug)]
 pub enum EDataType {
@@ -97,7 +97,7 @@ impl EEnumType {
     }
 }
 impl EDataType {
-    pub fn from_str(s: &str, enum_items: Option<&Vec<EnumItems>>) -> Self {
+    pub fn from_str(s: &str, enum_abis: Option<&[EnumAbi]>) -> Self {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
             return Self::Primitive(primitive);
         }
@@ -108,13 +108,13 @@ impl EDataType {
         {
             let inner_start_index = s.find('<').unwrap() + 1;
             let inner_type = &s[inner_start_index..s.len() - 1];
-            return Self::Array(Box::new(Self::from_str(inner_type, enum_items)));
+            return Self::Array(Box::new(Self::from_str(inner_type, enum_abis)));
         }
         if s.starts_with("Tuple") || (s.starts_with("(") && s.ends_with(")")) {
             let inner_types = extract_inner_types(s);
             return Self::Tuple(inner_types);
         }
-        if let Some(items) = enum_items {
+        if let Some(items) = enum_abis {
             if items.iter().any(|item| item.name == s) {
                 return Self::UserEnum(s.to_string());
             }

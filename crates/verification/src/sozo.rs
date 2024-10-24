@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::utils::Manifest;
 use crate::ClassVerificationData;
 
-pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[11, 12, 13];
+pub const SUPPORTED_DOJO_ALPHA_VERSIONS: &[u8] = &[11, 12, 13, 14, 15, 16];
 
 fn run_sozo_build(
     tmp_dir: &PathBuf,

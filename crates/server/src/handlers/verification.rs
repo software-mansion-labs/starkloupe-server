@@ -173,11 +173,22 @@ fn check_api_key(api_key: &str) -> Result<i32> {
     match api_key {
         "walnut_ZFqJep8VrMB_LfUXdSeKxJAxNz9AC6rdLK" => Ok(1), // Walnut Project
         "walnut_cntgR78e35j_SjkgMzV0KrNykHY9F0pVjB" => Ok(8), // Cartridge Project
-        "walnut_V7PlxSbPrpx_aalIqha6AqZwK0bB3juEzC" => Ok(9), // Unassigned
-        "walnut_83emw3JcDMt_C6qXwh24Ni8ZmnMO5ni8c3" => Ok(10), // Unassigned
-        "walnut_h2MmwIU99ru_2O4JkLWmNm9E6i9UXdpgFl" => Ok(11), // Unassigned
-        "walnut_80tR2Eelg9Y_MzFziveCu37HjUBaUJGKr4" => Ok(12), // Unassigned
-        "walnut_UAMEr3IpvRQ_tCjW5QYcf07mvE5T8mQgL6" => Ok(13), // Unassigned
+        "walnut_V7PlxSbPrpx_aalIqha6AqZwK0bB3juEzC" => Ok(9),
+        "walnut_83emw3JcDMt_C6qXwh24Ni8ZmnMO5ni8c3" => Ok(10),
+        "walnut_h2MmwIU99ru_2O4JkLWmNm9E6i9UXdpgFl" => Ok(11),
+        "walnut_80tR2Eelg9Y_MzFziveCu37HjUBaUJGKr4" => Ok(12),
+        "walnut_UAMEr3IpvRQ_tCjW5QYcf07mvE5T8mQgL6" => Ok(13),
+
+        "walnut_tW5YiM75v9a_MRmjmAu1qGiRZ2dDNN323o" => Ok(14),
+        "walnut_SlmxTnqPEST_C41RY5wE5ycbhU4XoJjlcm" => Ok(15),
+        "walnut_XIuhAujgaaF_PtjWmx3kUlZsJWTmJ2dTAw" => Ok(16),
+        "walnut_S6kKZutIQlQ_jR79512PTly2JOukqhf785" => Ok(17),
+        "walnut_RQ3pC4cqOkk_fIyCmODlj8NK6L1E7rPEP3" => Ok(18),
+        "walnut_StoZLiQGqw2_HozDhQQ8CcPOsqu2POzObD" => Ok(19),
+        "walnut_bz6AXYZUe1o_jk9s4CzvK1PfYvSDEOSmcu" => Ok(20),
+        "walnut_ED6LtVdJdxX_U4HfCT4WIc6GCi3E8AMZGq" => Ok(21),
+        "walnut_LGXu5j6klpv_01I25NQEKBRanv0ntJbz5d" => Ok(22),
+        "walnut_593mlD3yTTF_yquD5HzXrdb1h5DmdSwmoy" => Ok(23),
         _ => Err(anyhow::anyhow!("Invalid API key")),
     }
 }

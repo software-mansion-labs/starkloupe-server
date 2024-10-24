@@ -7,10 +7,15 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use simulate::{simulate_by_data, simulate_transaction_by_hash, SimulationArgs, SimulationRawArgs};
+use simulate::{
+    simulate::{simulate_by_calldata, simulate_transaction_by_hash},
+    SimulationArgs, SimulationRawArgs,
+};
 use std::sync::Arc;
+use axum::extract::Query;
 use url::Url;
 use walnut_shared::{extract_chain_id, rpc_url};
+use crate::telegram_bot_service::send_telegram_notification;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum SimulationPayload {
@@ -22,6 +27,12 @@ pub enum SimulationPayload {
 pub struct SimulationTxHashArgs {
     pub rpc_url: String,
     pub tx_hash: String,
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct QueryParams {
+    skip_tracking: Option<String>,
 }
 
 #[debug_handler]
@@ -36,7 +47,7 @@ pub async fn simulate_transaction(
                 Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
             };
 
-            simulate_by_data(&state.db_pool, &state.s3_client, simulation_args).await
+            simulate_by_calldata(&state.db_pool, &state.s3_client, simulation_args).await
         }
         SimulationPayload::WithTxHash(args) => {
             let rpc_url = match Url::parse(&args.rpc_url) {
@@ -64,11 +75,17 @@ pub async fn simulate_transaction(
 pub async fn simulate_transaction_by_hash_handler(
     State(state): State<Arc<AppState>>,
     Path((chain_id, tx_hash)): Path<(String, String)>,
+    Query(query_params): Query<QueryParams>,
 ) -> Response {
     let chain_id = match extract_chain_id(chain_id.as_str()) {
         Ok(chain_id) => chain_id,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
+
+    // don't sent Telegram notification if query param skip_tg_notification=true (it set in URLs sent to tg bot)
+    if !query_params.skip_tracking.unwrap_or(String::new()).eq("true") {
+        send_telegram_notification(tx_hash.as_str(), &chain_id).await.unwrap();
+    }
 
     let rpc_url = rpc_url(&chain_id);
 

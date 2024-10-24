@@ -3,7 +3,7 @@ use data_decoder::utils::simplify_type_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
 use std::borrow::Cow;
-use walnut_shared::{Datas, EnumItems, EventItems, StructItems};
+use walnut_shared::{EnumAbi, EventAbi, Parameter, StructAbi};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,
@@ -14,9 +14,9 @@ pub struct AbiProcessor {
     pub function_arguments_types: Option<Vec<Cow<'static, str>>>,
     pub function_return_result_types: Option<Vec<Cow<'static, str>>>,
     view_and_external_fn_names: Vec<String>,
-    pub struct_items: Vec<StructItems>,
-    pub enum_items: Vec<EnumItems>,
-    pub event_items: Vec<EventItems>,
+    pub enum_abis: Vec<EnumAbi>,
+    pub struct_abis: Vec<StructAbi>,
+    pub event_abis: Vec<EventAbi>,
 }
 
 impl AbiProcessor {
@@ -30,9 +30,9 @@ impl AbiProcessor {
             function_arguments_types: None,
             function_return_result_types: None,
             view_and_external_fn_names: Vec::new(),
-            struct_items: Vec::new(),
-            enum_items: Vec::new(),
-            event_items: Vec::new(),
+            enum_abis: Vec::new(),
+            struct_abis: Vec::new(),
+            event_abis: Vec::new(),
         }
     }
 
@@ -69,18 +69,18 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let event_item = EventItems {
+                let event_item = EventAbi {
                     name: name.rsplit("::").next().unwrap().to_string(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.event_items.push(event_item);
+                self.event_abis.push(event_item);
             }
         }
     }
@@ -93,9 +93,9 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
@@ -117,18 +117,18 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let event_item = EventItems {
+                let event_item = EventAbi {
                     name: name.rsplit("::").next().unwrap().to_string(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.event_items.push(event_item);
+                self.event_abis.push(event_item);
             }
         }
     }
@@ -152,18 +152,18 @@ impl AbiProcessor {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
                         let simplified_member_type = simplify_type_name(member_type);
-                        let data = Datas {
-                            names: member_name.to_string(),
-                            types: simplified_member_type.to_string(),
+                        let data = Parameter {
+                            name: member_name.to_string(),
+                            type_name: simplified_member_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let struct_item = StructItems {
+                let struct_item = StructAbi {
                     name: name.clone(),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.struct_items.push(struct_item);
+                self.struct_abis.push(struct_item);
             }
         }
     }
@@ -187,22 +187,21 @@ impl AbiProcessor {
                         let variant_name = variant_obj.get("name").unwrap().as_str().unwrap();
                         let variant_type = variant_obj.get("type").unwrap().as_str().unwrap();
                         let simplified_variant_type = simplify_type_name(variant_type);
-                        let data = Datas {
-                            names: variant_name.to_string(),
-                            types: simplified_variant_type.to_string(),
+                        let data = Parameter {
+                            name: variant_name.to_string(),
+                            type_name: simplified_variant_type.to_string(),
                         };
                         datas.push(data);
                     }
                 }
-                let enum_items = EnumItems {
+                let enum_abi = EnumAbi {
                     name: simplify_type_name(name.as_str()),
-                    members: datas,
+                    parameters: datas,
                 };
-                self.enum_items.push(enum_items);
+                self.enum_abis.push(enum_abi);
             }
         }
     }
-
     fn process_abi_internal(&mut self, abi_value_array: &Vec<Value>) {
         for item in abi_value_array {
             if let Value::Object(obj) = item {
