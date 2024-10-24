@@ -39,7 +39,14 @@ pub fn decode_calldata(
                 data_type,
                 &inner_type.to_string(),
             ),
-            EDataType::UserEnum(_) => decode_enum(datas, data_index, data_type, enums, structs),
+            EDataType::UserEnum(_) => decode_enum(
+                names.get(index).map(|n| n.as_ref()),
+                datas,
+                data_index,
+                data_type,
+                enums,
+                structs,
+            ),
             EDataType::Tuple(inner_types) => {
                 decode_tuple(datas, data_index, &inner_types, structs, enums)
             }
@@ -117,6 +124,7 @@ fn decode_array(
 }
 
 fn decode_enum(
+    name: Option<&str>,
     datas: &[Felt],
     data_index: &mut usize,
     data_type: &str,
@@ -134,7 +142,7 @@ fn decode_enum(
 
                     if variant_type.trim().is_empty() {
                         return Some(create_decoded_value(
-                            Some(&enum_item.name),
+                            name,
                             data_type,
                             DecodedValueType::String(variant_name.to_string()),
                         ));
@@ -151,18 +159,15 @@ fn decode_enum(
                     .and_then(|mut decoded_variants| decoded_variants.pop())
                     .map(|decoded_variant| {
                         create_decoded_value(
-                            Some(&enum_item.name),
-                            variant_type,
-                            DecodedValueType::Enum(
-                                variant_name.to_string(),
-                                Box::new(decoded_variant.value),
-                            ),
+                            name,
+                            format!("{}: {}", variant_name, variant_type).as_str(),
+                            decoded_variant.value,
                         )
                     });
                 }
             }
             return Some(create_decoded_value(
-                Some(&enum_item.name),
+                name,
                 data_type,
                 DecodedValueType::Single(*variant_index_felt),
             ));
