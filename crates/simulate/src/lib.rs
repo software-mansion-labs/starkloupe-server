@@ -9,6 +9,7 @@ pub mod state;
 pub mod transaction_extraction;
 pub mod utils;
 
+use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
 use contract_call::ContractCall;
@@ -21,11 +22,12 @@ use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::{contract_address, felt, patricia_key};
 use starknet_providers::ProviderError;
-use std::usize;
+use starknet_types_core::felt::FromStrError;
 use thiserror::Error;
 use tracing::error;
 use url::Url;
@@ -55,6 +57,7 @@ pub struct SimulationArgs {
     pub calldata: Vec<Felt>,
     pub transaction_version: TransactionVersion,
     pub transaction_signature: Option<TransactionSignature>,
+    pub transaction_hash: Option<TransactionHash>,
 }
 
 #[derive(Serialize, Debug)]
@@ -74,6 +77,8 @@ pub struct TransactionSimulationResult {
 #[derive(Error, Debug)]
 pub enum TransactionSimulationError {
     #[error("{0}")]
+    EntryPointExecutionError(#[from] EntryPointExecutionError),
+    #[error("{0}")]
     StateError(#[from] StateError),
     #[error("{0}")]
     ProviderError(#[from] ProviderError),
@@ -81,6 +86,8 @@ pub enum TransactionSimulationError {
     PendingBlock(String),
     #[error("{0}")]
     TransactionExecutionError(#[from] TransactionExecutionError),
+    #[error("Invalid Felt string conversion: {0}")]
+    FeltConversionError(#[from] FromStrError),
     #[error("Transaction hash not found")]
     TransactionHashNotFound,
     #[error("Invalid chain id")]
@@ -139,6 +146,7 @@ impl TryFrom<SimulationRawArgs> for SimulationArgs {
                 }
             },
             transaction_signature: None,
+            transaction_hash: None,
         })
     }
 }

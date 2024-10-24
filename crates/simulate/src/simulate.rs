@@ -1,21 +1,19 @@
 use blockifier::abi::abi_utils::selector_from_name;
-use blockifier::bouncer::BouncerConfig;
-use blockifier::context::BlockContext;
-use blockifier::context::ChainInfo;
-use blockifier::context::FeeTokenAddresses;
 use blockifier::context::TransactionContext;
+use blockifier::execution::call_info::CallInfo;
+use blockifier::execution::call_info::Retdata;
 use blockifier::execution::common_hints::ExecutionMode;
+use blockifier::execution::contract_class::ContractClass as BlockifierContractClass;
 use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
+use blockifier::retdata;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
+use blockifier::state::state_api::State;
 use blockifier::transaction::constants;
-use blockifier::transaction::objects::CommonAccountFields;
-use blockifier::transaction::objects::CurrentTransactionInfo;
-use blockifier::transaction::objects::TransactionInfo;
+use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
-use blockifier::versioned_constants::VersionedConstants;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
@@ -34,28 +32,18 @@ use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
-use starknet_api::core::{ChainId, ContractAddress, PatriciaKey};
-use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::core::{ChainId, ContractAddress};
 use starknet_api::deprecated_contract_class::EntryPointType;
-use starknet_api::transaction::Resource;
-use starknet_api::transaction::ResourceBounds;
-use starknet_api::transaction::ResourceBoundsMapping;
 use starknet_api::transaction::{Calldata, TransactionHash};
-use starknet_api::{contract_address, felt, patricia_key};
 use starknet_providers::Provider;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::usize;
 use url::Url;
 use walnut_shared::decode_felt;
 use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
-use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client_from_url, ETH_FEE_TOKEN_ADDRESS,
-    STRK_FEE_TOKEN_ADDRESS,
-};
+use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
 use crate::contract_calls_map::ContractCallsMap;
@@ -66,6 +54,7 @@ use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_submitted_tx;
+use crate::transaction_extraction::extract_transaction_contex;
 use crate::transaction_extraction::extract_transaction_receipt;
 use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
@@ -87,14 +76,10 @@ pub async fn simulate(
         extract_block_txs_info(&provider_client, &args).await?;
 
     let mut cached_fork_state = CachedState::new(
-        ForkStateReader::new(
-            args.rpc_url.clone(),
-            args.block_number.0.clone(),
-            transaction_index,
-        )
-        .map_err(|e| {
-            TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
-        })?,
+        ForkStateReader::new(args.rpc_url.clone(), args.block_number.0, transaction_index)
+            .map_err(|e| {
+                TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
+            })?,
     );
 
     let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
@@ -196,75 +181,16 @@ fn run_simulation(
     args: SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
 ) -> Result<CheatnetState, TransactionSimulationError> {
-    let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
-
-    let mut execute_call = CallEntryPoint {
-        entry_point_type: EntryPointType::External,
-        entry_point_selector,
-        calldata: Calldata(args.calldata.into()),
-        class_hash: None,
-        code_address: None,
-        storage_address: args.sender_address,
-        caller_address: ContractAddress::default(),
-        call_type: CallType::Call,
-        initial_gas: u64::MAX,
-    };
-
     let block_info = cached_fork_state.state.get_block_info()?;
-    let chain_info = if let Some(chain_id) = args.chain_id {
-        ChainInfo {
-            chain_id,
-            fee_token_addresses: FeeTokenAddresses {
-                strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
-                eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
-            },
-        }
-    } else {
-        ChainInfo::default()
-    };
-
-    let transaction_context = Arc::new(TransactionContext {
-        block_context: BlockContext::new(
-            block_info.clone(),
-            chain_info,
-            VersionedConstants::latest_constants().clone(),
-            BouncerConfig::default(),
-        ),
-        tx_info: TransactionInfo::Current(CurrentTransactionInfo {
-            common_fields: CommonAccountFields {
-                transaction_hash: TransactionHash::default(),
-                version: args.transaction_version,
-                signature: args.transaction_signature.unwrap_or_default(),
-                nonce: args.nonce.unwrap_or_default(),
-                sender_address: args.sender_address,
-                only_query: false,
-            },
-            resource_bounds: ResourceBoundsMapping(BTreeMap::from([
-                (
-                    Resource::L1Gas,
-                    ResourceBounds {
-                        max_amount: 0,
-                        max_price_per_unit: 1,
-                    },
-                ),
-                (
-                    Resource::L2Gas,
-                    ResourceBounds {
-                        max_amount: 0,
-                        max_price_per_unit: 0,
-                    },
-                ),
-            ])),
-            tip: Default::default(),
-            nonce_data_availability_mode: DataAvailabilityMode::L1,
-            fee_data_availability_mode: DataAvailabilityMode::L1,
-            paymaster_data: Default::default(),
-            account_deployment_data: Default::default(),
-        }),
-    });
-
-    let mut context =
-        EntryPointExecutionContext::new(transaction_context, ExecutionMode::Execute, false)?;
+    let transaction_context = extract_transaction_contex(
+        &args.sender_address,
+        &args.transaction_version,
+        &args.transaction_signature,
+        &args.transaction_hash,
+        &args.nonce,
+        args.chain_id,
+        &block_info,
+    );
 
     let mut cheatnet_state = CheatnetState {
         block_info,
@@ -273,12 +199,24 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
-    let _execution_result = execute_call_entry_point(
-        &mut execute_call,
+    if args.transaction_hash.is_some() {
+        let _validate_result = validate_call(
+            Calldata(args.calldata.clone().into()),
+            args.sender_address,
+            cached_fork_state,
+            &mut cheatnet_state,
+            transaction_context.clone(),
+            u64::MAX,
+        );
+    }
+
+    let _execution_result = execute_call(
+        Calldata(args.calldata.clone().into()),
+        args.sender_address,
         cached_fork_state,
         &mut cheatnet_state,
-        &mut ExecutionResources::default(),
-        &mut context,
+        transaction_context.clone(),
+        u64::MAX,
     );
 
     Ok(cheatnet_state)
@@ -361,6 +299,7 @@ pub async fn simulate_transaction_by_hash(
                                 calldata: calldata.0.to_vec(),
                                 transaction_version,
                                 transaction_signature: Some(signature),
+                                transaction_hash: Some(TransactionHash(transaction_hash)),
                             },
                         )
                         .await?;
@@ -469,4 +408,108 @@ fn get_execution_result(
     } else {
         Ok(ExecutionResult::Succeeded)
     }
+}
+
+fn validate_call(
+    calldata: Calldata,
+    storage_address: ContractAddress,
+    state: &mut dyn State,
+    cheatnet_state: &mut CheatnetState,
+    tx_context: Arc<TransactionContext>,
+    initial_gas: u64,
+) -> Result<CallInfo, TransactionSimulationError> {
+    let mut resources = ExecutionResources::default();
+
+    let mut validation_context =
+        EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Validate, false)?;
+
+    let class_hash = state.get_class_hash_at(storage_address)?;
+    let validate_selector = selector_from_name(constants::VALIDATE_ENTRY_POINT_NAME);
+    let mut validate_call = CallEntryPoint {
+        entry_point_type: EntryPointType::External,
+        entry_point_selector: validate_selector,
+        calldata,
+        class_hash: None,
+        code_address: None,
+        storage_address,
+        caller_address: ContractAddress::default(),
+        call_type: CallType::Call,
+        initial_gas,
+    };
+
+    let validate_call_info = execute_call_entry_point(
+        &mut validate_call,
+        state,
+        cheatnet_state,
+        &mut resources,
+        &mut validation_context,
+    );
+
+    let validate_call_info = match validate_call_info {
+        Ok(info) => info,
+        Err(err) => {
+            return Err(TransactionSimulationError::TransactionExecutionError(
+                TransactionExecutionError::ExecutionError {
+                    error: err,
+                    class_hash,
+                    storage_address,
+                    selector: validate_selector,
+                },
+            ));
+        }
+    };
+    let contract_class = state.get_compiled_contract_class(class_hash)?;
+    if matches!(
+        contract_class,
+        BlockifierContractClass::V0(_) | BlockifierContractClass::V1(_)
+    ) {
+        let expected_retdata = retdata![Felt::from_hex(constants::VALIDATE_RETDATA)?];
+
+        if validate_call_info.execution.retdata != expected_retdata {
+            return Err(TransactionSimulationError::TransactionExecutionError(
+                TransactionExecutionError::InvalidValidateReturnData {
+                    actual: validate_call_info.execution.retdata,
+                },
+            ));
+        }
+    }
+
+    Ok(validate_call_info)
+}
+
+fn execute_call(
+    calldata: Calldata,
+    storage_address: ContractAddress,
+    state: &mut dyn State,
+    cheatnet_state: &mut CheatnetState,
+    tx_context: Arc<TransactionContext>,
+    initial_gas: u64,
+) -> Result<CallInfo, TransactionSimulationError> {
+    let mut resources = ExecutionResources::default();
+    let mut execution_context =
+        EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Execute, false)?;
+
+    let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
+
+    let mut execute_call = CallEntryPoint {
+        entry_point_type: EntryPointType::External,
+        entry_point_selector,
+        calldata,
+        class_hash: None,
+        code_address: None,
+        storage_address,
+        caller_address: ContractAddress::default(),
+        call_type: CallType::Call,
+        initial_gas,
+    };
+
+    let execution_result = execute_call_entry_point(
+        &mut execute_call,
+        state,
+        cheatnet_state,
+        &mut resources,
+        &mut execution_context,
+    )?;
+
+    Ok(execution_result)
 }
