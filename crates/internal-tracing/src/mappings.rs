@@ -287,20 +287,18 @@ impl Mappings {
                         .unwrap_or_default();
 
                     let simplified_type_name = simplify_type_name(result_type.as_str());
-                    if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
-                        results.push(InternalFnCallIO {
-                            type_name: Some(simplified_type_name.clone()),
-                            value: values.iter().map(|v| v.to_string()).collect(),
-                        });
-                    }
 
-                    if is_panic_result(&Some(result_type.clone())) && values[0] == Felt::ONE {
+                    if is_panic_result(Some(&simplified_type_name)) && values[0] == Felt::ONE {
                         let index = values[1].to_string().parse::<usize>().unwrap();
                         let panic_reason = relocated_memory
                             .get(index)
                             .and_then(|opt| *opt)
                             .expect("Failed to get panic reason from relocated_memory");
                         let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
+                        results.push(InternalFnCallIO {
+                            type_name: Some(simplified_type_name.clone()),
+                            value: vec!["1".to_string(), panic_reason_decoded.clone()],
+                        });
                         results_decoded.push(create_decoded_value(
                             None,
                             "Panic",
@@ -317,6 +315,12 @@ impl Mappings {
                             &mut data_index,
                         ) {
                             results_decoded.push(decoded_element);
+                        }
+                        if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
+                            results.push(InternalFnCallIO {
+                                type_name: Some(simplified_type_name.clone()),
+                                value: values.iter().map(|v| v.to_string()).collect(),
+                            });
                         }
                     }
                 }

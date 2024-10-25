@@ -215,8 +215,6 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
     }
 }
 
-pub fn is_panic_result(return_type: &Option<String>) -> bool {
-    return_type
-        .as_ref()
-        .is_some_and(|result_type| result_type.starts_with("core::panics::PanicResult"))
+pub fn is_panic_result(return_type: Option<&str>) -> bool {
+    return_type.map_or(false, |result_type| result_type.contains("PanicResult"))
 }

@@ -199,7 +199,7 @@ pub fn get_internal_call_trace(
             (results, results_decoded) = match prev_sierra_index {
                 Some(sierra_index) => mappings.get_results_at_trace_step(
                     relocated_memory,
-                    sierra_index.clone(),
+                    sierra_index,
                     prev_trace_entry,
                 ),
                 None => (Vec::new(), Vec::new()),
@@ -217,7 +217,9 @@ pub fn get_internal_call_trace(
                 if parent_call.fp == trace_entry.fp {
                     for result in results.iter() {
                         if nesting_level > deepest_panic_result_level {
-                            if is_panic_result(&result.type_name) && result.value[0] == "1" {
+                            if is_panic_result(result.type_name.as_deref())
+                                && result.value[0] == "1"
+                            {
                                 deepest_panic_result_level = nesting_level;
                                 deepest_panic_result_call_id = Some(current_call_id);
                                 break;
@@ -342,16 +344,14 @@ pub fn get_internal_call_trace(
         let last_sierra_index = mappings.get_first_sierra_index_at_pc(&last_trace_entry.pc);
 
         let root_call_results = match last_sierra_index {
-            Some(sierra_index) => mappings.get_results_at_trace_step(
-                relocated_memory,
-                sierra_index.clone(),
-                last_trace_entry,
-            ),
-            None => Vec::new(),
+            Some(sierra_index) => {
+                mappings.get_results_at_trace_step(relocated_memory, sierra_index, last_trace_entry)
+            }
+            None => (Vec::new(), Vec::new()),
         };
 
-        for result in root_call_results.iter() {
-            if is_panic_result(&result.type_name) && result.value[0] == "1" {
+        for result in root_call_results.0.iter() {
+            if is_panic_result(result.type_name.as_deref()) && result.value[0] == "1" {
                 deepest_panic_result_call_id = Some(root_function_call_id);
                 break;
             }
