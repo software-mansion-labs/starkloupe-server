@@ -213,6 +213,7 @@ pub fn get_internal_call_trace(
                             if is_panic_result(&result.type_name) && result.value[0] == "1" {
                                 deepest_panic_result_level = nesting_level;
                                 deepest_panic_result_call_id = Some(current_call_id);
+                                break;
                             }
                         }
                     }
@@ -318,6 +319,28 @@ pub fn get_internal_call_trace(
         }
 
         prev_fp = trace_entry.fp;
+    }
+
+    // If no panic result was found, check the root function call
+    if deepest_panic_result_call_id.is_none() {
+        let last_trace_entry = &vm_trace[vm_trace.len() - 1];
+        let last_sierra_index = mappings.get_first_sierra_index_at_pc(&last_trace_entry.pc);
+
+        let root_call_results = match last_sierra_index {
+            Some(sierra_index) => mappings.get_results_at_trace_step(
+                relocated_memory,
+                sierra_index.clone(),
+                last_trace_entry,
+            ),
+            None => Vec::new(),
+        };
+
+        for result in root_call_results.iter() {
+            if is_panic_result(&result.type_name) && result.value[0] == "1" {
+                deepest_panic_result_call_id = Some(root_function_call_id);
+                break;
+            }
+        }
     }
 
     if let Some(deepest_panic_result_call_id) = &deepest_panic_result_call_id {
