@@ -1,0 +1,14 @@
+[package]
+name = "data-decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+starknet_api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walnut-shared.workspace = true
+tracing.workspace = true
+starknet-types-core.workspace = true
+cairo-lang-sierra.workspace = true
+num-traits.workspace = true

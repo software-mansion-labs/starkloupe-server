@@ -1,17 +1,20 @@
 use blockifier::abi::abi_utils::selector_from_name;
+use data_decoder::utils::simplify_type_name;
 use serde_json::{Map, Value};
 use starknet_api::core::EntryPointSelector;
-use walnut_shared::{EventAbi, Parameter, StructAbi};
+use std::borrow::Cow;
+use walnut_shared::{EnumAbi, EventAbi, Parameter, StructAbi};
 
 pub struct AbiProcessor {
     pub entry_point_selector: EntryPointSelector,
     pub entry_point_function_name: Option<String>,
     pub entry_point_interface_name: Option<String>,
     pub is_erc20_token: bool,
-    pub function_arguments_names: Option<Vec<String>>,
-    pub function_arguments_types: Option<Vec<String>>,
-    pub function_return_result_types: Option<Vec<String>>,
+    pub function_arguments_names: Option<Vec<Cow<'static, str>>>,
+    pub function_arguments_types: Option<Vec<Cow<'static, str>>>,
+    pub function_return_result_types: Option<Vec<Cow<'static, str>>>,
     view_and_external_fn_names: Vec<String>,
+    pub enum_abis: Vec<EnumAbi>,
     pub struct_abis: Vec<StructAbi>,
     pub event_abis: Vec<EventAbi>,
 }
@@ -27,15 +30,18 @@ impl AbiProcessor {
             function_arguments_types: None,
             function_return_result_types: None,
             view_and_external_fn_names: Vec::new(),
+            enum_abis: Vec::new(),
             struct_abis: Vec::new(),
             event_abis: Vec::new(),
         }
     }
 
     pub fn process_abi(&mut self, abi: String) {
-        self.process_abi_event(&serde_json::from_str(abi.as_str()).unwrap());
-        self.process_abi_struct(&serde_json::from_str(abi.as_str()).unwrap());
-        self.process_abi_internal(&serde_json::from_str(abi.as_str()).unwrap());
+        let parsed_abi: Vec<Value> = serde_json::from_str(&abi).unwrap();
+        self.process_abi_event(&parsed_abi);
+        self.process_abi_struct(&parsed_abi);
+        self.process_abi_enum(&parsed_abi);
+        self.process_abi_internal(&parsed_abi);
         self.check_if_erc20_token();
     }
 
@@ -145,9 +151,10 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_member_type = simplify_type_name(member_type);
                         let data = Parameter {
                             name: member_name.to_string(),
-                            type_name: member_type.to_string(),
+                            type_name: simplified_member_type.to_string(),
                         };
                         datas.push(data);
                     }
@@ -161,6 +168,40 @@ impl AbiProcessor {
         }
     }
 
+    fn process_abi_enum(&mut self, abi_value_array: &Vec<Value>) {
+        for item in abi_value_array {
+            if let Value::Object(obj) = item {
+                if obj.get("type") == Some(&Value::String("enum".to_string())) {
+                    self.process_abi_enum_variants(obj);
+                }
+            }
+        }
+    }
+
+    fn process_abi_enum_variants(&mut self, obj: &Map<String, Value>) {
+        if let Some(Value::String(name)) = obj.get("name") {
+            if let Some(Value::Array(enum_variants)) = obj.get("variants") {
+                let mut datas = Vec::new();
+                for variant in enum_variants {
+                    if let Value::Object(variant_obj) = variant {
+                        let variant_name = variant_obj.get("name").unwrap().as_str().unwrap();
+                        let variant_type = variant_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_variant_type = simplify_type_name(variant_type);
+                        let data = Parameter {
+                            name: variant_name.to_string(),
+                            type_name: simplified_variant_type.to_string(),
+                        };
+                        datas.push(data);
+                    }
+                }
+                let enum_abi = EnumAbi {
+                    name: simplify_type_name(name.as_str()),
+                    parameters: datas,
+                };
+                self.enum_abis.push(enum_abi);
+            }
+        }
+    }
     fn process_abi_internal(&mut self, abi_value_array: &Vec<Value>) {
         for item in abi_value_array {
             if let Value::Object(obj) = item {
@@ -206,12 +247,13 @@ impl AbiProcessor {
                     if let Some(Value::String(name)) = input_obj.get("name") {
                         self.function_arguments_names
                             .get_or_insert(Vec::new())
-                            .push(name.clone());
+                            .push(Cow::Owned(name.clone()));
                     }
                     if let Some(Value::String(arg_type)) = input_obj.get("type") {
+                        let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_arguments_types
                             .get_or_insert(Vec::new())
-                            .push(arg_type.clone());
+                            .push(Cow::Owned(simplified_arg_type));
                     }
                 }
             }
@@ -223,9 +265,10 @@ impl AbiProcessor {
             for output in outputs {
                 if let Value::Object(output_obj) = output {
                     if let Some(Value::String(arg_type)) = output_obj.get("type") {
+                        let simplified_arg_type = simplify_type_name(arg_type.as_str());
                         self.function_return_result_types
                             .get_or_insert(Vec::new())
-                            .push(arg_type.clone());
+                            .push(Cow::Owned(simplified_arg_type));
                     }
                 }
             }

@@ -13,6 +13,12 @@ use starknet_selector_decoder::get_selector;
 use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
+pub struct Datas {
+    pub names: String,
+    pub types: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct EventAbi {
     pub name: String,
     pub parameters: Vec<Parameter>,
@@ -26,6 +32,12 @@ pub struct Parameter {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct StructAbi {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct EnumAbi {
     pub name: String,
     pub parameters: Vec<Parameter>,
 }

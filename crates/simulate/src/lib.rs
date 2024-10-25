@@ -3,6 +3,7 @@ pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;
 pub mod debugger_trace;
+pub mod event_abi;
 pub mod function_calls;
 pub mod simulate;
 pub mod state;
@@ -159,7 +160,6 @@ pub struct SimulationInfo {
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }
-
 #[derive(Serialize, Debug)]
 pub struct ContractCallEvent {
     pub contract_call_id: u32,

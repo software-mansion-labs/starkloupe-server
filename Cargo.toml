@@ -5,7 +5,7 @@ members = [
   "crates/batch-sim",
   "crates/internal-tracing",
   "crates/walnut-shared",
-  "crates/calldata-decoder",
+  "crates/data-decoder",
 ]
 resolver = "2"
 
@@ -35,7 +35,6 @@ num-bigint = { version = "0.4.4", features = ["rand"] }
 camino = { version = "1.1.4", features = ["serde1"] }
 fs2 = "0.4.3"
 flate2 = "1.0.27"
-regex = "1.9.6"
 anyhow = "1.0.75"
 cairo-vm = "1.0.1"
 num-traits = "0.2.18"
@@ -64,7 +63,7 @@ itertools = "0.12.1"
 internal-tracing = { path = "./crates/internal-tracing" }
 walnut-shared = { path = "./crates/walnut-shared" }
 verification = { path = "./crates/verification" }
-calldata-decoder = { path = "./crates/calldata-decoder" }
+data-decoder = { path = "./crates/data-decoder" }
 simulate = { path = "./crates/simulate" }
 blockifier = "0.8.0-rc.3"
 starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }

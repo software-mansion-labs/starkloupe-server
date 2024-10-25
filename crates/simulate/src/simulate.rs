@@ -112,28 +112,22 @@ pub async fn simulate(
                 .borrow()
                 .get_contract_class(class_hash)
                 .ok();
-            if let Some(contract_class) = contract_class {
-                match contract_class {
-                    ContractClass::Sierra(class) => {
-                        let mut abi_processor =
-                            AbiProcessor::new(call.entry_point.entry_point_selector);
-                        abi_processor.process_abi(class.abi);
-                        call.entry_point_name = abi_processor.entry_point_function_name;
-                        call.entry_point_interface_name = abi_processor.entry_point_interface_name;
-                        call.is_erc20_token = abi_processor.is_erc20_token;
-                        call.arguments_names = abi_processor.function_arguments_names;
-                        call.arguments_types = abi_processor.function_arguments_types;
-                        call.result_types = abi_processor.function_return_result_types;
-                        event_abis.extend(abi_processor.event_abis.into_iter());
-                        let (sierra_version, cairo_version) =
-                            extract_sierra_and_cairo_versions(&class.sierra_program);
-                        call.sierra_version = sierra_version;
-                        call.cairo_version = cairo_version;
-                        call.decode_call_result(&abi_processor.struct_abis);
-                        call.decode_call_arguments(&abi_processor.struct_abis);
-                    }
-                    _ => {}
-                }
+            if let Some(ContractClass::Sierra(class)) = contract_class {
+                let mut abi_processor = AbiProcessor::new(call.entry_point.entry_point_selector);
+                abi_processor.process_abi(class.abi);
+                call.entry_point_name = abi_processor.entry_point_function_name;
+                call.entry_point_interface_name = abi_processor.entry_point_interface_name;
+                call.is_erc20_token = abi_processor.is_erc20_token;
+                call.arguments_names = abi_processor.function_arguments_names;
+                call.arguments_types = abi_processor.function_arguments_types;
+                call.result_types = abi_processor.function_return_result_types;
+                event_abis.extend(abi_processor.event_abis.into_iter());
+                let (sierra_version, cairo_version) =
+                    extract_sierra_and_cairo_versions(&class.sierra_program);
+                call.sierra_version = sierra_version;
+                call.cairo_version = cairo_version;
+                call.decode_call_result(&abi_processor.struct_abis, &abi_processor.enum_abis);
+                call.decode_call_arguments(&abi_processor.struct_abis, &abi_processor.enum_abis)
             }
         }
     }
@@ -149,7 +143,7 @@ pub async fn simulate(
         .await;
 
     let execution_result =
-        get_execution_result(&mut contract_calls_map.0, deepest_failed_contract_call_id)?;
+        get_execution_result(&contract_calls_map.0, deepest_failed_contract_call_id)?;
 
     if let ExecutionResult::Reverted { reason, .. } = &execution_result {
         if let Some(call) = contract_calls_map
@@ -348,12 +342,12 @@ fn extract_sierra_and_cairo_versions(sierra_program: &[Felt]) -> (Option<String>
 // TODO
 fn get_events_from_cheatnet_state(
     cheatnet_state_detected_events: Vec<Event>,
-    event_abis: &Vec<EventAbi>,
+    event_abis: &[EventAbi],
     contract_calls_map: &ContractCallsMap,
 ) -> Vec<ContractCallEvent> {
     let mut events: Vec<ContractCallEvent> = Vec::new();
     for cheatnet_state_event in cheatnet_state_detected_events {
-        let event_selector = cheatnet_state_event.keys[0].clone();
+        let event_selector = cheatnet_state_event.keys[0];
         let event_data_hex = felt_vec_to_hex_vec(cheatnet_state_event.data.to_vec());
         let event_abi = event_abis.iter().find(|abi| {
             let selector = selector_from_name(&abi.name).0;

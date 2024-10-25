@@ -10,13 +10,16 @@ use cairo_lang_casm::{
 use cairo_lang_sierra::{
     extensions::core::{CoreLibfunc, CoreType},
     ids::ConcreteTypeId,
-    program::{GenFunction, Program, StatementIdx},
+    program::{GenFunction, Program, StatementIdx, TypeDeclaration},
     program_registry::ProgramRegistry,
 };
 use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use data_decoder::internal_function_decoder::decode_internal_datas;
+use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
+use data_decoder::{create_decoded_value, DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
@@ -44,6 +47,7 @@ pub struct Mappings {
     pub type_sizes: TypeSizeMap,
     pub type_names: HashMap<ConcreteTypeId, SmolStr>,
     pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
+    pub type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration>,
 }
 
 impl Mappings {
@@ -53,7 +57,7 @@ impl Mappings {
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program()?;
-        //dbg!(&sierra_program.libfunc_declarations);
+        //dbg!(&sierra_program.type_declarations);
         //dbg!(format_sierra_program(sierra_program.clone()));
         let type_names = contract_class
             .sierra_program_debug_info
@@ -68,16 +72,18 @@ impl Mappings {
             get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
         let memory_map: HashMap<usize, BigInt> = relocated_memory
             .iter()
-            .filter_map(|x| x.as_ref().map(|_| x.clone().unwrap()))
-            .map(|x| x.to_bigint())
             .enumerate()
-            .map(|(i, v)| (i + 1, v))
+            .filter_map(|(i, x)| x.as_ref().map(|v| (i + 1, v.to_bigint())))
             .collect();
-
         let sierra_program_registry: ProgramRegistry<CoreType, CoreLibfunc> =
             ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).unwrap();
         let type_sizes =
             get_type_size_map(&sierra_program, &sierra_program_registry).unwrap_or_default();
+        let type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration> = sierra_program
+            .type_declarations
+            .iter()
+            .map(|declaration| (declaration.id.clone(), declaration.clone()))
+            .collect();
         // // Print relocated memory
         // let mut ordered_map: BTreeMap<usize, BigInt> = BTreeMap::new();
         // for (k, v) in &memory_map {
@@ -99,6 +105,7 @@ impl Mappings {
             type_sizes,
             type_names,
             sierra_statement_info: casm_program.debug_info.sierra_statement_info,
+            type_declaration_map,
         })
     }
 
@@ -131,8 +138,7 @@ impl Mappings {
                 locations_set.extend(cairo_info.cairo_locations.clone());
             }
         }
-        let locations: Vec<_> = locations_set.into_iter().collect();
-        return locations;
+        locations_set.into_iter().collect()
     }
 
     pub fn get_cairo_locations_at_sierra_index(
@@ -144,8 +150,7 @@ impl Mappings {
         if let Some(cairo_info) = sierra_statements_to_cairo_info.get(&sierra_index) {
             locations_set.extend(cairo_info.cairo_locations.clone());
         }
-        let locations: Vec<_> = locations_set.into_iter().collect();
-        return locations;
+        locations_set.into_iter().collect()
     }
 
     pub fn get_sierra_execution_trace(
@@ -176,67 +181,83 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
-    ) -> Vec<InternalFnCallIO> {
-        let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
+        let mut arguments: Vec<InternalFnCallIO> = vec![];
+        let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
-            match &sierra_statement_info.additional_kind_info {
-                StatementKindDebugInfo::Invoke(invoke_info) => {
-                    for (_invoke_ref_index, invoke_ref) in invoke_info.ref_values.iter().enumerate()
-                    {
-                        let values = get_values_from_cell_expressions(
-                            relocated_memory,
-                            trace_entry,
-                            &invoke_ref.expression.cells,
-                            &ApChange::Known(0),
-                        );
-                        arguments.push(InternalFnCallIO {
-                            type_name: self
-                                .type_names
-                                .get(&invoke_ref.ty)
-                                .clone()
-                                .map(|n| n.to_string()),
-                            value: values,
-                        })
-                    }
+            if let StatementKindDebugInfo::Invoke(invoke_info) =
+                &sierra_statement_info.additional_kind_info
+            {
+                for invoke_ref in invoke_info.ref_values.iter() {
+                    let values = get_values_from_cell_expressions(
+                        relocated_memory,
+                        trace_entry,
+                        &invoke_ref.expression.cells,
+                        &ApChange::Known(0),
+                    );
+                    let type_names = self
+                        .type_names
+                        .get(&invoke_ref.ty)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
 
-                    // for (branch_index, branch_change) in
-                    //     invoke_info.result_branch_changes.iter().enumerate()
-                    // {
-                    //     for (output_reference_index, output_reference_value) in
-                    //         branch_change.refs.iter().enumerate()
-                    //     {
-                    //         let values = get_values_from_cell_expressions(
-                    //             relocated_memory,
-                    //             trace_entry,
-                    //             &output_reference_value.expression.cells,
-                    //             &branch_change.ap_change,
-                    //         );
-                    //         dbg!(values);
-                    //     }
-                    // }
+                    let simplified_type_name = simplify_type_name(type_names.as_str());
+                    if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
+                        arguments.push(InternalFnCallIO {
+                            type_name: Some(simplified_type_name.clone()),
+                            value: values.iter().map(|v| v.to_string()).collect(),
+                        });
+                    }
+                    let type_id = &invoke_ref.ty;
+                    let mut data_index: usize = 0;
+                    if let Some(argument_decoded) = decode_internal_datas(
+                        &values,
+                        type_id,
+                        &self.type_declaration_map,
+                        relocated_memory,
+                        &mut data_index,
+                    ) {
+                        arguments_decoded.push(argument_decoded);
+                    }
                 }
-                _ => {} // StatementKindDebugInfo::Return(return_info) => {
-                        //     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
-                        //     {
-                        //         let values = get_values_from_cell_expressions(
-                        //             relocated_memory,
-                        //             trace_entry,
-                        //             &return_ref.expression.cells,
-                        //             &ApChange::Known(0),
-                        //         );
-                        //         results.push(InternalFnCallIO {
-                        //             type_name: self
-                        //                 .type_names
-                        //                 .get(&return_ref.ty)
-                        //                 .clone()
-                        //                 .map(|n| n.to_string()),
-                        //             value: values,
-                        //         })
-                        //     }
-                        // }
+
+                // for (branch_index, branch_change) in
+                //     invoke_info.result_branch_changes.iter().enumerate()
+                // {
+                //     for (output_reference_index, output_reference_value) in
+                //         branch_change.refs.iter().enumerate()
+                //     {
+                //         let values = get_values_from_cell_expressions(
+                //             relocated_memory,
+                //             trace_entry,
+                //             &output_reference_value.expression.cells,
+                //             &branch_change.ap_change,
+                //         );
+                //         dbg!(values);
+                //     }
+                // }
+                // StatementKindDebugInfo::Return(return_info) => {
+                //     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
+                //     {
+                //         let values = get_values_from_cell_expressions(
+                //             relocated_memory,
+                //             trace_entry,
+                //             &return_ref.expression.cells,
+                //             &ApChange::Known(0),
+                //         );
+                //         results.push(InternalFnCallIO {
+                //             type_name: self
+                //                 .type_names
+                //                 .get(&return_ref.ty)
+                //                 .clone()
+                //                 .map(|n| n.to_string()),
+                //             value: values,
+                //         })
+                //     }
+                // }
             }
         }
-        arguments
+        (arguments, arguments_decoded)
     }
 
     pub fn get_results_at_trace_step(
@@ -244,48 +265,64 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
-    ) -> Vec<InternalFnCallIO> {
-        let mut results: Vec<InternalFnCallIO> = Vec::new();
+    ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
+        let mut results: Vec<InternalFnCallIO> = vec![];
+        let mut results_decoded: Vec<DecodedValue> = Vec::new();
         if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
-            match &sierra_statement_info.additional_kind_info {
-                StatementKindDebugInfo::Return(return_info) => {
-                    for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
-                    {
-                        let mut values = get_values_from_cell_expressions(
-                            relocated_memory,
-                            trace_entry,
-                            &return_ref.expression.cells,
-                            &ApChange::Known(0),
-                        );
+            if let StatementKindDebugInfo::Return(return_info) =
+                &sierra_statement_info.additional_kind_info
+            {
+                for return_ref in return_info.ref_values.iter() {
+                    let values = get_values_from_cell_expressions(
+                        relocated_memory,
+                        trace_entry,
+                        &return_ref.expression.cells,
+                        &ApChange::Known(0),
+                    );
 
-                        let result_type = self
-                            .type_names
-                            .get(&return_ref.ty)
-                            .clone()
-                            .map(|n| n.to_string());
+                    let result_type = self
+                        .type_names
+                        .get(&return_ref.ty)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
 
-                        if is_panic_result(&result_type) && values[0] == "1" {
-                            //if result is panic the first element is panic flag, and the second
-                            //and third are memory locations
-                            //https://github.com/lambdaclass/cairo-vm/blob/bb491f2a9ea0514bbeba92d858b28baaf41053e7/cairo1-run/src/cairo_run.rs#L1085
-                            let panic_reason: Felt = relocated_memory
-                                .get(values[1].parse::<usize>().unwrap())
-                                .unwrap()
-                                .clone()
-                                .unwrap();
-                            let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
-                            values = vec!["1".to_string(), panic_reason_decoded];
-                        }
+                    let simplified_type_name = simplify_type_name(result_type.as_str());
+                    if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
                         results.push(InternalFnCallIO {
-                            type_name: result_type,
-                            value: values,
-                        })
+                            type_name: Some(simplified_type_name.clone()),
+                            value: values.iter().map(|v| v.to_string()).collect(),
+                        });
+                    }
+
+                    if is_panic_result(&Some(result_type.clone())) && values[0] == Felt::ONE {
+                        let index = values[1].to_string().parse::<usize>().unwrap();
+                        let panic_reason = relocated_memory
+                            .get(index)
+                            .and_then(|opt| *opt)
+                            .expect("Failed to get panic reason from relocated_memory");
+                        let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
+                        results_decoded.push(create_decoded_value(
+                            None,
+                            "Panic",
+                            DecodedValueType::String(panic_reason_decoded),
+                        ));
+                    } else {
+                        let type_id = &return_ref.ty;
+                        let mut data_index: usize = 0;
+                        if let Some(decoded_element) = decode_internal_datas(
+                            &values,
+                            type_id,
+                            &self.type_declaration_map,
+                            relocated_memory,
+                            &mut data_index,
+                        ) {
+                            results_decoded.push(decoded_element);
+                        }
                     }
                 }
-                _ => {}
             }
         }
-        results
+        (results, results_decoded)
     }
 
     pub fn get_system_call_at_trace_step(
@@ -293,7 +330,7 @@ impl Mappings {
         relocated_memory: &Vec<Option<Felt>>,
         trace_entry: &RelocatedTraceEntry,
     ) -> Option<ESysCall> {
-        let pc = trace_entry.pc as usize;
+        let pc = trace_entry.pc;
         let ptr_sys_call = self.pc_to_ptr_sys_calls.get(&pc);
         match ptr_sys_call {
             Some(ptr_sys_call) => {
@@ -304,7 +341,7 @@ impl Mappings {
                     &ApChange::Known(0),
                 )
                 .unwrap();
-                let mut ptr = value.parse::<usize>().unwrap();
+                let mut ptr = value.to_string().parse::<usize>().unwrap();
                 let felt_value = relocated_memory.get(ptr).unwrap();
                 ptr += 1;
                 let selector = SyscallSelector::try_from(felt_value.unwrap());
@@ -316,11 +353,10 @@ impl Mappings {
                                 let _felt_value = relocated_memory.get(ptr).unwrap();
                                 ptr += 1;
                                 let felt_value: Felt =
-                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                    (*relocated_memory.get(ptr).unwrap()).unwrap();
                                 let contract_address = felt_value.to_fixed_hex_string();
                                 ptr += 1;
-                                let felt_value =
-                                    relocated_memory.get(ptr).unwrap().clone().unwrap();
+                                let felt_value = (*relocated_memory.get(ptr).unwrap()).unwrap();
                                 let function_selector = felt_value.to_fixed_hex_string();
                                 let contract_call = ContractCall {
                                     contract_address,
@@ -348,11 +384,10 @@ pub fn get_values_from_cell_expressions(
     trace_entry: &RelocatedTraceEntry,
     cell_expressions: &Vec<CellExpression>,
     ap_change: &ApChange,
-) -> Vec<String> {
-    let mut value_vec: Vec<String> = Vec::new();
+) -> Vec<Felt> {
+    let mut value_vec: Vec<Felt> = Vec::new();
     for cell_expression in cell_expressions {
-        let value =
-            get_value_from_cell_expression(&memory, &trace_entry, &cell_expression, &ap_change);
+        let value = get_value_from_cell_expression(memory, trace_entry, cell_expression, ap_change);
         match value {
             Ok(value) => {
                 value_vec.push(value);
@@ -407,13 +442,12 @@ pub fn get_value_from_cell_expression(
     trace_entry: &RelocatedTraceEntry,
     cell_expression: &CellExpression,
     ap_change: &ApChange,
-) -> Result<String, GetCellRefValueError> {
+) -> Result<Felt, GetCellRefValueError> {
     match cell_expression {
         CellExpression::Deref(cell_ref) => {
             get_cell_ref_value(memory, trace_entry, cell_ref, ap_change)
-                .map(|value| value.to_string())
         }
-        CellExpression::Immediate(imm) => Ok(format!("0x{:x}", imm)),
+        CellExpression::Immediate(imm) => Ok(Felt::from(imm.clone())),
         CellExpression::DoubleDeref(cell_ref, offset) => {
             match get_cell_ref_value(memory, trace_entry, cell_ref, ap_change) {
                 Ok(cell_ref_value_felt) => {
@@ -423,10 +457,10 @@ pub fn get_value_from_cell_expression(
                             .ok_or(GetCellRefValueError::OtherError(
                                 "Failed to convert cell_ref_value_felt to i128".to_string(),
                             ))?;
-                    let addr = cell_ref_value + offset.clone() as i128;
+                    let addr = cell_ref_value + *offset as i128;
                     let value = memory.get(addr as usize).cloned();
                     if let Some(Some(value)) = value {
-                        Ok(value.to_string())
+                        Ok(value)
                     } else {
                         Err(GetCellRefValueError::MemoryAddressNotFound)
                     }
@@ -462,7 +496,7 @@ pub fn get_value_from_cell_expression(
                                 CellOperator::Sub => Ok(a - b),
                             };
                             match value {
-                                Ok(value) => Ok(value.to_string()),
+                                Ok(value) => Ok(value),
                                 Err(e) => Err(e),
                             }
                         }

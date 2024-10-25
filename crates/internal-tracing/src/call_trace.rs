@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use data_decoder::DecodedValue;
 use serde::Serialize;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
@@ -38,6 +39,8 @@ pub struct DebuggerTraceEntryWithLocation {
     pub location_index: usize,
     pub results: Vec<InternalFnCallIO>,
     pub arguments: Vec<InternalFnCallIO>,
+    pub results_decoded: Option<Vec<DecodedValue>>,
+    pub arguments_decoded: Option<Vec<DecodedValue>>,
     pub contract_call_id: u32,
     pub fp: usize,
     pub function_call_id: u32,
@@ -88,7 +91,9 @@ pub fn get_internal_call_trace(
         fp: prev_fp,
         is_deepest_panic_result: false,
         arguments: Vec::new(),
+        arguments_decoded: None,
         results: Vec::new(),
+        results_decoded: None,
         code_location: entrypoint_cairo_locations.first().cloned(),
         debugger_trace_step_index: None,
         is_hidden: true, // Hide root function call
@@ -128,9 +133,10 @@ pub fn get_internal_call_trace(
 
         // Arguments at the current step (can be empty)
         let mut arguments: Vec<InternalFnCallIO> = Vec::new();
+        let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
         // Results at the current step (can be empty)
         let mut results: Vec<InternalFnCallIO> = Vec::new();
-        // Contract Call at current step (can be empty)
+        let mut results_decoded: Vec<DecodedValue> = Vec::new();
 
         if trace_entry.fp > prev_fp {
             // If the FP register increases, that means we have entered a nested function call
@@ -141,13 +147,13 @@ pub fn get_internal_call_trace(
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
             // Get the arguments of the new function call
-            arguments = match prev_sierra_index {
+            (arguments, arguments_decoded) = match prev_sierra_index {
                 Some(prev_sierra_index) => mappings.get_arguments_at_trace_step(
                     relocated_memory,
                     prev_sierra_index,
                     prev_trace_entry,
                 ),
-                None => Vec::new(),
+                None => (Vec::new(), Vec::new()),
             };
 
             if function.is_some() {
@@ -157,14 +163,15 @@ pub fn get_internal_call_trace(
                     parent_call_id: current_call_id,
                     children_call_ids: Vec::new(),
                     contract_call_id,
-
                     fn_name: function
                         .and_then(|f| f.id.debug_name.clone())
                         .and_then(|n| Some(n.to_string())),
                     fp: trace_entry.fp,
                     is_deepest_panic_result: false,
                     arguments: arguments.clone(),
+                    arguments_decoded: Some(arguments_decoded.clone()),
                     results: Vec::new(),
+                    results_decoded: None,
                     code_location: cairo_locations.first().cloned(),
                     debugger_trace_step_index: None,
                     is_hidden: false,
@@ -189,13 +196,13 @@ pub fn get_internal_call_trace(
             let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
             // Get the results of the function call from which we have just exited
-            results = match prev_sierra_index {
+            (results, results_decoded) = match prev_sierra_index {
                 Some(sierra_index) => mappings.get_results_at_trace_step(
                     relocated_memory,
                     sierra_index.clone(),
                     prev_trace_entry,
                 ),
-                None => Vec::new(),
+                None => (Vec::new(), Vec::new()),
             };
 
             let parent_call_id = function_calls_map
@@ -221,6 +228,7 @@ pub fn get_internal_call_trace(
                     let current_function_call =
                         function_calls_map.0.get_mut(&current_call_id).unwrap();
                     current_function_call.results = results.clone();
+                    current_function_call.results_decoded = Some(results_decoded.clone());
 
                     // Return to the parent function call
                     current_call_id = parent_call_id;
@@ -255,6 +263,8 @@ pub fn get_internal_call_trace(
                                 sierra_index,
                                 results: results.clone(),
                                 arguments: arguments.clone(),
+                                results_decoded: Some(results_decoded.clone()),
+                                arguments_decoded: Some(arguments_decoded.clone()),
                                 location_index,
                                 contract_call_id,
                                 fp: trace_entry.fp,
@@ -275,6 +285,9 @@ pub fn get_internal_call_trace(
                             {
                                 last_with_location.results = results.clone();
                                 last_with_location.arguments = arguments.clone();
+                                last_with_location.results_decoded = Some(results_decoded.clone());
+                                last_with_location.arguments_decoded =
+                                    Some(arguments_decoded.clone());
                             }
                         }
                     // If current step has a different Cairo location than the last step with Cairo location
@@ -284,6 +297,8 @@ pub fn get_internal_call_trace(
                                 sierra_index,
                                 results: results.clone(),
                                 arguments: arguments.clone(),
+                                results_decoded: Some(results_decoded.clone()),
+                                arguments_decoded: Some(arguments_decoded.clone()),
                                 location_index,
                                 contract_call_id,
                                 fp: trace_entry.fp,

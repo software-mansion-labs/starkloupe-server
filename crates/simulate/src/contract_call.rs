@@ -1,15 +1,15 @@
 use blockifier::execution::entry_point::CallEntryPoint;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use calldata_decoder::decode_datas;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CallTrace;
+use data_decoder::{calldata_decoder::decode_calldata, DecodedValue};
 use internal_tracing::ContractCallDebuggerData;
 use serde::Serialize;
-use serde_json::{json, Value};
 use starknet::core::types::Felt;
+use std::borrow::Cow;
 use std::cell::Ref;
 use verification::CodeLocation;
-use walnut_shared::{felt_vec_to_hex_vec, get_name_of_entry_point_selector, StructAbi};
+use walnut_shared::{get_name_of_entry_point_selector, EnumAbi, StructAbi};
 
 #[derive(Debug, Serialize)]
 pub struct ContractCall {
@@ -37,11 +37,11 @@ pub struct ContractCall {
     pub cairo_version: Option<String>,
     pub is_failed: bool,
 
-    pub result_types: Option<Vec<String>>,
-    pub arguments_names: Option<Vec<String>>,
-    pub arguments_types: Option<Vec<String>>,
-    pub calldata_decoded: Option<Value>,
-    pub decoded_result: Option<Value>,
+    pub result_types: Option<Vec<Cow<'static, str>>>,
+    pub arguments_names: Option<Vec<Cow<'static, str>>>,
+    pub arguments_types: Option<Vec<Cow<'static, str>>>,
+    pub calldata_decoded: Option<Vec<DecodedValue>>,
+    pub decoded_result: Option<Vec<DecodedValue>>,
 
     pub contract_calls_nesting_level: u32,
 
@@ -107,39 +107,38 @@ impl ContractCall {
     /// Decodes the call arguments using the provided struct ABIs. The decoded arguments are then stored in the `calldata_decoded` field.
     ///
     /// Note: `arguments_types` and `arguments_names` should already be set before calling this function.
-    pub fn decode_call_arguments(&mut self, struct_abis: &Vec<StructAbi>) {
+    pub fn decode_call_arguments(&mut self, struct_abis: &[StructAbi], enum_abis: &[EnumAbi]) {
         if let (Some(arguments_types), Some(arguments_names)) =
             (&self.arguments_types, &self.arguments_names)
         {
-            let calldata_hex: Vec<String> = self
-                .entry_point
-                .calldata
-                .0
-                .iter()
-                .map(|x| x.to_string())
-                .collect();
-            let decoded_arguments = decode_datas(
-                &calldata_hex,
+            let decoded_arguments = decode_calldata(
+                &self.entry_point.calldata.0.to_vec(),
                 arguments_types,
                 arguments_names,
-                struct_abis,
+                Some(struct_abis),
+                Some(enum_abis),
                 &mut 0,
             );
 
-            self.calldata_decoded = Some(json!(decoded_arguments));
+            self.calldata_decoded = decoded_arguments;
         }
     }
 
     /// Decodes the call result using the provided struct ABIs. The decoded result is then stored in the `decoded_result` field.
     ///
     /// Note: `result_types` should already be set before calling this function.
-    pub fn decode_call_result(&mut self, struct_abis: &Vec<StructAbi>) {
+    pub fn decode_call_result(&mut self, struct_abis: &[StructAbi], enum_abis: &[EnumAbi]) {
         if let CallResult::Success { ret_data } = &self.result {
-            let ret_hex = felt_vec_to_hex_vec(ret_data.to_vec());
             if let Some(call_result_types) = &self.result_types {
-                let decoded_result =
-                    decode_datas(&ret_hex, &call_result_types, &vec![], struct_abis, &mut 0);
-                self.decoded_result = Some(json!(decoded_result));
+                let decoded_result = decode_calldata(
+                    ret_data,
+                    call_result_types,
+                    &[],
+                    Some(struct_abis),
+                    Some(enum_abis),
+                    &mut 0,
+                );
+                self.decoded_result = decoded_result;
             }
         }
     }

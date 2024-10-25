@@ -1,3 +1,4 @@
+use data_decoder::DecodedValue;
 use serde::Serialize;
 use verification::CodeLocation;
 
@@ -14,7 +15,9 @@ pub struct FunctionCall {
     pub fp: usize,
     pub is_deepest_panic_result: bool,
     pub results: Vec<InternalFnCallIO>,
+    pub results_decoded: Option<Vec<DecodedValue>>,
     pub arguments: Vec<InternalFnCallIO>,
+    pub arguments_decoded: Option<Vec<DecodedValue>>,
 
     pub debugger_trace_step_index: Option<usize>,
     pub code_location: Option<CodeLocation>,
