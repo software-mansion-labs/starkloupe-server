@@ -36,8 +36,9 @@ pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
                 return Err(anyhow::anyhow!("Failed to compile the contract class"));
             }
         };
-        error!("`scarb` exited with error: {:?}", output);
-        Err(anyhow::anyhow!("Failed to compile the contract class"))
+        let error_message = format!("Failed to compile the contract class; `scarb` exited with error: {:?}", output);
+        error!("{}", error_message);
+        Err(anyhow::anyhow!(error_message))
     }
 }
 
