@@ -128,8 +128,9 @@ pub fn extract_transaction_receipt(
 pub async fn extract_block_txs_info(
     provider_client: &JsonRpcClient<HttpTransport>,
     simulation_args: &SimulationArgs,
+    block_number: u64,
 ) -> Result<(BlockTimestamp, usize), TransactionSimulationError> {
-    let block_id = starknet_old_types::BlockId::Number(simulation_args.block_number.0);
+    let block_id = starknet_old_types::BlockId::Number(block_number);
     let block_with_txs = provider_client.get_block_with_txs(block_id).await;
     match block_with_txs {
         Ok(starknet_old_types::MaybePendingBlockWithTxs::Block(block_txs)) => {

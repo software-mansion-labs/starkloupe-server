@@ -19,6 +19,7 @@ use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::Serializer;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
@@ -27,6 +28,7 @@ use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::{contract_address, felt, patricia_key};
+use starknet_old::core::types as starknet_old_types;
 use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
 use thiserror::Error;
@@ -52,7 +54,7 @@ pub struct SimulationRawArgs {
 pub struct SimulationArgs {
     pub chain_id: Option<ChainId>,
     pub rpc_url: Url,
-    pub block_number: BlockNumber,
+    pub block_number: Option<BlockNumber>,
     pub nonce: Option<Nonce>,
     pub sender_address: ContractAddress,
     pub calldata: Vec<Felt>,
@@ -65,7 +67,8 @@ pub struct SimulationArgs {
 pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
     pub chain_id: Option<String>,
-    pub block_number: u64,
+    #[serde(serialize_with = "serialize_block_number")]
+    pub block_number: starknet_old_types::BlockId,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
     pub sender_address: String,
@@ -105,6 +108,20 @@ pub enum TransactionSimulationError {
     OtherError(String),
 }
 
+fn serialize_block_number<S>(
+    block_id: &starknet_old_types::BlockId,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match block_id {
+        starknet_old_types::BlockId::Number(num) => serializer.serialize_u64(*num),
+        starknet_old_types::BlockId::Hash(hash) => serializer.serialize_str(&format!("{:?}", hash)),
+        starknet_old_types::BlockId::Tag(tag) => serializer.serialize_str(&format!("{:?}", tag)),
+    }
+}
+
 impl TryFrom<SimulationRawArgs> for SimulationArgs {
     type Error = TransactionSimulationError;
 
@@ -131,9 +148,7 @@ impl TryFrom<SimulationRawArgs> for SimulationArgs {
         Ok(Self {
             chain_id,
             rpc_url,
-            block_number: raw_args
-                .block_number
-                .map_or(BlockNumber::default(), BlockNumber),
+            block_number: raw_args.block_number.map(BlockNumber),
             nonce: raw_args.nonce.map(|nonce| Nonce(Felt::from(nonce))),
             sender_address: contract_address!(raw_args.sender_address.as_str()),
             calldata,

@@ -35,6 +35,7 @@ use starknet_api::block::BlockTimestamp;
 use starknet_api::core::{ChainId, ContractAddress};
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::transaction::{Calldata, TransactionHash};
+use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -72,14 +73,18 @@ pub async fn simulate(
 ) -> Result<(SimulationInfo, BlockTimestamp, usize), TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
+    let block_number = if let Some(bn) = args.block_number {
+        bn.0
+    } else {
+        provider_client.block_number().await?
+    };
     let (block_timestamp, transaction_index) =
-        extract_block_txs_info(&provider_client, &args).await?;
+        extract_block_txs_info(&provider_client, &args, block_number).await?;
 
     let mut cached_fork_state = CachedState::new(
-        ForkStateReader::new(args.rpc_url.clone(), args.block_number.0, transaction_index)
-            .map_err(|e| {
-                TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
-            })?,
+        ForkStateReader::new(args.rpc_url.clone(), block_number, transaction_index).map_err(
+            |e| TransactionSimulationError::StateError(StateError::StateReadError(e.to_string())),
+        )?,
     );
 
     let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
@@ -226,7 +231,11 @@ pub async fn simulate_by_calldata(
         None => None,
     };
     let readable_chain_id = args.chain_id.as_ref().map(chain_id_to_readable_string);
-    let block_number = args.block_number.0;
+    let block_number = if let Some(bn) = args.block_number {
+        starknet_old_types::BlockId::Number(bn.0)
+    } else {
+        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest)
+    };
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
         .calldata
@@ -287,7 +296,7 @@ pub async fn simulate_transaction_by_hash(
                             SimulationArgs {
                                 rpc_url,
                                 chain_id: chain_id.clone(),
-                                block_number: BlockNumber(block_number),
+                                block_number: Some(BlockNumber(block_number)),
                                 nonce: Some(nonce),
                                 sender_address,
                                 calldata: calldata.0.to_vec(),
@@ -306,7 +315,7 @@ pub async fn simulate_transaction_by_hash(
                     return Ok(TransactionSimulationResult {
                         simulation_result,
                         chain_id: chain_id.as_ref().map(chain_id_to_readable_string),
-                        block_number,
+                        block_number: starknet_old_types::BlockId::Number(block_number),
                         block_timestamp: block_timestamp.0,
                         transaction_index_in_block,
                         nonce,
