@@ -200,7 +200,7 @@ fn run_simulation(
 
     if args.transaction_hash.is_some() {
         let _validate_result = validate_call(
-            Calldata(args.calldata.clone().into()),
+            args.calldata.clone(),
             args.sender_address,
             cached_fork_state,
             &mut cheatnet_state,
@@ -210,7 +210,7 @@ fn run_simulation(
     }
 
     let _execution_result = execute_call(
-        Calldata(args.calldata.clone().into()),
+        args.calldata.clone(),
         args.sender_address,
         cached_fork_state,
         &mut cheatnet_state,
@@ -239,10 +239,11 @@ pub async fn simulate_by_calldata(
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
         .calldata
+        .0
+        .to_vec()
         .iter()
-        .map(|x| x.to_string())
+        .map(|felt| felt.to_hex_string())
         .collect::<Vec<String>>();
-
     let transaction_version: usize = args.transaction_version.0.to_u64().unwrap() as usize;
     let (simulation_result, block_timestamp, transaction_index_in_block) =
         simulate(db_pool, s3_client, args).await?;
@@ -299,7 +300,7 @@ pub async fn simulate_transaction_by_hash(
                                 block_number: Some(BlockNumber(block_number)),
                                 nonce: Some(nonce),
                                 sender_address,
-                                calldata: calldata.0.to_vec(),
+                                calldata: calldata.clone(),
                                 transaction_version,
                                 transaction_signature: Some(signature),
                                 transaction_hash: Some(TransactionHash(transaction_hash)),
@@ -308,8 +309,9 @@ pub async fn simulate_transaction_by_hash(
                         .await?;
                     let calldata = calldata
                         .0
+                        .to_vec()
                         .iter()
-                        .map(|x| x.to_string())
+                        .map(|felt| felt.to_hex_string())
                         .collect::<Vec<String>>();
                     let nonce = nonce.0.to_u64();
                     return Ok(TransactionSimulationResult {
