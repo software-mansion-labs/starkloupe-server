@@ -8,6 +8,7 @@ pub mod function_calls;
 pub mod simulate;
 pub mod state;
 pub mod transaction_extraction;
+pub mod transaction_info;
 pub mod utils;
 
 use blockifier::execution::errors::EntryPointExecutionError;
@@ -23,12 +24,14 @@ use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::transaction::Calldata;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::{contract_address, felt, patricia_key};
 use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
 use url::Url;
@@ -55,7 +58,7 @@ pub struct SimulationArgs {
     pub block_number: BlockNumber,
     pub nonce: Option<Nonce>,
     pub sender_address: ContractAddress,
-    pub calldata: Vec<Felt>,
+    pub calldata: Calldata,
     pub transaction_version: TransactionVersion,
     pub transaction_signature: Option<TransactionSignature>,
     pub transaction_hash: Option<TransactionHash>,
@@ -122,11 +125,12 @@ impl TryFrom<SimulationRawArgs> for SimulationArgs {
             return Err(TransactionSimulationError::MissingChainIdOrRpcUrl);
         };
 
-        let calldata: Vec<Felt> = raw_args
+        let calldata_vec: Vec<Felt> = raw_args
             .calldata
             .iter()
             .map(|x| felt!(x.as_str()))
             .collect();
+        let calldata = Calldata(Arc::new(calldata_vec));
 
         Ok(Self {
             chain_id,
