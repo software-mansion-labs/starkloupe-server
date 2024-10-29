@@ -72,11 +72,11 @@ pub fn rpc_url(chain_id: &ChainId) -> Url {
     }
 }
 
-pub fn get_voyager_api_url(chain_id: &ChainId) -> &str {
+pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     match chain_id {
-        ChainId::Mainnet => "https://api.voyager.online/beta/",
-        ChainId::Sepolia => "https://sepolia-api.voyager.online/beta",
-        _ => panic!("Invalid chain id"),
+        ChainId::Mainnet => Some("https://api.voyager.online/beta/"),
+        ChainId::Sepolia => Some("https://sepolia-api.voyager.online/beta"),
+        _ => None,
     }
 }
 
@@ -96,6 +96,7 @@ pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
     match chain_id {
         ChainId::Mainnet => String::from("sn_main"),
         ChainId::Sepolia => String::from("sn_sepolia"),
+        ChainId::Other(chain_id) => chain_id.clone(),
         _ => panic!("Invalid chain id"),
     }
 }

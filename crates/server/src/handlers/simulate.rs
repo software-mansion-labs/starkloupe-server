@@ -42,7 +42,7 @@ pub async fn simulate_transaction(
 ) -> Response {
     let simulation_info = match payload {
         SimulationPayload::WithCalldata(args) => {
-            let simulation_args: SimulationArgs = match args.try_into() {
+            let simulation_args: SimulationArgs = match SimulationArgs::try_from_raw_args(args).await {
                 Ok(args) => args,
                 Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
             };

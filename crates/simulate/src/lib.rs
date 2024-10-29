@@ -29,12 +29,16 @@ use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::{contract_address, felt, patricia_key};
+use starknet_providers::Provider;
 use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
+use transaction_extraction::extract_chain_id_from_felt;
 use url::Url;
+use walnut_shared::create_rpc_client_from_url;
+use walnut_shared::field_element_to_felt;
 use walnut_shared::EventAbi;
 use walnut_shared::Parameter;
 use walnut_shared::{extract_chain_id, rpc_url};
@@ -53,7 +57,7 @@ pub struct SimulationRawArgs {
 
 #[derive(Debug)]
 pub struct SimulationArgs {
-    pub chain_id: Option<ChainId>,
+    pub chain_id: ChainId,
     pub rpc_url: Url,
     pub block_number: BlockNumber,
     pub nonce: Option<Nonce>,
@@ -64,10 +68,70 @@ pub struct SimulationArgs {
     pub transaction_hash: Option<TransactionHash>,
 }
 
+impl SimulationArgs {
+    pub async fn try_from_raw_args(
+        raw_args: SimulationRawArgs,
+    ) -> Result<Self, TransactionSimulationError> {
+        let (chain_id, rpc_url) = match raw_args.chain_id {
+            Some(chain_id_str) => {
+                let chain_id = extract_chain_id(chain_id_str.as_str())
+                    .map_err(|_| TransactionSimulationError::InvalidChainId)?;
+                let rpc_url = rpc_url(&chain_id);
+                (chain_id, rpc_url)
+            }
+            None => match raw_args.rpc_url {
+                Some(rpc_url) => {
+                    let rpc_url = Url::parse(&rpc_url)
+                        .map_err(|_| TransactionSimulationError::InvalidRpcUrl)?;
+                    let provider_client = create_rpc_client_from_url(rpc_url.clone());
+                    let chain_id_felt = field_element_to_felt(
+                        provider_client
+                            .chain_id()
+                            .await
+                            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
+                    );
+                    let chain_id = extract_chain_id_from_felt(chain_id_felt)?;
+                    (chain_id, rpc_url)
+                }
+                None => return Err(TransactionSimulationError::MissingChainIdOrRpcUrl),
+            },
+        };
+
+        let calldata_vec: Vec<Felt> = raw_args
+            .calldata
+            .iter()
+            .map(|x| felt!(x.as_str()))
+            .collect();
+        let calldata = Calldata(Arc::new(calldata_vec));
+
+        Ok(Self {
+            chain_id,
+            rpc_url,
+            block_number: raw_args
+                .block_number
+                .map_or(BlockNumber::default(), BlockNumber),
+            nonce: raw_args.nonce.map(|nonce| Nonce(Felt::from(nonce))),
+            sender_address: contract_address!(raw_args.sender_address.as_str()),
+            calldata,
+            transaction_version: match raw_args.transaction_version {
+                0 => TransactionVersion::ZERO,
+                1 => TransactionVersion::ONE,
+                2 => TransactionVersion::TWO,
+                3 => TransactionVersion::THREE,
+                _ => {
+                    return Err(TransactionSimulationError::InvalidTransactionVersion);
+                }
+            },
+            transaction_signature: None,
+            transaction_hash: None,
+        })
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
-    pub chain_id: Option<String>,
+    pub chain_id: String,
     pub block_number: u64,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
@@ -104,56 +168,12 @@ pub enum TransactionSimulationError {
     TransactionIndexNotFound,
     #[error("Invalid transaction version")]
     InvalidTransactionVersion,
+    #[error("Failed to fetch chain id")]
+    FailedToFetchChainId,
+    #[error("Failed to decode chain id")]
+    FailedToDecodeChainId,
     #[error("Error occurred: {0}")]
     OtherError(String),
-}
-
-impl TryFrom<SimulationRawArgs> for SimulationArgs {
-    type Error = TransactionSimulationError;
-
-    fn try_from(raw_args: SimulationRawArgs) -> Result<Self, Self::Error> {
-        let mut chain_id: Option<ChainId> = None;
-
-        let rpc_url = if let Some(chain_id_str) = raw_args.chain_id {
-            let extracted_chain_id = extract_chain_id(chain_id_str.as_str())
-                .map_err(|_| TransactionSimulationError::InvalidChainId)?;
-            chain_id = Some(extracted_chain_id.clone());
-            rpc_url(&extracted_chain_id)
-        } else if let Some(rpc_url) = raw_args.rpc_url {
-            Url::parse(&rpc_url).map_err(|_| TransactionSimulationError::InvalidRpcUrl)?
-        } else {
-            return Err(TransactionSimulationError::MissingChainIdOrRpcUrl);
-        };
-
-        let calldata_vec: Vec<Felt> = raw_args
-            .calldata
-            .iter()
-            .map(|x| felt!(x.as_str()))
-            .collect();
-        let calldata = Calldata(Arc::new(calldata_vec));
-
-        Ok(Self {
-            chain_id,
-            rpc_url,
-            block_number: raw_args
-                .block_number
-                .map_or(BlockNumber::default(), BlockNumber),
-            nonce: raw_args.nonce.map(|nonce| Nonce(Felt::from(nonce))),
-            sender_address: contract_address!(raw_args.sender_address.as_str()),
-            calldata,
-            transaction_version: match raw_args.transaction_version {
-                0 => TransactionVersion::ZERO,
-                1 => TransactionVersion::ONE,
-                2 => TransactionVersion::TWO,
-                3 => TransactionVersion::THREE,
-                _ => {
-                    return Err(TransactionSimulationError::InvalidTransactionVersion);
-                }
-            },
-            transaction_signature: None,
-            transaction_hash: None,
-        })
-    }
 }
 
 #[derive(Serialize, Debug)]
