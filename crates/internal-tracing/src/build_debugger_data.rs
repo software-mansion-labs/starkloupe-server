@@ -2,6 +2,7 @@ use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
+use tracing::info;
 
 use crate::{
     call_trace::get_internal_call_trace, function_calls_map::FunctionCallsMap, mappings::Mappings,
@@ -35,7 +36,11 @@ pub fn build_contract_call_debugger_data(
         vm_memory,
         vm_trace,
         full_class_debugger_data.contract_class.clone(),
-    )?;
+    )
+    .map_err(|e| {
+        info!("Failed to create mappings: {:?}", e);
+        e
+    })?;
 
     let (execution_trace, root_function_call_id) = get_internal_call_trace(
         &mappings,

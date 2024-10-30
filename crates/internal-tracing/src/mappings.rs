@@ -25,6 +25,7 @@ use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
+use tracing::warn;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::decode_felt;
 
@@ -56,7 +57,10 @@ impl Mappings {
         vm_trace: &Vec<RelocatedTraceEntry>,
         contract_class: ContractClass,
     ) -> Result<Self> {
-        let sierra_program = contract_class.extract_sierra_program()?;
+        let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
+            warn!("Failed to extract sierra program: {:?}", e);
+            e
+        })?;
         //dbg!(&sierra_program.type_declarations);
         //dbg!(format_sierra_program(sierra_program.clone()));
         let type_names = contract_class
@@ -64,9 +68,17 @@ impl Mappings {
             .clone()
             .unwrap()
             .type_names;
-        let casm_program = compile_sierra_contract_class(contract_class, usize::MAX)?;
+        let casm_program =
+            compile_sierra_contract_class(contract_class, usize::MAX).map_err(|e| {
+                warn!("Failed to compile sierra contract class: {:?}", e);
+                e
+            })?;
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
-        let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace)?;
+        let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace)
+            .map_err(|e| {
+                warn!("Failed to get pc mappings: {:?}", e);
+                e
+            })?;
 
         let pc_to_ptr_sys_calls =
             get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
@@ -76,7 +88,10 @@ impl Mappings {
             .filter_map(|(i, x)| x.as_ref().map(|v| (i + 1, v.to_bigint())))
             .collect();
         let sierra_program_registry: ProgramRegistry<CoreType, CoreLibfunc> =
-            ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).unwrap();
+            ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).map_err(|e| {
+                warn!("Failed to create sierra program registry: {:?}", e);
+                e
+            })?;
         let type_sizes =
             get_type_size_map(&sierra_program, &sierra_program_registry).unwrap_or_default();
         let type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration> = sierra_program

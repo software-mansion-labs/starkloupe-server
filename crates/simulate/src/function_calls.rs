@@ -33,7 +33,7 @@ pub fn create_function_calls_map(
                                 Some((call_debugger_data, root_function_call_id))
                             }
                             Err(e) => {
-                                error!("Failed to get internal fn call trace: {:?}", e);
+                                error!("Failed to get internal fn call trace for class hash {}: {:?}", class_hash, e);
                                 None
                             }
                         }
