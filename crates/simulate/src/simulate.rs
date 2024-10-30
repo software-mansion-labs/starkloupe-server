@@ -41,9 +41,10 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use url::Url;
-use walnut_shared::decode_felt;
 use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
+use walnut_shared::felts_to_string;
+use walnut_shared::field_element_to_felt;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
@@ -54,9 +55,11 @@ use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_txs_info;
+use crate::transaction_extraction::extract_chain_id_from_felt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
 use crate::transaction_extraction::extract_transaction_receipt;
+use crate::utils::parse_transaction_hash;
 use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
 use crate::ContractCallEvent;
@@ -143,7 +146,7 @@ pub async fn simulate(
         &contract_calls_map,
     );
 
-    ContractNamesFetcher::new(provider_client, chain_id.as_ref())
+    ContractNamesFetcher::new(provider_client, &chain_id)
         .set_contract_names(&mut contract_calls_map)
         .await;
 
@@ -230,12 +233,13 @@ pub async fn simulate_by_calldata(
         Some(nonce) => nonce.0.to_u64(),
         None => None,
     };
-    let readable_chain_id = args.chain_id.as_ref().map(chain_id_to_readable_string);
+    let readable_chain_id = chain_id_to_readable_string(&args.chain_id);
     let block_number = if let Some(bn) = args.block_number {
         starknet_old_types::BlockId::Number(bn.0)
     } else {
         starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest)
     };
+
     let sender_address = args.sender_address.0.to_string();
     let calldata = args
         .calldata
@@ -266,11 +270,11 @@ pub async fn simulate_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     rpc_url: Url,
-    tx_hash: String,
+    tx_hash: &str,
     chain_id: Option<ChainId>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(rpc_url.clone());
-    let transaction_hash = Felt::from_str(tx_hash.as_str()).unwrap();
+    let transaction_hash = parse_transaction_hash(tx_hash)?;
     let transaction = provider_client
         .get_transaction_by_hash(felt_to_field_element(transaction_hash))
         .await;
@@ -290,6 +294,15 @@ pub async fn simulate_transaction_by_hash(
 
             if let Ok(transaction_receipt) = transaction_receipt {
                 if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
+                    let chain_id = match chain_id {
+                        Some(chain_id) => chain_id,
+                        None => extract_chain_id_from_felt(field_element_to_felt(
+                            provider_client
+                                .chain_id()
+                                .await
+                                .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
+                        ))?,
+                    };
                     let (simulation_result, block_timestamp, transaction_index_in_block) =
                         simulate(
                             db_pool,
@@ -316,7 +329,7 @@ pub async fn simulate_transaction_by_hash(
                     let nonce = nonce.0.to_u64();
                     return Ok(TransactionSimulationResult {
                         simulation_result,
-                        chain_id: chain_id.as_ref().map(chain_id_to_readable_string),
+                        chain_id: chain_id_to_readable_string(&chain_id),
                         block_number: starknet_old_types::BlockId::Number(block_number),
                         block_timestamp: block_timestamp.0,
                         transaction_index_in_block,
@@ -394,12 +407,12 @@ fn get_execution_result(
         if let Some(call) = contract_calls_map.get(&deepest_contract_call_id) {
             if let CallResult::Failure(failure) = &call.result {
                 match failure {
-                    CallFailure::Panic { panic_data } => match decode_felt(panic_data.to_vec()) {
-                        Ok(decoded) => Ok(ExecutionResult::Reverted { reason: decoded }),
-                        Err(_) => Err(TransactionSimulationError::OtherError(
-                            "Failed to decode revert reason".to_string(),
-                        )),
-                    },
+                    CallFailure::Panic { panic_data } => {
+                        let decoded_strings = felts_to_string(panic_data);
+                        let reason = decoded_strings.join(" ");
+
+                        Ok(ExecutionResult::Reverted { reason })
+                    }
                     CallFailure::Error { msg } => Ok(ExecutionResult::Reverted {
                         reason: msg.to_string(),
                     }),

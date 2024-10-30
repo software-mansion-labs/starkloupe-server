@@ -1,7 +1,9 @@
+use starknet::core::types::Felt;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
+use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::vec_field_element_to_vec_felt;
 
@@ -203,20 +205,16 @@ pub fn extract_transaction_contex(
     transaction_signature: &Option<TransactionSignature>,
     transaction_hash: &Option<TransactionHash>,
     nonce: &Option<Nonce>,
-    chain_id: Option<ChainId>,
+    chain_id: ChainId,
     block_info: &BlockInfo,
 ) -> Arc<TransactionContext> {
     // Create a chain-specific block context
-    let chain_info = if let Some(chain_id) = chain_id {
-        ChainInfo {
-            chain_id,
-            fee_token_addresses: FeeTokenAddresses {
-                strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
-                eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
-            },
-        }
-    } else {
-        ChainInfo::default()
+    let chain_info = ChainInfo {
+        chain_id,
+        fee_token_addresses: FeeTokenAddresses {
+            strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
+            eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
+        },
     };
 
     Arc::new(TransactionContext {
@@ -243,4 +241,14 @@ pub fn extract_transaction_contex(
             account_deployment_data: Default::default(),
         }),
     })
+}
+
+pub fn extract_chain_id_from_felt(
+    chain_id_felt: Felt,
+) -> Result<ChainId, TransactionSimulationError> {
+    let chain_id_string = felts_to_string(&[chain_id_felt])
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    Ok(ChainId::Other(chain_id_string))
 }

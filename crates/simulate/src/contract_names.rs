@@ -29,8 +29,8 @@ pub struct ContractName {
 }
 
 impl ContractNamesFetcher {
-    pub fn new(provider_client: JsonRpcClient<HttpTransport>, chain_id: Option<&ChainId>) -> Self {
-        let voyager_api_url = chain_id.map(|id| get_voyager_api_url(id).to_string());
+    pub fn new(provider_client: JsonRpcClient<HttpTransport>, chain_id: &ChainId) -> Self {
+        let voyager_api_url = get_voyager_api_url(chain_id).map(|url| url.to_string());
         ContractNamesFetcher {
             provider_client,
             voyager_api_url,
