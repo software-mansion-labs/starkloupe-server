@@ -23,6 +23,7 @@ use num_bigint::BigUint;
 use serde::Serialize;
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
+use tracing::warn;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
 
 pub fn compile_sierra_contract_class(
@@ -116,7 +117,15 @@ pub fn get_pc_mappings(
         // let instruction_encoding_u64 = instruction_encoding_felt.to_u64().ok_or_else(|| anyhow::anyhow!("Failed to convert instruction encoding to u64"))?;
 
         // TODO: Fix: can't decode instruction in transactions with Dojo world
-        let instruction = decode_instruction(instruction_encoding_u64)?;
+        let instruction = match decode_instruction(instruction_encoding_u64) {
+            Ok(instr) => instr,
+            Err(e) => {
+                warn!("Failed to decode instruction: {}", e);
+                // return Err(e.into());
+                // TODO: Fix: Failed to get internal fn call trace for class hash ...: Instruction MSB should be 0
+                continue;
+            }
+        };
         pc_inst_map.insert(pc, instruction.clone());
         if instruction.op1_addr == Op1Addr::Imm {
             skip_next_pc = true;
