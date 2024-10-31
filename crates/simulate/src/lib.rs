@@ -10,7 +10,6 @@ pub mod state;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
-
 use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
@@ -20,28 +19,27 @@ use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::Serializer;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
-use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::transaction::Calldata;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
-use starknet_api::{contract_address, felt, patricia_key};
-use starknet_providers::Provider;
+use starknet_old::core::types as starknet_old_types;
 use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
-use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
-use transaction_extraction::extract_chain_id_from_felt;
 use url::Url;
-use walnut_shared::create_rpc_client_from_url;
-use walnut_shared::field_element_to_felt;
+use utils::{
+    parse_block_number, parse_calldata, parse_chain_id_and_rpc_url, parse_contract_address,
+    parse_nonce, parse_transaction_version,
+};
 use walnut_shared::EventAbi;
 use walnut_shared::Parameter;
-use walnut_shared::{extract_chain_id, rpc_url};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SimulationRawArgs {
@@ -59,7 +57,7 @@ pub struct SimulationRawArgs {
 pub struct SimulationArgs {
     pub chain_id: ChainId,
     pub rpc_url: Url,
-    pub block_number: BlockNumber,
+    pub block_number: Option<BlockNumber>,
     pub nonce: Option<Nonce>,
     pub sender_address: ContractAddress,
     pub calldata: Calldata,
@@ -72,56 +70,21 @@ impl SimulationArgs {
     pub async fn try_from_raw_args(
         raw_args: SimulationRawArgs,
     ) -> Result<Self, TransactionSimulationError> {
-        let (chain_id, rpc_url) = match raw_args.chain_id {
-            Some(chain_id_str) => {
-                let chain_id = extract_chain_id(chain_id_str.as_str())
-                    .map_err(|_| TransactionSimulationError::InvalidChainId)?;
-                let rpc_url = rpc_url(&chain_id);
-                (chain_id, rpc_url)
-            }
-            None => match raw_args.rpc_url {
-                Some(rpc_url) => {
-                    let rpc_url = Url::parse(&rpc_url)
-                        .map_err(|_| TransactionSimulationError::InvalidRpcUrl)?;
-                    let provider_client = create_rpc_client_from_url(rpc_url.clone());
-                    let chain_id_felt = field_element_to_felt(
-                        provider_client
-                            .chain_id()
-                            .await
-                            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
-                    );
-                    let chain_id = extract_chain_id_from_felt(chain_id_felt)?;
-                    (chain_id, rpc_url)
-                }
-                None => return Err(TransactionSimulationError::MissingChainIdOrRpcUrl),
-            },
-        };
-
-        let calldata_vec: Vec<Felt> = raw_args
-            .calldata
-            .iter()
-            .map(|x| felt!(x.as_str()))
-            .collect();
-        let calldata = Calldata(Arc::new(calldata_vec));
+        let (chain_id, rpc_url) = parse_chain_id_and_rpc_url(&raw_args).await?;
+        let nonce = parse_nonce(raw_args.nonce);
+        let block_number = parse_block_number(raw_args.block_number);
+        let sender_address = parse_contract_address(&raw_args.sender_address)?;
+        let calldata = parse_calldata(&raw_args.calldata)?;
+        let transaction_version = parse_transaction_version(raw_args.transaction_version)?;
 
         Ok(Self {
             chain_id,
             rpc_url,
-            block_number: raw_args
-                .block_number
-                .map_or(BlockNumber::default(), BlockNumber),
-            nonce: raw_args.nonce.map(|nonce| Nonce(Felt::from(nonce))),
-            sender_address: contract_address!(raw_args.sender_address.as_str()),
+            block_number,
+            nonce,
+            sender_address,
             calldata,
-            transaction_version: match raw_args.transaction_version {
-                0 => TransactionVersion::ZERO,
-                1 => TransactionVersion::ONE,
-                2 => TransactionVersion::TWO,
-                3 => TransactionVersion::THREE,
-                _ => {
-                    return Err(TransactionSimulationError::InvalidTransactionVersion);
-                }
-            },
+            transaction_version,
             transaction_signature: None,
             transaction_hash: None,
         })
@@ -132,7 +95,8 @@ impl SimulationArgs {
 pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
-    pub block_number: u64,
+    #[serde(serialize_with = "serialize_block_number")]
+    pub block_number: starknet_old_types::BlockId,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
     pub sender_address: String,
@@ -162,6 +126,12 @@ pub enum TransactionSimulationError {
     InvalidChainId,
     #[error("Invalid RPC URL")]
     InvalidRpcUrl,
+    #[error("Invalid contract address")]
+    InvalidContractAddress,
+    #[error("Invalid Calldata")]
+    InvalidCalldata,
+    #[error("Invalid transaction hash")]
+    InvalidTransactionHash,
     #[error("Either chain_id or rpc_url must be provided")]
     MissingChainIdOrRpcUrl,
     #[error("Transaction index can not be extracted from block")]
@@ -174,6 +144,20 @@ pub enum TransactionSimulationError {
     FailedToDecodeChainId,
     #[error("Error occurred: {0}")]
     OtherError(String),
+}
+
+fn serialize_block_number<S>(
+    block_id: &starknet_old_types::BlockId,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match block_id {
+        starknet_old_types::BlockId::Number(num) => serializer.serialize_u64(*num),
+        starknet_old_types::BlockId::Hash(hash) => serializer.serialize_str(&format!("{:?}", hash)),
+        starknet_old_types::BlockId::Tag(tag) => serializer.serialize_str(&format!("{:?}", tag)),
+    }
 }
 
 #[derive(Serialize, Debug)]

@@ -1,9 +1,12 @@
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 
+use std::string::FromUtf8Error;
+
 use anyhow::anyhow;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use num_bigint::BigUint;
+use num_traits::Zero;
 use serde::Serialize;
 use starknet::core::types::{BlockId, BlockTag, ContractStorageDiffItem, Felt, StorageEntry};
 use starknet_api::core::ChainId;
@@ -115,26 +118,33 @@ pub fn felt_vec_to_hex_vec(felt_array: Vec<Felt>) -> Vec<String> {
     hex_representation
 }
 
-pub fn decode_felt(felt_array: Vec<Felt>) -> Result<String, std::str::Utf8Error> {
-    //convert do decimal string representation
-    let decimal_arrays = felt_array
-        .iter()
-        .map(|felt| felt.to_string())
-        .collect::<Vec<String>>();
-    let decimal_string = decimal_arrays.join(", ");
-    //convert to hex representation
-    let hex_representation = BigUint::parse_bytes(decimal_string.as_bytes(), 10)
-        .expect("Failed to parse BigUint")
-        .to_str_radix(16);
-    //conver it to bytes
-    let bytes: Vec<u8> = hex_representation
-        .as_bytes()
-        .chunks(2)
-        .map(|chunk| u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap())
-        .collect();
-    //get human readable text
-    let text = String::from_utf8_lossy(&bytes);
-    Ok(text.to_string())
+pub fn felts_to_string(felts: &[Felt]) -> Vec<String> {
+    let mut decoded_strings = Vec::new();
+
+    for felt in felts {
+        // Convert Felt to BigUint
+        let value = felt.to_biguint();
+
+        // Convert BigUint to bytes (big-endian)
+        let mut felt_bytes = value.to_bytes_be();
+
+        // Remove leading zeros (optional)
+        while let Some(0) = felt_bytes.first() {
+            felt_bytes.remove(0);
+        }
+
+        // Attempt to decode bytes into a String
+        match String::from_utf8(felt_bytes.clone()) {
+            Ok(s) => decoded_strings.push(s),
+            Err(_) => {
+                // Include the raw hexadecimal representation
+                let hex_repr = format!("0x{}", hex::encode(&felt_bytes));
+                decoded_strings.push(hex_repr);
+            }
+        }
+    }
+
+    decoded_strings
 }
 
 pub fn clone_vm_trace(vm_trace: &Vec<RelocatedTraceEntry>) -> Vec<RelocatedTraceEntry> {

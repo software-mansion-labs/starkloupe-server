@@ -27,7 +27,7 @@ use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use tracing::warn;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
-use walnut_shared::decode_felt;
+use walnut_shared::felts_to_string;
 
 use crate::{
     call_trace::{ContractCall, ESysCall, InternalFnCallIO},
@@ -309,15 +309,17 @@ impl Mappings {
                             .get(index)
                             .and_then(|opt| *opt)
                             .expect("Failed to get panic reason from relocated_memory");
-                        let panic_reason_decoded = decode_felt(vec![panic_reason]).unwrap();
+                        let decoded_strings = felts_to_string(&[panic_reason]);
+                        let panic_string = decoded_strings.first().cloned().unwrap_or_default();
+
                         results.push(InternalFnCallIO {
                             type_name: Some(simplified_type_name.clone()),
-                            value: vec!["1".to_string(), panic_reason_decoded.clone()],
+                            value: vec!["1".to_string(), panic_string.clone()],
                         });
                         results_decoded.push(create_decoded_value(
                             None,
                             "Panic",
-                            DecodedValueType::String(panic_reason_decoded),
+                            DecodedValueType::String(panic_string),
                         ));
                     } else {
                         let type_id = &return_ref.ty;

@@ -3,7 +3,7 @@ use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
-use walnut_shared::decode_felt;
+use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::vec_field_element_to_vec_felt;
 
@@ -130,8 +130,9 @@ pub fn extract_transaction_receipt(
 pub async fn extract_block_txs_info(
     provider_client: &JsonRpcClient<HttpTransport>,
     simulation_args: &SimulationArgs,
+    block_number: u64,
 ) -> Result<(BlockTimestamp, usize), TransactionSimulationError> {
-    let block_id = starknet_old_types::BlockId::Number(simulation_args.block_number.0);
+    let block_id = starknet_old_types::BlockId::Number(block_number);
     let block_with_txs = provider_client.get_block_with_txs(block_id).await;
     match block_with_txs {
         Ok(starknet_old_types::MaybePendingBlockWithTxs::Block(block_txs)) => {
@@ -245,7 +246,9 @@ pub fn extract_transaction_contex(
 pub fn extract_chain_id_from_felt(
     chain_id_felt: Felt,
 ) -> Result<ChainId, TransactionSimulationError> {
-    let chain_id_string = decode_felt(vec![chain_id_felt])
-        .map_err(|_| TransactionSimulationError::FailedToDecodeChainId)?;
+    let chain_id_string = felts_to_string(&[chain_id_felt])
+        .first()
+        .cloned()
+        .unwrap_or_default();
     Ok(ChainId::Other(chain_id_string))
 }
