@@ -25,7 +25,7 @@ use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
-use tracing::warn;
+use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::felts_to_string;
 
@@ -54,7 +54,6 @@ pub struct Mappings {
 impl Mappings {
     pub fn new(
         relocated_memory: &Vec<Option<Felt>>,
-        vm_trace: &Vec<RelocatedTraceEntry>,
         contract_class: ContractClass,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
@@ -73,12 +72,9 @@ impl Mappings {
                 warn!("Failed to compile sierra contract class: {:?}", e);
                 e
             })?;
+
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
-        let (_pc_inst_map, pc_to_inst_indexes_map) = get_pc_mappings(relocated_memory, vm_trace)
-            .map_err(|e| {
-                warn!("Failed to get pc mappings: {:?}", e);
-                e
-            })?;
+        let pc_to_inst_indexes_map = get_pc_mappings(&casm_program.instructions);
 
         let pc_to_ptr_sys_calls =
             get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
@@ -125,18 +121,24 @@ impl Mappings {
     }
 
     pub fn get_sierra_indexes_at_pc(&self, pc: &usize) -> Option<Vec<usize>> {
-        let casm_index = self
-            .pc_to_inst_indexes_map
-            .get(pc)
-            .expect("Failed to get casm index");
+        let casm_index = match self.pc_to_inst_indexes_map.get(pc) {
+            Some(index) => index,
+            None => {
+                debug!("Failed to get casm index for pc: {}", pc);
+                return None;
+            }
+        };
         self.casm_to_sierra_map.get(casm_index).cloned()
     }
 
     pub fn get_first_sierra_index_at_pc(&self, pc: &usize) -> Option<usize> {
-        let casm_index = self
-            .pc_to_inst_indexes_map
-            .get(pc)
-            .expect("Failed to get casm index");
+        let casm_index = match self.pc_to_inst_indexes_map.get(pc) {
+            Some(index) => index,
+            None => {
+                debug!("Failed to get casm index for pc: {}", pc);
+                return None;
+            }
+        };
         self.casm_to_sierra_map
             .get(casm_index)
             .map_or(None, |sierra_indexes| sierra_indexes.first().cloned())

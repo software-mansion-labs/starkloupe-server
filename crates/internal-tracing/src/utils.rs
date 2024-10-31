@@ -1,5 +1,4 @@
 use anyhow::{Error, Result};
-use byteorder::{ByteOrder, LittleEndian};
 use cairo_lang_casm::{
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
@@ -13,17 +12,12 @@ use cairo_lang_sierra_to_casm::{
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
-use cairo_vm::{
-    types::instruction::{Instruction, Op1Addr},
-    utils::PRIME_STR,
-    vm::{decoding::decoder::decode_instruction, trace::trace_entry::RelocatedTraceEntry},
-};
+use cairo_vm::utils::PRIME_STR;
 use itertools::chain;
 use num_bigint::BigUint;
 use serde::Serialize;
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
-use tracing::warn;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
 
 pub fn compile_sierra_contract_class(
@@ -82,59 +76,14 @@ pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<us
     map
 }
 
-pub fn get_pc_mappings(
-    relocated_memory: &Vec<Option<Felt>>,
-    vm_trace: &Vec<RelocatedTraceEntry>,
-) -> Result<(HashMap<usize, Instruction>, HashMap<usize, usize>)> {
-    let max_pc_entry = vm_trace.iter().max_by(|a, b| a.pc.cmp(&b.pc));
-
-    let max_pc: usize = match max_pc_entry {
-        Some(max_entry) => max_entry.pc.try_into()?,
-        None => {
-            println!("No entries in the trace");
-            0
-        }
-    };
-
-    let mut pc_inst_map: HashMap<usize, Instruction> = HashMap::new();
-    // let mut pc_inst_serialized_map: HashMap<usize, InstructionSerializable> = HashMap::new();
-    let mut pc_to_inst_indexes_map: HashMap<usize, usize> = HashMap::new();
-
-    let mut skip_next_pc = false;
-    let mut casm_index: usize = 0;
-    for pc in 1..=max_pc {
-        if skip_next_pc {
-            skip_next_pc = false;
-            continue;
-        }
-
-        let (instruction_encoding_felt, _) = get_instruction_encoding(pc, &relocated_memory)
-            .expect("Failed to get instruction encoding");
-        let instruction_encoding_bytes_le = instruction_encoding_felt.to_bytes_le();
-        let instruction_encoding_u64 = LittleEndian::read_u64(&instruction_encoding_bytes_le[..]);
-
-        // TODO: Fix: can't convert instruction to u64 in transactions with Dojo world
-        // let instruction_encoding_u64 = instruction_encoding_felt.to_u64().ok_or_else(|| anyhow::anyhow!("Failed to convert instruction encoding to u64"))?;
-
-        // TODO: Fix: can't decode instruction in transactions with Dojo world
-        let instruction = match decode_instruction(instruction_encoding_u64) {
-            Ok(instr) => instr,
-            Err(e) => {
-                warn!("Failed to decode instruction: {}", e);
-                // return Err(e.into());
-                // TODO: Fix: Failed to get internal fn call trace for class hash ...: Instruction MSB should be 0
-                continue;
-            }
-        };
-        pc_inst_map.insert(pc, instruction.clone());
-        if instruction.op1_addr == Op1Addr::Imm {
-            skip_next_pc = true;
-        }
-        // pc_inst_serialized_map.insert(pc, InstructionSerializable(instruction));
-        pc_to_inst_indexes_map.insert(pc, casm_index);
-        casm_index += 1;
+pub fn get_pc_mappings(instructions: &[CasmInstruction]) -> HashMap<usize, usize> {
+    let mut pc_to_inst_indexes_map = HashMap::new();
+    let mut offset = 1;
+    for (i, inst) in instructions.iter().enumerate() {
+        pc_to_inst_indexes_map.insert(offset, i);
+        offset += inst.body.op_size();
     }
-    Ok((pc_inst_map, pc_to_inst_indexes_map))
+    pc_to_inst_indexes_map
 }
 
 pub fn get_pc_to_ptr_sys_call_mappings(
@@ -164,30 +113,6 @@ pub fn get_pc_to_ptr_sys_call_mappings(
             }
         })
         .collect()
-}
-
-// Returns the encoded instruction (the value at pc) and the immediate value (the value at
-// pc + 1, if it exists in the memory).
-pub fn get_instruction_encoding(
-    pc: usize,
-    memory: &[Option<Felt>],
-) -> Result<(Felt, Option<Felt>)> {
-    if memory[pc].is_none() {
-        return Err(Error::msg("Memory at pc is None"));
-    }
-    let instruction_encoding = memory
-        .get(pc)
-        .and_then(|value| value.clone())
-        .ok_or_else(|| {
-            anyhow::Error::msg(format!("Memory at pc = {} is None or out of bounds", pc))
-        })?;
-    let prime = BigUint::parse_bytes(PRIME_STR[2..].as_bytes(), 16)
-        .ok_or_else(|| anyhow::Error::msg("Failed to parse prime"))?;
-    let imm_addr = BigUint::from(pc + 1) % prime;
-    let imm_addr = usize::try_from(imm_addr.clone())
-        .map_err(|_| anyhow::Error::msg("Failed to convert imm_addr to usize"))?;
-    let optional_imm = memory[imm_addr].clone();
-    Ok((instruction_encoding, optional_imm))
 }
 
 #[derive(Serialize, Debug)]
