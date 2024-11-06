@@ -13,6 +13,7 @@ pub mod utils;
 use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
+use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
@@ -64,6 +65,7 @@ pub struct SimulationArgs {
     pub transaction_version: TransactionVersion,
     pub transaction_signature: Option<TransactionSignature>,
     pub transaction_hash: Option<TransactionHash>,
+    pub transaction_type: Option<TransactionType>,
 }
 
 impl SimulationArgs {
@@ -87,6 +89,7 @@ impl SimulationArgs {
             transaction_version,
             transaction_signature: None,
             transaction_hash: None,
+            transaction_type: None,
         })
     }
 }
@@ -132,6 +135,8 @@ pub enum TransactionSimulationError {
     InvalidCalldata,
     #[error("Invalid transaction hash")]
     InvalidTransactionHash,
+    #[error("Transaction type is not supported")]
+    TransactionTypeNotSupported,
     #[error("Either chain_id or rpc_url must be provided")]
     MissingChainIdOrRpcUrl,
     #[error("Transaction index can not be extracted from block")]

@@ -1,14 +1,13 @@
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 
-use std::string::FromUtf8Error;
-
 use anyhow::anyhow;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use num_bigint::BigUint;
-use num_traits::Zero;
 use serde::Serialize;
-use starknet::core::types::{BlockId, BlockTag, ContractStorageDiffItem, Felt, StorageEntry};
+use starknet::core::types::{
+    BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, Felt,
+    StorageEntry,
+};
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
@@ -232,6 +231,30 @@ pub fn old_storage_diffs_to_storage_diffs(
                     value: field_element_to_felt(storage_entry.value),
                 })
                 .collect(),
+        })
+        .collect()
+}
+
+pub fn old_deploy_contracts_to_deploy_contracts(
+    old_deploy_contracts: Vec<starknet_old_types::DeployedContractItem>,
+) -> Vec<DeployedContractItem> {
+    old_deploy_contracts
+        .into_iter()
+        .map(|old_deploy_contract| DeployedContractItem {
+            address: field_element_to_felt(old_deploy_contract.address),
+            class_hash: field_element_to_felt(old_deploy_contract.class_hash),
+        })
+        .collect()
+}
+
+pub fn old_declared_classes_to_declared_classes(
+    old_declared_classes: Vec<starknet_old_types::DeclaredClassItem>,
+) -> Vec<DeclaredClassItem> {
+    old_declared_classes
+        .into_iter()
+        .map(|old_declared_class| DeclaredClassItem {
+            class_hash: field_element_to_felt(old_declared_class.class_hash),
+            compiled_class_hash: field_element_to_felt(old_declared_class.compiled_class_hash),
         })
         .collect()
 }

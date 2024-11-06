@@ -14,7 +14,8 @@ use flate2::read::GzDecoder;
 use num_bigint::BigUint;
 use runtime::starknet::context::SerializableGasPrices;
 use starknet::core::types::{
-    BlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, Felt,
+    BlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
+    DeployedContractItem, Felt,
 };
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
@@ -29,10 +30,12 @@ use starknet_providers::{JsonRpcClient, ProviderError};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
+use tracing::error;
 use universal_sierra_compiler_api::{compile_sierra, SierraType};
 use url::Url;
 use walnut_shared::{
     block_id_to_old_block_id, felt_to_field_element, field_element_to_felt,
+    old_declared_classes_to_declared_classes, old_deploy_contracts_to_deploy_contracts,
     old_storage_diffs_to_storage_diffs,
 };
 
@@ -189,8 +192,6 @@ impl ForkStateReader {
             .context("Unable to get block transactions count from node provider")?;
 
         if tx_number_in_block > 1 {
-            //Get over all transaction till transaction_index and store new storage values in
-            //storage_diff hash map
             fork_state_reader
                 .prepare_storage_view(block_id, transaction_index)
                 .map_err(|e| {
@@ -200,7 +201,6 @@ impl ForkStateReader {
                     )
                 })?;
         }
-        // Return the initialized and state updated ForkStateReader
         Ok(fork_state_reader)
     }
 
@@ -253,32 +253,64 @@ impl ForkStateReader {
                 starknet_old_types::TransactionTrace::Invoke(invoke_trace) => {
                     if let Some(state_diff) = &invoke_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
+                        let declared = &state_diff.declared_classes;
+                        let deployed = &state_diff.deployed_contracts;
                         self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
                             contract_storage_diff.to_vec(),
+                        ));
+                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
+                            deployed.to_vec(),
+                        ));
+                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
+                            declared.to_vec(),
                         ));
                     }
                 }
                 starknet_old_types::TransactionTrace::Declare(declare_trace) => {
                     if let Some(state_diff) = &declare_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
+                        let declared = &state_diff.declared_classes;
+                        let deployed = &state_diff.deployed_contracts;
                         self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
                             contract_storage_diff.to_vec(),
+                        ));
+                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
+                            deployed.to_vec(),
+                        ));
+                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
+                            declared.to_vec(),
                         ));
                     }
                 }
                 starknet_old_types::TransactionTrace::DeployAccount(deploy_trace) => {
                     if let Some(state_diff) = &deploy_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
+                        let declared = &state_diff.declared_classes;
+                        let deployed = &state_diff.deployed_contracts;
                         self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
                             contract_storage_diff.to_vec(),
+                        ));
+                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
+                            deployed.to_vec(),
+                        ));
+                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
+                            declared.to_vec(),
                         ));
                     }
                 }
                 starknet_old_types::TransactionTrace::L1Handler(l1handler_trace) => {
                     if let Some(state_diff) = &l1handler_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
+                        let declared = &state_diff.declared_classes;
+                        let deployed = &state_diff.deployed_contracts;
                         self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
                             contract_storage_diff.to_vec(),
+                        ));
+                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
+                            deployed.to_vec(),
+                        ));
+                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
+                            declared.to_vec(),
                         ));
                     }
                 }
@@ -299,6 +331,159 @@ impl ForkStateReader {
                 cache.cache_storage_at(contract_address, key, value);
             }
         }
+    }
+
+    fn collect_deploy_contract(&mut self, deploy_contract: &[DeployedContractItem]) {
+        let mut cache = self.in_memory_fork_cache.borrow_mut();
+        for contract in deploy_contract.iter() {
+            let contract_address: ContractAddress =
+                ContractAddress::try_from(Felt::from(contract.address)).unwrap();
+            let class_hash = ClassHash(contract.class_hash.into());
+            cache.cache_class_hash_at(contract_address, class_hash);
+        }
+    }
+
+    fn collect_declared_classes(&mut self, declare_class: &[DeclaredClassItem]) {
+        for class in declare_class.iter() {
+            let class_hash = ClassHash(class.class_hash.into());
+            let compiled_class_hash = CompiledClassHash(class.compiled_class_hash.into());
+            {
+                let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
+                in_memory_fork_cache.cache_compiled_class_hash(class_hash, compiled_class_hash);
+            }
+            if let Err(err) = self.fetch_and_compile_contract_class(class_hash, self.block_id()) {
+                error!(
+                    "Error in state when try to fetch and compile contract class: {:?}",
+                    err
+                );
+                continue;
+            }
+        }
+    }
+
+    fn fetch_and_compile_contract_class(
+        &self,
+        class_hash: ClassHash,
+        block_id: BlockId,
+    ) -> StateResult<()> {
+        let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
+
+        let contract_class = match tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.client.get_class(
+                block_id_to_old_block_id(block_id),
+                felt_to_field_element(Felt::from_(class_hash)),
+            ))
+        }) {
+            Ok(contract_class_json) => {
+                let contract_class: ContractClassStarknet = serde_json::from_value(
+                        serde_json::to_value(&contract_class_json)
+                            .map_err(|e| StateError::StateReadError(format!(
+                                "Failed to serialize class from blockchain to JSON value: {}", e
+                            )))?,
+                    )
+                    .map_err(|e| StateError::StateReadError(format!(
+                        "Failed to deserialize class from JSON value back to ContractClassStarknet: {}", e
+                    )))?;
+
+                in_memory_fork_cache.cache_contract_class(class_hash, contract_class.clone());
+
+                Ok(contract_class)
+            }
+            Err(ProviderError::StarknetError(
+                starknet_old_types::StarknetError::ClassHashNotFound,
+            )) => Err(StateError::UndeclaredClassHash(class_hash)),
+            Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
+            Err(x) => Err(StateError::StateReadError(format!(
+                "Unable to get compiled class at {class_hash} from fork ({x})"
+            ))),
+        }?;
+
+        let compiled_contract_class = match contract_class {
+            ContractClassStarknet::Sierra(flattened_class) => {
+                let converted_sierra_program: Vec<BigUintAsHex> = flattened_class
+                    .sierra_program
+                    .iter()
+                    .map(|field_element| BigUintAsHex {
+                        value: BigUint::from_bytes_be(&field_element.to_bytes_be()),
+                    })
+                    .collect();
+
+                let sierra_contract_class = serde_json::json!({
+                    "sierra_program": converted_sierra_program,
+                    "contract_class_version": "",
+                    "entry_points_by_type": flattened_class.entry_points_by_type
+                });
+
+                let casm_contract_class_raw =
+                    compile_sierra(&sierra_contract_class, None, &SierraType::Contract)
+                        .map_err(|err| StateError::StateReadError(err.to_string()))?;
+
+                let casm_contract_class: CasmContractClass =
+                    serde_json::from_str(&casm_contract_class_raw).map_err(|e| {
+                        StateError::StateReadError(format!(
+                            "Unable to deserialize CasmContractClass: {}",
+                            e
+                        ))
+                    })?;
+
+                ContractClassBlockifier::V1(
+                    ContractClassV1::try_from(casm_contract_class).map_err(|e| {
+                        StateError::StateReadError(format!(
+                            "Unable to create ContractClassV1 from CasmContractClass: {}",
+                            e
+                        ))
+                    })?,
+                )
+            }
+            ContractClassStarknet::Legacy(legacy_class) => {
+                let converted_entry_points: HashMap<EntryPointType, Vec<EntryPoint>> =
+                    serde_json::from_str(
+                        &serde_json::to_string(&legacy_class.entry_points_by_type).map_err(
+                            |e| {
+                                StateError::StateReadError(format!(
+                                    "Failed to serialize entry_points_by_type: {}",
+                                    e
+                                ))
+                            },
+                        )?,
+                    )
+                    .map_err(|e| {
+                        StateError::StateReadError(format!(
+                            "Failed to deserialize entry_points_by_type: {}",
+                            e
+                        ))
+                    })?;
+
+                let mut decoder = GzDecoder::new(&legacy_class.program[..]);
+                let mut converted_program = String::new();
+                decoder
+                    .read_to_string(&mut converted_program)
+                    .map_err(|e| {
+                        StateError::StateReadError(format!("Failed to decompress program: {}", e))
+                    })?;
+
+                let deprecated_contract_class = DeprecatedContractClass {
+                    abi: None,
+                    program: serde_json::from_str(&converted_program).map_err(|e| {
+                        StateError::StateReadError(format!("Failed to parse program JSON: {}", e))
+                    })?,
+                    entry_points_by_type: converted_entry_points,
+                };
+
+                ContractClassBlockifier::V0(
+                    ContractClassV0::try_from(deprecated_contract_class).map_err(|e| {
+                        StateError::StateReadError(format!(
+                            "Failed to create ContractClassV0: {}",
+                            e
+                        ))
+                    })?,
+                )
+            }
+        };
+
+        in_memory_fork_cache.cache_compiled_contract_class(class_hash, compiled_contract_class);
+
+        Ok(())
     }
 }
 
@@ -469,107 +654,16 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
-        let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
-
-        let contract_class = {
-            if let Ok(contract_class) = in_memory_fork_cache.get_contract_class(class_hash) {
-                Ok(contract_class)
-            } else {
-                match tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(self.client.get_class(
-                        block_id_to_old_block_id(self.adjusted_block_id()),
-                        felt_to_field_element(Felt::from_(class_hash)),
-                    ))
-                }) {
-                    Ok(contract_class) => {
-                        let contract_class_json = serde_json::to_value(&contract_class)
-                            .context("Failed to serialize class from blockchain to JSON value")
-                            .unwrap();
-                        let contract_class: ContractClassStarknet = serde_json::from_value(
-                            contract_class_json,
-                        )
-                        .context(
-                            "Failed to deserialize class from JSON value back to CoreContractClass",
-                        )
-                        .unwrap();
-                        in_memory_fork_cache
-                            .cache_contract_class(class_hash, contract_class.clone());
-                        Ok(contract_class)
-                    }
-                    Err(ProviderError::StarknetError(
-                        starknet_old_types::StarknetError::ClassHashNotFound,
-                    )) => Err(UndeclaredClassHash(class_hash)),
-                    Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
-                    Err(x) => Err(StateReadError(format!(
-                        "Unable to get compiled class at {class_hash} from fork ({x})"
-                    ))),
-                }
-            }
-        };
-
-        match contract_class? {
-            ContractClassStarknet::Sierra(flattened_class) => {
-                let converted_sierra_program: Vec<BigUintAsHex> = flattened_class
-                    .sierra_program
-                    .iter()
-                    .map(|field_element| BigUintAsHex {
-                        value: BigUint::from_bytes_be(&field_element.to_bytes_be()),
-                    })
-                    .collect();
-
-                let sierra_contract_class = serde_json::json!({
-                    "sierra_program": converted_sierra_program,
-                    "contract_class_version": "",
-                    "entry_points_by_type": flattened_class.entry_points_by_type
-                });
-
-                match compile_sierra(&sierra_contract_class, None, &SierraType::Contract) {
-                    Ok(casm_contract_class_raw) => {
-                        let casm_contract_class: CasmContractClass =
-                            serde_json::from_str(&casm_contract_class_raw)
-                                .expect("Unable to deserialize CasmContractClass");
-
-                        let compiled_contract_class = ContractClassBlockifier::V1(
-                            ContractClassV1::try_from(casm_contract_class)
-                                .expect("Unable to create ContractClassV1 from CasmContractClass"),
-                        );
-
-                        in_memory_fork_cache.cache_compiled_contract_class(
-                            class_hash,
-                            compiled_contract_class.clone(),
-                        );
-
-                        Ok(compiled_contract_class)
-                    }
-                    Err(err) => Err(StateReadError(err.to_string())),
-                }
-            }
-            ContractClassStarknet::Legacy(legacy_class) => {
-                let converted_entry_points: HashMap<EntryPointType, Vec<EntryPoint>> =
-                    serde_json::from_str(
-                        &serde_json::to_string(&legacy_class.entry_points_by_type).unwrap(),
-                    )
-                    .unwrap();
-
-                let mut decoder = GzDecoder::new(&legacy_class.program[..]);
-                let mut converted_program = String::new();
-                decoder.read_to_string(&mut converted_program).unwrap();
-
-                let compiled_contract_class = ContractClassBlockifier::V0(
-                    ContractClassV0::try_from(DeprecatedContractClass {
-                        abi: None,
-                        program: serde_json::from_str(&converted_program).unwrap(),
-                        entry_points_by_type: converted_entry_points,
-                    })
-                    .unwrap(),
-                );
-
-                in_memory_fork_cache
-                    .cache_compiled_contract_class(class_hash, compiled_contract_class.clone());
-
-                Ok(compiled_contract_class)
-            }
-        }
+        self.fetch_and_compile_contract_class(class_hash, self.adjusted_block_id())?;
+        self.in_memory_fork_cache
+            .borrow()
+            .get_compiled_contract_class(class_hash)
+            .map_err(|_| {
+                StateError::StateReadError(format!(
+                    "Failed to retrieve compiled contract class for class_hash: {}",
+                    class_hash
+                ))
+            })
     }
 
     fn get_compiled_class_hash(&self, _class_hash: ClassHash) -> StateResult<CompiledClassHash> {

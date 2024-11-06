@@ -75,7 +75,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V0(tx) => Some((
                     Nonce::default(),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    Calldata::default(),
+                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ZERO,
                     TransactionType::Declare,
                     TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
@@ -83,7 +83,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V1(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    Calldata::default(),
+                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ONE,
                     TransactionType::Declare,
                     TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
@@ -91,7 +91,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V2(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    Calldata::default(),
+                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::TWO,
                     TransactionType::Declare,
                     TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
@@ -99,7 +99,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V3(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    Calldata::default(),
+                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::THREE,
                     TransactionType::Declare,
                     TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),

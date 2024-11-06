@@ -32,13 +32,13 @@ use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
+use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress};
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::transaction::{Calldata, TransactionHash};
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use url::Url;
 use walnut_shared::felt_to_field_element;
@@ -201,8 +201,27 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
-    if args.transaction_hash.is_some() {
+    if let Some(_transaction_hash) = args.transaction_hash {
+        let validate_selector = match args.transaction_type {
+            Some(TransactionType::Declare) => {
+                selector_from_name(constants::VALIDATE_DECLARE_ENTRY_POINT_NAME)
+            }
+            _ => selector_from_name(constants::VALIDATE_ENTRY_POINT_NAME),
+        };
+
         let _validate_result = validate_call(
+            args.calldata.clone(),
+            args.sender_address,
+            validate_selector,
+            cached_fork_state,
+            &mut cheatnet_state,
+            transaction_context.clone(),
+            u64::MAX,
+        );
+    }
+
+    if args.transaction_type.is_none() || args.transaction_type != Some(TransactionType::Declare) {
+        let _execution_result = execute_call(
             args.calldata.clone(),
             args.sender_address,
             cached_fork_state,
@@ -211,15 +230,6 @@ fn run_simulation(
             u64::MAX,
         );
     }
-
-    let _execution_result = execute_call(
-        args.calldata.clone(),
-        args.sender_address,
-        cached_fork_state,
-        &mut cheatnet_state,
-        transaction_context.clone(),
-        u64::MAX,
-    );
 
     Ok(cheatnet_state)
 }
@@ -291,7 +301,6 @@ pub async fn simulate_transaction_by_hash(
             let transaction_receipt = provider_client
                 .get_transaction_receipt(felt_to_field_element(transaction_hash))
                 .await;
-
             if let Ok(transaction_receipt) = transaction_receipt {
                 if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
                     let chain_id = match chain_id {
@@ -317,6 +326,7 @@ pub async fn simulate_transaction_by_hash(
                                 transaction_version,
                                 transaction_signature: Some(signature),
                                 transaction_hash: Some(TransactionHash(transaction_hash)),
+                                transaction_type: Some(transaction_type),
                             },
                         )
                         .await?;
@@ -431,6 +441,7 @@ fn get_execution_result(
 fn validate_call(
     calldata: Calldata,
     storage_address: ContractAddress,
+    validate_selector: EntryPointSelector,
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,
     tx_context: Arc<TransactionContext>,
@@ -442,7 +453,7 @@ fn validate_call(
         EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Validate, false)?;
 
     let class_hash = state.get_class_hash_at(storage_address)?;
-    let validate_selector = selector_from_name(constants::VALIDATE_ENTRY_POINT_NAME);
+
     let mut validate_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
         entry_point_selector: validate_selector,
