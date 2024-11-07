@@ -333,7 +333,10 @@ impl Mappings {
                             relocated_memory,
                             &mut data_index,
                         ) {
-                            results_decoded.push(decoded_element);
+                            if let Some(adjusted_element) = adjust_decoded_element(decoded_element)
+                            {
+                                results_decoded.push(adjusted_element);
+                            }
                         }
                         if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
                             results.push(InternalFnCallIO {
@@ -400,6 +403,59 @@ impl Mappings {
             None => None,
         }
     }
+}
+
+pub fn adjust_decoded_element(decoded_element: DecodedValue) -> Option<DecodedValue> {
+    match &decoded_element.value {
+        // Remove "Unit", "ContractState", or "ComponentState" elements
+        DecodedValueType::Struct(fields) if decoded_element.type_name.starts_with('(') => {
+            let mut new_fields = HashMap::new();
+            for (key, value) in fields {
+                // Exclude fields with type_name "Unit", "ContractState", or starting with "ComponentState"
+                if value.type_name != "Unit"
+                    && value.type_name != "ContractState"
+                    && !value.type_name.contains("ComponentState")
+                {
+                    new_fields.insert(*key, value.clone());
+                }
+            }
+
+            if new_fields.len() == 1 {
+                return new_fields.into_values().next();
+            }
+            if new_fields.is_empty() {
+                return None;
+            }
+            return Some(DecodedValue {
+                name: decoded_element.name.clone(),
+                type_name: decoded_element.type_name.clone(),
+                value: DecodedValueType::Struct(new_fields),
+            });
+        }
+
+        // Unwrap nested structures with the same type name
+        DecodedValueType::Struct(fields) if fields.len() == 1 => {
+            let (_, nested_value) = fields.iter().next().unwrap();
+            if nested_value.type_name == decoded_element.type_name {
+                return Some(nested_value.clone());
+            }
+        }
+
+        // Exclude ComponentState<ContractState> from results
+        _ if decoded_element.type_name.contains("ComponentState") => {
+            return None;
+        }
+
+        // If the type_name is "Unit" and it's not part of a tuple, exclude it
+        _ if decoded_element.type_name == "Unit" => {
+            return None;
+        }
+
+        // Otherwise, return the original decoded_element
+        _ => {}
+    }
+
+    Some(decoded_element)
 }
 
 pub fn get_values_from_cell_expressions(
