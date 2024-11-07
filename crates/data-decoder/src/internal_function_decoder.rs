@@ -113,11 +113,10 @@ fn decode_panic_result_enum(
                 );
 
                 // Only skip the second "0" for specific cases, [0, 0, value]
-                if inner_debug_name == "bool"
-                    || inner_debug_name == "felt252"
-                    || inner_debug_name == "(ContractState, bool)"
-                    || inner_debug_name == "(ContractState,  felt252)"
-                {
+                if matches!(
+                    inner_debug_name.as_str(),
+                    "bool" | "felt252" | "(ContractState, bool)" | "(ContractState,  felt252)"
+                ) {
                     *data_index += 1;
                     if let Some(value) = values.get(*data_index) {
                         *data_index += 1; // Increment for the actual value
