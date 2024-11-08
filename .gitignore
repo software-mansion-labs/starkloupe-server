@@ -8,3 +8,5 @@ tmp
 binaries/
 
 local/docker-volumes
+
+flamegraph.svg
