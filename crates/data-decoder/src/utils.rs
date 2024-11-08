@@ -37,11 +37,13 @@ pub fn simplify_type_name(type_str: &str) -> String {
         parsed_types.push(simplify_single_type(&current));
     }
 
-    if parsed_types.len() > 1 {
+    let simplified_type = if parsed_types.len() > 1 {
         format!("({})", parsed_types.join(", "))
     } else {
         parsed_types.first().unwrap_or(&String::new()).to_string()
-    }
+    };
+
+    simplified_type
 }
 
 #[inline(always)]
@@ -70,6 +72,16 @@ fn extract_last_segment(t: &str) -> String {
         .to_string()
 }
 
+#[inline(always)]
+pub fn remove_contract_state(type_str: &str) -> String {
+    let parts = type_str
+        .split(&['(', ')', ','][..])
+        .filter(|s| !s.trim().contains("ContractState"))
+        .collect::<Vec<_>>();
+    parts.iter().map(|s| s.trim()).collect::<Vec<_>>().join("")
+}
+
+#[inline(always)]
 pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
     SKIP_BUILTIN_TYPES
         .iter()

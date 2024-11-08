@@ -107,3 +107,6 @@ runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9d70461
 scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9d704614a69812e8b4fae5507306e2bfdb03243e" }
 conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9d704614a69812e8b4fae5507306e2bfdb03243e" }
 universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9d704614a69812e8b4fae5507306e2bfdb03243e" }
+
+[profile.bench]
+debug = true

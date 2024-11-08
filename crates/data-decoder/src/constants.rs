@@ -4,8 +4,6 @@ pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "Step",
     "Hole",
     "GasBuiltin",
-    "ContractState",
-    "ComponentState",
     "Bitwise",
     "BuiltinCosts",
     "EcOp",

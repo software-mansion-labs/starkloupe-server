@@ -23,6 +23,7 @@ pub enum DecodedValueType {
     Array(Vec<DecodedValueType>),
     Struct(HashMap<usize, DecodedValue>),
     Enum(String, Box<DecodedValueType>),
+    None,
 }
 
 pub fn create_decoded_value(
@@ -61,6 +62,7 @@ impl Serialize for DecodedValueType {
                 map.serialize_entry(variant_name, value)?;
                 map.end()
             }
+            DecodedValueType::None => serializer.serialize_none(),
         }
     }
 }
