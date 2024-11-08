@@ -24,14 +24,14 @@ pub async fn fetch_verified_classes(
 
 pub async fn fetch_verified_class(
     db_pool: &Pool<Postgres>,
-    class_hash: String,
+    class_hash: &String,
 ) -> Result<VerifiedClassRow> {
     let verified_class = sqlx::query_as!(
         VerifiedClassRow,
         r#"SELECT *
         FROM contract_classes
         WHERE hash = $1"#,
-        &class_hash
+        class_hash
     )
     .fetch_one(db_pool)
     .await?;

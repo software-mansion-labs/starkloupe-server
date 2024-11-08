@@ -1,14 +1,22 @@
-use crate::app_state::AppState;
+use crate::{
+    app_state::AppState,
+    services::search::{check_class, sources_from_rpc_urls, Source},
+};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
+use starknet::core::types::Felt;
 use std::{collections::HashMap, sync::Arc};
+use tracing::error;
 use utoipa::ToSchema;
-use verification::{db::fetch_verified_class, s3::fetch_verified_class_with_data};
+use verification::{
+    db::fetch_verified_class,
+    s3::{fetch_class_source_code, fetch_verified_class_with_data},
+};
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponseWithSourceCode {
@@ -33,7 +41,7 @@ pub async fn get_class_handler_with_chain_id(
     Path((_chain_id, class_hash)): Path<(String, String)>,
 ) -> Response {
     if let Ok((_verified_class_row, verified_class_data)) =
-        fetch_verified_class_with_data(&state.db_pool, &state.s3_client, class_hash).await
+        fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash).await
     {
         (
             StatusCode::OK,
@@ -54,9 +62,16 @@ pub async fn get_class_handler_with_chain_id(
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponse {
     pub verified: bool,
+    pub declared_sources: Vec<Source>,
+    pub source_code: Option<HashMap<String, String>>,
 }
 
-// TODO: Add include_source_code flag and return the source code if provided
+#[derive(Deserialize, Debug, Serialize, ToSchema)]
+pub struct ClassQuery {
+    pub rpc_urls: Option<String>,
+    pub include_source_code: Option<bool>,
+}
+
 #[utoipa::path(
     post,
     path = "/v1/classes/{class_hash}",
@@ -65,19 +80,63 @@ pub struct GetClassResponse {
     ),
     params(
         ("class_hash" = String, Path, description = "Contract class hash"),
+        ("include_source_code" = Option<bool>, Query, description = "Whether to include the source code in the response"),
+        ("rpc_urls" = Option<String>, Query, description = "Comma-separated list of additional RPC URLs to check")
+
     ),
-    tag = "Contract class verification"
+    tag = "Contract class details"
 )]
 pub async fn get_class_handler(
     State(state): State<Arc<AppState>>,
     Path(class_hash): Path<String>,
+    Query(query): Query<ClassQuery>,
 ) -> Response {
-    if fetch_verified_class(&state.db_pool, class_hash)
+    let class_hash_fixed = match Felt::from_hex(&class_hash) {
+        Ok(felt) => felt.to_fixed_hex_string(),
+        Err(_) => {
+            let error_message = "Invalid class hash format";
+            error!(error_message);
+            return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
+        }
+    };
+
+    let sources = match sources_from_rpc_urls(query.rpc_urls.as_deref()) {
+        Ok(sources) => sources,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Error parsing URLs: {}", err),
+            )
+                .into_response()
+        }
+    };
+
+    let declared_sources = check_class(&class_hash_fixed, &sources)
         .await
-        .is_ok()
-    {
-        (StatusCode::OK, Json(GetClassResponse { verified: true })).into_response()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|data| data.source)
+        .collect();
+
+    let is_verified = fetch_verified_class(&state.db_pool, &class_hash_fixed)
+        .await
+        .is_ok();
+
+    let source_code = if query.include_source_code.unwrap_or(false) && is_verified {
+        fetch_class_source_code(&state.s3_client, &class_hash_fixed)
+            .await
+            .ok()
     } else {
-        (StatusCode::OK, Json(GetClassResponse { verified: false })).into_response()
-    }
+        None
+    };
+
+    (
+        StatusCode::OK,
+        Json(GetClassResponse {
+            verified: is_verified,
+            declared_sources,
+            source_code,
+        }),
+    )
+        .into_response()
 }

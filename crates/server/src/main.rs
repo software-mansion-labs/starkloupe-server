@@ -1,5 +1,6 @@
 mod app_state;
 mod handlers;
+mod services;
 mod telegram_bot_service;
 
 extern crate dotenv;

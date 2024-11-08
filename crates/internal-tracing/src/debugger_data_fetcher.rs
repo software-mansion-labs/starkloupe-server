@@ -40,7 +40,7 @@ pub async fn fetch_classes_debugger_data(
         fetch_and_parse_file(
             s3_client,
             "walnutserver-east-1-classes-verification",
-            key_for_class_hash(verified_class.hash.clone()),
+            key_for_class_hash(&verified_class.hash),
         )
     });
 

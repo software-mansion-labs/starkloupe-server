@@ -79,14 +79,10 @@ async fn fetch_contract_data(
         .ok()?;
     let class_hash_str = field_element_to_felt(class_hash).to_fixed_hex_string();
 
-    if let Ok(_is_verified) = fetch_verified_class(&state.db_pool, class_hash_str.clone()).await {
+    if let Ok(_is_verified) = fetch_verified_class(&state.db_pool, &class_hash_str).await {
         let source_code = if query_params.include_source_code.unwrap_or(false) {
-            match fetch_verified_class_with_data(
-                &state.db_pool,
-                &state.s3_client,
-                class_hash_str.clone(),
-            )
-            .await
+            match fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash_str)
+                .await
             {
                 Ok((_, verified_class_data)) => Some(verified_class_data.source_code),
                 Err(_) => None,
