@@ -33,9 +33,7 @@ pub async fn send_telegram_notification_calldata(simulation_args: &SimulationArg
             encode(simulation_args.rpc_url.as_str()),
         ),
     };
-    println!("mam to ziomek calldata: {}", message);
-    Ok(())
-    // send_telegram_notification(message.as_str())
+    send_telegram_notification(message.as_str())
 }
 
 async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
