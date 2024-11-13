@@ -6,12 +6,12 @@ use simulate::{SimulationArgs, SimulationRawArgs};
 
 pub async fn send_telegram_notification_tx_id(tx_id: &str, chain_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true");
-    send_telegram_notification(message.as_str())
+    send_telegram_notification(message.as_str()).await
 }
 
 pub async fn send_telegram_notification_custom_rpc(tx_id: &str, rpc_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [custom RPC]: https://app.walnut.dev/transactions?rpcUrl={}&txHash={}&skip_tracking=true", encode(rpc_url), tx_id);
-    send_telegram_notification(message.as_str())
+    send_telegram_notification(message.as_str()).await
 }
 
 pub async fn send_telegram_notification_calldata(simulation_args: &SimulationArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -33,7 +33,7 @@ pub async fn send_telegram_notification_calldata(simulation_args: &SimulationArg
             encode(simulation_args.rpc_url.as_str()),
         ),
     };
-    send_telegram_notification(message.as_str())
+    send_telegram_notification(message.as_str()).await
 }
 
 async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
