@@ -21,6 +21,29 @@ use crate::utils::{create_files_from_map, read_manifest};
 use crate::{ClassVerificationData, EVerificationStatus};
 use crate::{SierraToCairoDebugInfo, VerifiedClassData};
 
+pub async fn verify_by_class_hash(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    provider_client: JsonRpcClient<HttpTransport>,
+    class_hash: String,
+    class_name: String,
+    source_code: HashMap<String, String>,
+    chain_id: Option<String>,
+    project_id: Option<i32>,
+) -> Result<Uuid> {
+    initiate_verification(
+        db_pool,
+        s3_client,
+        provider_client,
+        vec![class_hash],
+        vec![class_name],
+        source_code,
+        chain_id,
+        project_id,
+    )
+    .await
+}
+
 pub async fn verify_by_contract_address(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
