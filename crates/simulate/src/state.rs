@@ -4,7 +4,7 @@ use blockifier::execution::contract_class::{
     ContractClass as ContractClassBlockifier, ContractClassV0, ContractClassV1,
 };
 use blockifier::state::cached_state::StorageEntry;
-use blockifier::state::errors::StateError::{self, StateReadError, UndeclaredClassHash};
+use blockifier::state::errors::StateError::{self, StateReadError};
 use blockifier::state::state_api::{StateReader, StateResult};
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use cairo_lang_utils::bigint::BigUintAsHex;

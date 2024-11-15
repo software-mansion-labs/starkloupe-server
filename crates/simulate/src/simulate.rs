@@ -40,6 +40,7 @@ use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::warn;
 use url::Url;
 use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
@@ -64,6 +65,7 @@ use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
 use crate::ContractCallEvent;
 use crate::EventAbi;
+use crate::FunctionCallsMap;
 use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
@@ -109,6 +111,8 @@ pub async fn simulate(
         next_call_id,
         &classes_debugger_data,
     );
+
+    filter_and_hide_unlinked_function_calls(&mut contract_calls_map, &function_calls_map);
 
     let mut event_abis: Vec<EventAbi> = Vec::new();
 
@@ -177,6 +181,26 @@ pub async fn simulate(
     };
 
     Ok((simulation_info, block_timestamp, transaction_index))
+}
+
+fn filter_and_hide_unlinked_function_calls(
+    contract_calls_map: &mut ContractCallsMap,
+    function_calls_map: &FunctionCallsMap,
+) {
+    for contract_call in contract_calls_map.0.values_mut().filter(|c| !c.is_hidden) {
+        for &child_id in &contract_call.children_call_ids {
+            if contract_call.function_call_id.is_some()
+                && !function_calls_map
+                    .0
+                    .values()
+                    .any(|fc| fc.children_call_ids.contains(&child_id))
+            {
+                warn!("Hide function calls of the contract {:?} that has the contract call to the one that was not added by decoding system calls.",
+                    contract_call.entry_point.storage_address);
+                contract_call.function_call_id = None;
+            }
+        }
+    }
 }
 
 fn run_simulation(

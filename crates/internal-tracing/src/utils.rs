@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 use cairo_lang_casm::{
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
@@ -12,11 +12,8 @@ use cairo_lang_sierra_to_casm::{
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
-use cairo_vm::utils::PRIME_STR;
 use itertools::chain;
-use num_bigint::BigUint;
 use serde::Serialize;
-use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
 
@@ -87,30 +84,23 @@ pub fn get_pc_mappings(instructions: &[CasmInstruction]) -> HashMap<usize, usize
 }
 
 pub fn get_pc_to_ptr_sys_call_mappings(
-    casm_instructions: &Vec<CasmInstruction>,
+    casm_instructions: &[CasmInstruction],
     pc_to_inst_indexes_map: &HashMap<usize, usize>,
 ) -> HashMap<usize, CellExpression> {
     pc_to_inst_indexes_map
         .iter()
-        .filter_map(|(pc, casm_index)| {
-            //TODO! Check why this happen
-            if *casm_index >= casm_instructions.len() {
-                return None;
-            }
-            let instruction = casm_instructions[*casm_index].clone();
-            if let Some(system_ptr) = instruction.hints.iter().find_map(|hint| match hint {
-                Hint::Starknet(starknet_hint) => match starknet_hint {
-                    StarknetHint::SystemCall { system } => {
-                        Some(CellExpression::from_res_operand(system.clone()))
+        .filter_map(|(&pc, &casm_index)| {
+            casm_instructions
+                .get(casm_index)?
+                .hints
+                .iter()
+                .find_map(|hint| {
+                    if let Hint::Starknet(StarknetHint::SystemCall { system }) = hint {
+                        Some((pc, CellExpression::from_res_operand(system.clone())))
+                    } else {
+                        None
                     }
-                    _ => None,
-                },
-                _ => None,
-            }) {
-                Some((*pc, system_ptr))
-            } else {
-                None
-            }
+                })
         })
         .collect()
 }
