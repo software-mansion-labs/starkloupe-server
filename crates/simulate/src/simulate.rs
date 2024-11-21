@@ -163,6 +163,7 @@ pub async fn simulate(
             .get_mut(&deepest_failed_contract_call_id.unwrap())
         {
             call.error_message = Some(reason.clone());
+            call.is_deepest_panic_result = true;
         }
     }
 

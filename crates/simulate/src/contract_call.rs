@@ -36,6 +36,7 @@ pub struct ContractCall {
     pub sierra_version: Option<String>,
     pub cairo_version: Option<String>,
     pub is_failed: bool,
+    pub is_deepest_panic_result: bool,
 
     pub result_types: Option<Vec<Cow<'static, str>>>,
     pub arguments_names: Option<Vec<Cow<'static, str>>>,
@@ -88,6 +89,7 @@ impl ContractCall {
             sierra_version: None,
             cairo_version: None,
             is_failed: matches!(call_trace_ref.result, CallResult::Failure(_)),
+            is_deepest_panic_result: false,
 
             result_types: None,
             decoded_result: None,
