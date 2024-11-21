@@ -11,7 +11,7 @@ use starknet_providers::Provider;
 use std::str::FromStr;
 use utoipa::ToSchema;
 use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
+    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, felt_str_to_fixed,
     felt_to_field_element,
 };
 
@@ -54,8 +54,8 @@ pub async fn get_search_handler(
     Path(search_hash): Path<String>,
     Query(query): Query<SearchQuery>,
 ) -> Response {
-    let hash = match Felt::from_str(search_hash.as_str()) {
-        Ok(hash) => hash.to_fixed_hex_string(),
+    let hash = match felt_str_to_fixed(search_hash.as_str()) {
+        Ok(hash) => hash,
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,

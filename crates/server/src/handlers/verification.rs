@@ -19,7 +19,7 @@ use verification::{
 };
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
-    pad_hex_string_to_66,
+    felt_str_to_fixed,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -131,12 +131,20 @@ pub async fn verify_handler(
     let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
     if let Some(class_hash) = payload.class_hash {
-        let class_hash_clone = class_hash.clone();
+        let class_hash_fixed = match felt_str_to_fixed(&class_hash) {
+            Ok(fixed) => fixed,
+            Err(e) => {
+                let error_message = format!("Failed to convert class hash: {}", e.to_string());
+                error!(error_message);
+                return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
+            }
+        };
+        let class_hash_fixed_clone = class_hash_fixed.clone();
         match verify_by_class_hash(
             &state.db_pool,
             &state.s3_client,
             provider_client,
-            class_hash,
+            class_hash_fixed,
             payload.contract_name,
             payload.source_code,
             Some(chain_id_readable_string),
@@ -153,7 +161,7 @@ pub async fn verify_handler(
             }
             Err(e) => {
                 error!(
-                    class_hash = class_hash_clone,
+                    class_hash = class_hash_fixed_clone,
                     tags.verification_status = "failed",
                     "Verification failed: {}",
                     e.to_string(),
@@ -320,10 +328,20 @@ pub async fn verify_handler_with_rpc(
             .into_response();
     };
 
-    let class_hashes = class_hashes
+    let class_hashes = match class_hashes
         .iter()
-        .map(|hash| pad_hex_string_to_66(hash))
-        .collect();
+        .map(|hash| felt_str_to_fixed(hash))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(hashes) => hashes,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(format!("Failed to convert class hash: {}", e.to_string())),
+            )
+                .into_response();
+        }
+    };
 
     let class_names = if let Some(names) = payload.class_names.clone() {
         names

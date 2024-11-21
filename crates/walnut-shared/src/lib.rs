@@ -173,15 +173,6 @@ pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> Strin
     format!("{}-fp-{}", contract_call_id, fp)
 }
 
-/// Pads a given hex string (starting with "0x") to 66 characters, including "0x".
-/// This function adds zeros after "0x" to achieve the desired length.
-pub fn pad_hex_string_to_66(hex_str: &str) -> String {
-    if !hex_str.starts_with("0x") {
-        panic!("Hex string must start with '0x'");
-    }
-    format!("0x{:0>64}", &hex_str[2..])
-}
-
 pub fn felt_to_field_element(felt: Felt) -> starknet_old_types::FieldElement {
     starknet_old_types::FieldElement::from_bytes_be(&felt.to_bytes_be()).unwrap()
 }
@@ -268,4 +259,9 @@ pub fn get_name_of_entry_point_selector(entry_point_selector: &Felt) -> Option<S
         Some(name) => Some(name.to_string()),
         None => None,
     }
+}
+
+pub fn felt_str_to_fixed(felt_str: &str) -> anyhow::Result<String> {
+    let felt = Felt::from_hex(felt_str)?;
+    Ok(felt.to_fixed_hex_string())
 }
