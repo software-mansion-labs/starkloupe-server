@@ -13,6 +13,7 @@ use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
     classes::get_class_handler,
+    contracts::get_contract_handler,
     openapi::ApiDoc,
     simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
     verification::verify_handler,
@@ -25,7 +26,6 @@ use utoipa::OpenApi;
 
 use crate::handlers::{
     classes::get_class_handler_with_chain_id,
-    contracts::get_contract_handler_with_chain_id,
     search::get_search_handler,
     verification::{get_verification_status_handler, verify_handler_with_rpc},
 };
@@ -96,10 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_class_handler_with_chain_id),
         )
         .route("/v1/classes/:class_hash", get(get_class_handler))
-        .route(
-            "/v1/:chain_id/contracts/:contract_address",
-            get(get_contract_handler_with_chain_id),
-        )
+        .route("/v1/contracts/:contract_address", get(get_contract_handler))
         .route("/v1/search/:search_hash", get(get_search_handler))
         .route(
             "/v1/verification/:verification_status_id/status",
