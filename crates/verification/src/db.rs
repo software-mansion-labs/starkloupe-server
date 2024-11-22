@@ -1,4 +1,5 @@
 use crate::EVerificationStatus;
+use crate::VerificationRequestRow;
 use crate::VerificationStatusRow;
 use crate::VerifiedClassRow;
 use anyhow::Result;
@@ -65,8 +66,18 @@ pub async fn fetch_verification_id_and_status(
 pub async fn fetch_verification_statuses_by_id(
     db_pool: &Pool<Postgres>,
     id: Uuid,
-) -> Result<Vec<VerificationStatusRow>, sqlx::Error> {
-    let verification_status = sqlx::query_as!(
+) -> Result<(Option<VerificationRequestRow>, Vec<VerificationStatusRow>), sqlx::Error> {
+    let verification_request = sqlx::query_as!(
+        VerificationRequestRow,
+        r#"SELECT id, status, message, created_at, updated_at, cairo_version, package_name
+        FROM verification_requests
+        WHERE id = $1"#,
+        &id
+    )
+    .fetch_optional(db_pool)
+    .await?;
+
+    let verification_statuses = sqlx::query_as!(
         VerificationStatusRow,
         r#"SELECT primary_id, id, network, class_hash, status as "status: EVerificationStatus", message, created_at, updated_at, project_id
         FROM verification_status
@@ -77,5 +88,5 @@ pub async fn fetch_verification_statuses_by_id(
     .fetch_all(db_pool)
     .await?;
 
-    Ok(verification_status)
+    Ok((verification_request, verification_statuses))
 }

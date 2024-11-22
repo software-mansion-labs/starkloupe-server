@@ -6,17 +6,31 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::{env, fs};
 use tracing::error;
+use walnut_shared::tuple_to_version_string;
 
-use crate::utils::Manifest;
-
+use crate::artifacts::read_scarb_artifacts;
+use crate::manifest::Manifest;
+use crate::sozo::run_sozo_build;
 use crate::ClassVerificationData;
 
-const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0), (2, 8, 2)];
+const SUPPORTED_OLD_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0)];
 
-pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
+const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 8, 2), (2, 8, 4)];
+
+fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
     cmd.current_dir(tmp_dir);
-    let absolute_path = fs::canonicalize(scarb_path)?;
+    let absolute_path = match fs::canonicalize(scarb_path) {
+        Ok(path) => path,
+        Err(e) => {
+            let error_message = format!(
+                "Failed to canonicalize scarb path: {:?}. Scarb path: {:?}",
+                e, scarb_path
+            );
+            error!(error_message);
+            return Err(anyhow::anyhow!(error_message));
+        }
+    };
     cmd.scarb_path(absolute_path);
     cmd.arg("build");
     let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
@@ -36,7 +50,10 @@ pub fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
                 return Err(anyhow::anyhow!("Failed to compile the contract class"));
             }
         };
-        let error_message = format!("Failed to compile the contract class; `scarb` exited with error: {:?}", output);
+        let error_message = format!(
+            "Failed to compile the contract class; `scarb` exited with error: {:?}",
+            output
+        );
         error!("{}", error_message);
         Err(anyhow::anyhow!(error_message))
     }
@@ -48,7 +65,7 @@ pub fn compile_with_scarb(
     tmp_dir: &PathBuf,
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
-    if !SUPPORTED_CAIRO_VERSIONS.contains(&starknet_version) {
+    if !is_cairo_version_supported(starknet_version) {
         return Err(anyhow::anyhow!(
             "Unsupported Cairo version {}.{}.{}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
             starknet_version.0, starknet_version.1, starknet_version.2,
@@ -100,7 +117,7 @@ pub fn compile_with_scarb(
         };
 
         let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
-            version if SUPPORTED_CAIRO_VERSIONS.contains(&version) => {
+            version if SUPPORTED_OLD_CAIRO_VERSIONS.contains(&version) => {
                 Some(tmp_dir.join("target/dev").join(format!(
                     "{}_{}.contract_class_debug.json",
                     manifest.package_name, class_name
@@ -126,10 +143,59 @@ pub fn compile_with_scarb(
     Ok(())
 }
 
-fn get_supported_cairo_versions() -> String {
-    SUPPORTED_CAIRO_VERSIONS
+pub fn get_supported_cairo_versions() -> String {
+    SUPPORTED_OLD_CAIRO_VERSIONS
+        .iter()
+        .chain(SUPPORTED_CAIRO_VERSIONS.iter())
+        .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub fn get_new_supported_cairo_versions() -> String {
+    SUPPORTED_OLD_CAIRO_VERSIONS
         .iter()
         .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Builds a project at a given path using Scarb for Cairo version 2.8.0 or newer.
+///
+/// # Returns
+///
+/// A `Result` containing a vector of tuples with `ContractClass` and a class hash (`String`)
+/// if successful, or an error if the build fails.
+pub fn build_with_scarb(
+    manifest: Manifest,
+    tmp_dir: &PathBuf,
+) -> Result<Vec<(String, ContractClass)>> {
+    if !is_new_cairo_version_supported(manifest.cairo_version) {
+        return Err(anyhow::anyhow!(
+            "Unsupported Cairo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            tuple_to_version_string(manifest.cairo_version),
+            get_supported_cairo_versions()
+        ));
+    }
+
+    if manifest.has_dojo_target {
+        let sozo_path = "binaries/sozo/sozo_v1.0.1";
+        run_sozo_build(tmp_dir, sozo_path)?;
+    } else {
+        let scarb_path = format!(
+            "binaries/scarb/scarb_cairo_v{}.{}.{}",
+            manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2
+        );
+        run_scarb_build(tmp_dir, &scarb_path)?;
+    }
+
+    read_scarb_artifacts(tmp_dir, &manifest.package_name, "dev")
+}
+
+pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
+    SUPPORTED_OLD_CAIRO_VERSIONS.contains(&version) || SUPPORTED_CAIRO_VERSIONS.contains(&version)
+}
+
+pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
+    SUPPORTED_CAIRO_VERSIONS.contains(&version)
 }

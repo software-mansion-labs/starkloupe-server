@@ -10,8 +10,8 @@ Use `sqlx` command line to create migrations
 
 # Check the status of all migrations
 
-`sqlx migrate info`
+`DATABASE_URL=postgres://postgres:postgres@localhost:1234/walnut sqlx migrate info`
 
 # Run all pending migrations
 
-`sqlx migrate run`
+`DATABASE_URL=postgres://postgres:postgres@localhost:1234/walnut sqlx migrate run`

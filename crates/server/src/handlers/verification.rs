@@ -12,18 +12,20 @@ use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
+use verification::minimal_verification::initiate_minimal_verification;
 use verification::verification::{verify_by_class_hash, verify_by_contract_address};
 use verification::{
-    db::fetch_verification_statuses_by_id, verification::initiate_verification,
-    VerificationStatusSerializable,
+    db::fetch_verification_statuses_by_id, manifest::Manifest, verification::initiate_verification,
+    VerificationRequestRow, VerificationStatusSerializable,
 };
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
-    felt_str_to_fixed,
+    felt_str_to_fixed, parse_version_string_to_tuple,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct VerificationStatusResponse {
+    verification_request: Option<VerificationRequestRow>,
     verification_statuses: Vec<VerificationStatusSerializable>,
     error_message: Option<String>,
 }
@@ -51,6 +53,7 @@ pub async fn get_verification_status_handler(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(VerificationStatusResponse {
+                    verification_request: None,
                     verification_statuses: vec![],
                     error_message: Some(
                         "Invalid UUID format for verification_status_id.".to_string(),
@@ -62,9 +65,10 @@ pub async fn get_verification_status_handler(
     };
 
     match fetch_verification_statuses_by_id(&state.db_pool, verification_status_uuid).await {
-        Ok(verification_status_rows) => (
+        Ok((verification_request, verification_status_rows)) => (
             StatusCode::OK,
             Json(VerificationStatusResponse {
+                verification_request,
                 verification_statuses: VerificationStatusSerializable::from_rows(
                     verification_status_rows,
                 ),
@@ -75,6 +79,7 @@ pub async fn get_verification_status_handler(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(VerificationStatusResponse {
+                verification_request: None,
                 verification_statuses: vec![],
                 error_message: Some(format!("Internal server error: {}", e)),
             }),
@@ -246,11 +251,12 @@ pub struct VerificationPayloadWithRpc {
     pub class_hash: Option<String>,
     pub class_names: Option<Vec<String>>,
     pub class_hashes: Option<Vec<String>>,
-    pub rpc_url: String,
+    pub rpc_url: Option<String>,
     #[schema(
         example = "{ \"src/lib.cairo\": \"// lib.cairo source code\", \"src/utils/util1.cairo\": \"// util1.cairo source code\" }"
     )]
     pub source_code: HashMap<String, String>,
+    pub cairo_version: Option<String>,
 }
 
 #[utoipa::path(
@@ -274,116 +280,160 @@ pub struct VerificationPayloadWithRpc {
 pub async fn verify_handler_with_rpc(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(payload): Json<VerificationPayloadWithRpc>,
+    Json(mut payload): Json<VerificationPayloadWithRpc>,
 ) -> Response {
-    let api_key = match get_api_token(&headers) {
-        Ok(token) => token,
-        Err(e) => {
-            error!(
-                tags.verification_status = "failed",
-                "Verification failed: {}",
-                e.to_string(),
-            );
-            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
-        }
+    let api_key = get_api_token(&headers).ok();
+
+    let project_id = match api_key {
+        Some(ref key) => match check_api_key(key) {
+            Ok(project_id) => Some(project_id),
+            Err(e) => {
+                error!(
+                    api_key = api_key,
+                    tags.verification_status = "failed",
+                    "Verification failed: {}",
+                    e.to_string(),
+                );
+                return (StatusCode::UNAUTHORIZED, Json(e.to_string())).into_response();
+            }
+        },
+        None => None,
     };
 
-    let project_id = match check_api_key(&api_key) {
-        Ok(project_id) => project_id,
-        Err(e) => {
-            error!(
-                api_key = api_key,
-                tags.verification_status = "failed",
-                "Verification failed: {}",
-                e.to_string(),
-            );
-            return (StatusCode::UNAUTHORIZED, Json(e.to_string())).into_response();
-        }
-    };
+    if let Some(rpc_url) = &payload.rpc_url {
+        let rpc_url = match Url::parse(rpc_url) {
+            Ok(url) => url,
+            Err(e) => {
+                error!(
+                    project_id = project_id,
+                    tags.verification_status = "failed",
+                    "Verification failed: Failed to parse RPC URL: {}",
+                    e.to_string(),
+                );
+                return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+            }
+        };
 
-    let rpc_url = match Url::parse(&payload.rpc_url) {
-        Ok(url) => url,
-        Err(e) => {
-            error!(
-                project_id = project_id,
-                tags.verification_status = "failed",
-                "Verification failed: Failed to parse RPC URL: {}",
-                e.to_string(),
-            );
-            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
-        }
-    };
+        let provider_client = create_rpc_client_from_url(rpc_url);
 
-    let provider_client = create_rpc_client_from_url(rpc_url);
-
-    let class_hashes = if let Some(hashes) = payload.class_hashes.clone() {
-        hashes
-    } else if let Some(hash) = payload.class_hash.clone() {
-        vec![hash]
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json("Class hash is required".to_string()),
-        )
-            .into_response();
-    };
-
-    let class_hashes = match class_hashes
-        .iter()
-        .map(|hash| felt_str_to_fixed(hash))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(hashes) => hashes,
-        Err(e) => {
+        let class_hashes = if let Some(hashes) = payload.class_hashes.clone() {
+            hashes
+        } else if let Some(hash) = payload.class_hash.clone() {
+            vec![hash]
+        } else {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(format!("Failed to convert class hash: {}", e.to_string())),
+                Json("Class hash is required".to_string()),
             )
                 .into_response();
-        }
-    };
+        };
 
-    let class_names = if let Some(names) = payload.class_names.clone() {
-        names
-    } else if let Some(name) = payload.class_name.clone() {
-        vec![name]
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json("Class name is required".to_string()),
+        let class_hashes = match class_hashes
+            .iter()
+            .map(|hash| felt_str_to_fixed(hash))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(hashes) => hashes,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(format!("Failed to convert class hash: {}", e.to_string())),
+                )
+                    .into_response();
+            }
+        };
+
+        let class_names = if let Some(names) = payload.class_names.clone() {
+            names
+        } else if let Some(name) = payload.class_name.clone() {
+            vec![name]
+        } else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json("Class name is required".to_string()),
+            )
+                .into_response();
+        };
+
+        match initiate_verification(
+            &state.db_pool,
+            &state.s3_client,
+            provider_client,
+            class_hashes,
+            class_names,
+            payload.source_code,
+            None,
+            project_id,
         )
-            .into_response();
-    };
-
-    let source_code = payload.source_code.clone();
-
-    match initiate_verification(
-        &state.db_pool,
-        &state.s3_client,
-        provider_client,
-        class_hashes,
-        class_names,
-        source_code,
-        None,
-        Some(project_id),
-    )
-    .await
-    {
-        Ok(verification_status_id) => {
-            let response_message = format!(
-                "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
-                verification_status_id
-            );
-            (StatusCode::OK, Json(response_message)).into_response()
+        .await
+        {
+            Ok(verification_status_id) => {
+                let response_message = format!(
+                    "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                    verification_status_id
+                );
+                (StatusCode::OK, Json(response_message)).into_response()
+            }
+            Err(e) => {
+                error!(
+                    project_id = project_id,
+                    tags.verification_status = "failed",
+                    "Verification failed: {}",
+                    e.to_string(),
+                );
+                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+            }
         }
-        Err(e) => {
-            error!(
-                project_id = project_id,
-                tags.verification_status = "failed",
-                "Verification failed: {}",
-                e.to_string(),
-            );
-            (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+    } else {
+        let cairo_version = if let Some(version_str) = payload.cairo_version.as_deref() {
+            match parse_version_string_to_tuple(version_str) {
+                Ok(version) => Some(version),
+                Err(e) => {
+                    let error_message = format!("Failed to parse Cairo version: {}", e.to_string());
+                    error!(tags.verification_status = "failed", error_message);
+                    return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
+                }
+            }
+        } else {
+            None
+        };
+
+        let manifest = match Manifest::new(&mut payload.source_code, cairo_version) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                error!(
+                    tags.verification_status = "failed",
+                    "Failed to create manifest: {}",
+                    e.to_string(),
+                );
+                return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+            }
+        };
+
+        match initiate_minimal_verification(
+            &state.db_pool,
+            &state.s3_client,
+            payload.source_code,
+            manifest,
+        )
+        .await
+        {
+            Ok(verification_status_id) => {
+                let response_message = format!(
+                    "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                    verification_status_id
+                );
+                (StatusCode::OK, Json(response_message)).into_response()
+            }
+            Err(e) => {
+                error!(
+                    project_id = project_id,
+                    tags.verification_status = "failed",
+                    "Verification failed: {}",
+                    e.to_string(),
+                );
+                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+            }
         }
     }
 }

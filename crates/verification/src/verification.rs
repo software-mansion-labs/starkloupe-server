@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_smithy_types::body::SdkBody;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
 use starknet::core::types::{ContractClass as CoreContractClass, Felt};
 use starknet_old::core::types as starknet_old_types;
@@ -13,11 +14,14 @@ use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use tracing::{error, info};
 use uuid::Uuid;
-use walnut_shared::{felt_to_field_element, field_element_to_felt};
+use walnut_shared::{felt_to_field_element, field_element_to_felt, tuple_to_version_string};
 
-use crate::scarb::compile_with_scarb;
-use crate::sozo::compile_with_sozo;
-use crate::utils::{create_files_from_map, read_manifest};
+use crate::manifest::Manifest;
+use crate::scarb::{
+    build_with_scarb, compile_with_scarb, get_supported_cairo_versions, is_cairo_version_supported,
+    is_new_cairo_version_supported,
+};
+use crate::utils::create_files_from_map;
 use crate::{ClassVerificationData, EVerificationStatus};
 use crate::{SierraToCairoDebugInfo, VerifiedClassData};
 
@@ -348,7 +352,7 @@ pub async fn verify_by_class_hashes(
     s3_client: &aws_sdk_s3::Client,
     provider_client: JsonRpcClient<HttpTransport>,
     classes: Vec<(String, String)>, // class_hash, class_name
-    source_code: HashMap<String, String>,
+    mut source_code: HashMap<String, String>,
     chain_id: Option<String>,
     project_id: Option<i32>,
 ) -> Result<HashMap<String, (EVerificationStatus, Option<String>)>> {
@@ -356,7 +360,8 @@ pub async fn verify_by_class_hashes(
     let mut tmp_dir = PathBuf::from("tmp/verification");
     tmp_dir.push(&random_string);
 
-    let class_verification_data = verify(&tmp_dir, provider_client, classes, &source_code).await;
+    let class_verification_data =
+        verify(&tmp_dir, provider_client, classes, &mut source_code).await;
 
     fs::remove_dir_all(&tmp_dir)?;
 
@@ -455,12 +460,8 @@ async fn verify(
     tmp_dir: &PathBuf,
     provider_client: JsonRpcClient<HttpTransport>,
     classes: Vec<(String, String)>, // class_hash, class_name
-    source_code: &HashMap<String, String>,
+    source_code: &mut HashMap<String, String>,
 ) -> Result<ClassVerificationData> {
-    create_files_from_map(source_code, &tmp_dir)?;
-
-    let manifest = read_manifest(&tmp_dir)?;
-
     let mut class_verification_data: ClassVerificationData = HashMap::new();
 
     let classes_from_blockchain =
@@ -511,76 +512,100 @@ async fn verify(
         err
     })?;
 
-    match manifest.has_dojo_target || manifest.dojo_alpha_version.is_some() {
-        true => compile_with_sozo(manifest, tmp_dir, &mut class_verification_data)?,
-        false => compile_with_scarb(
+    let manifest = Manifest::new(source_code, Some(cairo_version))?;
+
+    create_files_from_map(source_code, &tmp_dir)?;
+
+    if is_new_cairo_version_supported(cairo_version) {
+        let classes = build_with_scarb(manifest, &tmp_dir)?;
+        let class_hash_map: HashMap<String, ContractClass> = classes.into_iter().collect();
+        for (class_hash, class_result) in class_verification_data.iter_mut() {
+            if let Some(class) = class_hash_map.get(class_hash) {
+                if let Ok((_, _, _, ref mut contract_class, _, _)) = class_result {
+                    *contract_class = Some(class.clone());
+                }
+            } else {
+                let error_message = format!("Class hash {} not found in the map", class_hash);
+                error!(error_message);
+                *class_result = Err(anyhow::anyhow!(error_message));
+            }
+        }
+    } else if is_cairo_version_supported(cairo_version) {
+        compile_with_scarb(
             cairo_version,
             manifest,
             tmp_dir,
             &mut class_verification_data,
-        )?,
-    };
+        )?;
 
-    'main_loop: for (class_hash, class_result) in class_verification_data.iter_mut() {
-        if let Ok((
-            _,
-            program_from_blockchain,
-            _,
-            Some(contract_class),
-            cairo_debug_info_path,
-            cairo_debug_info,
-        )) = class_result
-        {
-            if contract_class.sierra_program.len() != program_from_blockchain.len() {
-                let err = anyhow::anyhow!(
-                    "Contract class programs lengths don't match for class hash: {}",
-                    class_hash
-                );
-                error!("{}", err);
-                *class_result = Err(err);
-                continue;
-            }
-            for (e1, e2) in contract_class
-                .sierra_program
-                .iter()
-                .skip(6)
-                .zip(program_from_blockchain.iter().skip(6))
+        'main_loop: for (class_hash, class_result) in class_verification_data.iter_mut() {
+            if let Ok((
+                _,
+                program_from_blockchain,
+                _,
+                Some(contract_class),
+                cairo_debug_info_path,
+                cairo_debug_info,
+            )) = class_result
             {
-                if e1.value.to_string() != e2.to_string() {
-                    let err = anyhow::anyhow!("Contract class does not match");
-                    error!("{:?}", err);
+                if contract_class.sierra_program.len() != program_from_blockchain.len() {
+                    let err = anyhow::anyhow!(
+                        "Contract class programs lengths don't match for class hash: {}",
+                        class_hash
+                    );
+                    error!("{}", err);
                     *class_result = Err(err);
-                    continue 'main_loop;
+                    continue;
                 }
-            }
-            if let Some(cairo_debug_info_path) = cairo_debug_info_path {
-                let cairo_debug_info_file = match File::open(&cairo_debug_info_path) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        let err = anyhow::anyhow!(
-                            "Failed to open debug info file {}: {:?}",
-                            cairo_debug_info_path.display(),
-                            e
-                        );
-                        error!("{}", err);
+                for (e1, e2) in contract_class
+                    .sierra_program
+                    .iter()
+                    .skip(6)
+                    .zip(program_from_blockchain.iter().skip(6))
+                {
+                    if e1.value.to_string() != e2.to_string() {
+                        let err = anyhow::anyhow!("Contract class does not match");
+                        error!("{:?}", err);
                         *class_result = Err(err);
                         continue 'main_loop;
                     }
-                };
-                let cairo_debug_info_reader = BufReader::new(cairo_debug_info_file);
-                let cairo_debug_info_deserialized: SierraToCairoDebugInfo =
-                    match serde_json::from_reader(cairo_debug_info_reader) {
-                        Ok(info) => info,
+                }
+                if let Some(cairo_debug_info_path) = cairo_debug_info_path {
+                    let cairo_debug_info_file = match File::open(&cairo_debug_info_path) {
+                        Ok(file) => file,
                         Err(e) => {
-                            let err = anyhow::anyhow!("Failed to deserialize debug info: {:?}", e);
+                            let err = anyhow::anyhow!(
+                                "Failed to open debug info file {}: {:?}",
+                                cairo_debug_info_path.display(),
+                                e
+                            );
                             error!("{}", err);
                             *class_result = Err(err);
                             continue 'main_loop;
                         }
                     };
-                *cairo_debug_info = Some(cairo_debug_info_deserialized);
+                    let cairo_debug_info_reader = BufReader::new(cairo_debug_info_file);
+                    let cairo_debug_info_deserialized: SierraToCairoDebugInfo =
+                        match serde_json::from_reader(cairo_debug_info_reader) {
+                            Ok(info) => info,
+                            Err(e) => {
+                                let err =
+                                    anyhow::anyhow!("Failed to deserialize debug info: {:?}", e);
+                                error!("{}", err);
+                                *class_result = Err(err);
+                                continue 'main_loop;
+                            }
+                        };
+                    *cairo_debug_info = Some(cairo_debug_info_deserialized);
+                }
             }
         }
+    } else {
+        return Err(anyhow::anyhow!(
+            "Unsupported Cairo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            tuple_to_version_string(cairo_version),
+            get_supported_cairo_versions()
+        ));
     }
 
     Ok(class_verification_data)

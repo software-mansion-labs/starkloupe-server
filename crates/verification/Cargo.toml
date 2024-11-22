@@ -38,3 +38,4 @@ walkdir.workspace = true
 sentry = "0.24"
 starknet-providers.workspace = true
 starknet-old.workspace = true
+cairo-annotations.workspace = true

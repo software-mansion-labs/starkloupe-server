@@ -11,18 +11,14 @@ else
 fi
 
 SOZO_URLS=(
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-11"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-12"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-13"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-14"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-15"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo-v1-0-0-alpha-16"
+    "https://walnut-public-deployment-binaries.s3.amazonaws.com/sozo/$FOLDER/sozo_v1.0.1"
 )
 SCARB_URLS=(
     "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v_2_6_3"
     "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v_2_6_4"
     "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v_2_7_0"
-    "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v_2_8_2"
+    "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v2.8.2"
+    "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v2.8.4"
 )
 
 # Create base directories if they don't exist

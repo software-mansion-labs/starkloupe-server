@@ -1,4 +1,7 @@
+pub mod artifacts;
 pub mod db;
+pub mod manifest;
+pub mod minimal_verification;
 pub mod s3;
 pub mod scarb;
 pub mod sozo;
@@ -117,7 +120,7 @@ pub struct VerifiedClassRow {
 #[derive(Serialize, Deserialize)]
 pub struct VerifiedClassData {
     pub contract_class: ContractClass,
-    pub cairo_debug_info: Option<SierraToCairoDebugInfo>,
+    pub cairo_debug_info: Option<SierraToCairoDebugInfo>, // Deprecated. Use contract_class.sierra_program_debug_info.annotations.github.com/software-mansion/cairo-coverage.statements_code_locations
     pub source_code: HashMap<String, String>,
 }
 
@@ -141,9 +144,43 @@ pub struct TextPosition {
     pub col: usize,
 }
 
+impl TextPosition {
+    pub fn from_coverage(
+        coverage_code_location: cairo_annotations::annotations::coverage::SourceCodeLocation,
+    ) -> Self {
+        TextPosition {
+            line: coverage_code_location.line.0,
+            col: coverage_code_location.col.0,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Clone, Deserialize, Hash, Eq, PartialEq)]
 pub struct CodeLocation {
     pub start: TextPosition,
     pub end: TextPosition,
     pub file_path: String,
+}
+
+impl CodeLocation {
+    pub fn from_coverage(
+        coverage_code_location: cairo_annotations::annotations::coverage::CodeLocation,
+    ) -> Self {
+        CodeLocation {
+            start: TextPosition::from_coverage(coverage_code_location.1.start),
+            end: TextPosition::from_coverage(coverage_code_location.1.end),
+            file_path: coverage_code_location.0 .0.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VerificationRequestRow {
+    pub id: Uuid,
+    pub status: Option<String>,
+    pub message: Option<String>,
+    pub created_at: PrimitiveDateTime,
+    pub updated_at: PrimitiveDateTime,
+    pub cairo_version: Option<String>,
+    pub package_name: Option<String>,
 }
