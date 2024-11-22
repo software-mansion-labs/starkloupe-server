@@ -21,6 +21,7 @@ SCARB_URLS=(
     "https://walnut-public-deployment-binaries.s3.amazonaws.com/scarb/$FOLDER/scarb_cairo_v2.8.4"
 )
 
+
 # Create base directories if they don't exist
 mkdir -p binaries/sozo
 mkdir -p binaries/scarb
