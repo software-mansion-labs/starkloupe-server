@@ -17,6 +17,8 @@ const SUPPORTED_OLD_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4),
 
 const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 8, 2), (2, 8, 4)];
 
+const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1"];
+
 fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
     cmd.current_dir(tmp_dir);
@@ -178,9 +180,16 @@ pub fn build_with_scarb(
         ));
     }
 
-    if manifest.has_dojo_target {
-        let sozo_path = "binaries/sozo/sozo_v1.0.1";
-        run_sozo_build(tmp_dir, sozo_path)?;
+    if let Some(dojo_version) = manifest.dojo_version {
+        if !SUPPORTED_DOJO_VERSIONS.contains(&dojo_version.as_str()) {
+            return Err(anyhow::anyhow!(
+                "Unsupported Dojo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+                dojo_version,
+                SUPPORTED_DOJO_VERSIONS.join(", ")
+            ));
+        }
+        let sozo_path = format!("binaries/sozo/sozo_{}", dojo_version);
+        run_sozo_build(tmp_dir, &sozo_path)?;
     } else {
         let scarb_path = format!(
             "binaries/scarb/scarb_cairo_v{}.{}.{}",

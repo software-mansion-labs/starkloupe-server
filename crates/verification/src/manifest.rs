@@ -8,7 +8,7 @@ use crate::scarb::{get_supported_cairo_versions, is_cairo_version_supported};
 #[derive(Debug)]
 pub struct Manifest {
     pub package_name: String,
-    pub has_dojo_target: bool,
+    pub dojo_version: Option<String>,
     pub dojo_namespace_name: Option<String>,
     pub cairo_version: (u32, u32, u32),
 }
@@ -111,10 +111,14 @@ impl Manifest {
             return Err(anyhow::anyhow!(error_message));
         }
 
-        let has_dojo_target = scarb_config_toml
-            .get("target")
-            .and_then(|t| t.get("dojo"))
-            .is_some();
+        // Search for dojo dependency and get its tag
+        let dojo_tag = scarb_config_toml
+            .get("dependencies")
+            .and_then(|d| d.get("dojo"))
+            .and_then(toml::Value::as_table)
+            .and_then(|dojo_table| dojo_table.get("tag"))
+            .and_then(toml::Value::as_str)
+            .map(|s| s.to_string());
 
         let dojo_namespace_name = match source_code.get("dojo_dev.toml") {
             Some(contents) => {
@@ -137,7 +141,7 @@ impl Manifest {
 
         Ok(Self {
             package_name: package_name.to_string(),
-            has_dojo_target,
+            dojo_version: dojo_tag,
             dojo_namespace_name,
             cairo_version,
         })
