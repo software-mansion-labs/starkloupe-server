@@ -19,6 +19,8 @@ const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 8, 2), (2, 8, 4)];
 
 const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1"];
 
+const BUILD_PROFILE: &str = "release";
+
 fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
     cmd.current_dir(tmp_dir);
@@ -34,6 +36,7 @@ fn run_scarb_build(tmp_dir: &PathBuf, scarb_path: &str) -> Result<()> {
         }
     };
     cmd.scarb_path(absolute_path);
+    cmd.arg("--profile").arg(BUILD_PROFILE);
     cmd.arg("build");
     let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
     let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
@@ -92,7 +95,7 @@ pub fn compile_with_scarb(
             }
         };
 
-        let contract_class_path = tmp_dir.join("target/dev").join(format!(
+        let contract_class_path = tmp_dir.join("target").join(BUILD_PROFILE).join(format!(
             "{}_{}.contract_class.json",
             manifest.package_name, class_name
         ));
@@ -120,7 +123,7 @@ pub fn compile_with_scarb(
 
         let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
             version if SUPPORTED_OLD_CAIRO_VERSIONS.contains(&version) => {
-                Some(tmp_dir.join("target/dev").join(format!(
+                Some(tmp_dir.join("target").join(BUILD_PROFILE).join(format!(
                     "{}_{}.contract_class_debug.json",
                     manifest.package_name, class_name
                 )))
@@ -198,7 +201,7 @@ pub fn build_with_scarb(
         run_scarb_build(tmp_dir, &scarb_path)?;
     }
 
-    read_scarb_artifacts(tmp_dir, &manifest.package_name, "dev")
+    read_scarb_artifacts(tmp_dir, &manifest.package_name, BUILD_PROFILE)
 }
 
 pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {

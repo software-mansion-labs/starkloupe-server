@@ -518,14 +518,20 @@ async fn verify(
 
     if is_new_cairo_version_supported(cairo_version) {
         let classes = build_with_scarb(manifest, &tmp_dir)?;
-        let class_hash_map: HashMap<String, ContractClass> = classes.into_iter().collect();
         for (class_hash, class_result) in class_verification_data.iter_mut() {
-            if let Some(class) = class_hash_map.get(class_hash) {
+            if let Some((_, class)) = classes.iter().find(|(h, _)| h == class_hash) {
                 if let Ok((_, _, _, ref mut contract_class, _, _)) = class_result {
                     *contract_class = Some(class.clone());
                 }
             } else {
-                let error_message = format!("Class hash {} not found in the map", class_hash);
+                let error_message = if classes.len() == 1 {
+                    format!(
+                        "Contract class hash does not match. Contract class hash {} was expected but {} found",
+                        classes[0].0, class_hash
+                    )
+                } else {
+                    "Contract class hash does not match".to_string()
+                };
                 error!(error_message);
                 *class_result = Err(anyhow::anyhow!(error_message));
             }

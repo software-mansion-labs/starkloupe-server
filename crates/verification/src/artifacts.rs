@@ -44,7 +44,7 @@ pub fn read_scarb_artifacts(
 
     for contract_artifact in &starknet_artifacts.contracts {
         if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
-            let contract_sierra_path = tmp_dir.join("target").join("dev").join(sierra_path);
+            let contract_sierra_path = tmp_dir.join("target").join(build_profile).join(sierra_path);
 
             let contract_class_file_contents = match fs::read_to_string(&contract_sierra_path) {
                 Ok(contents) => contents,
