@@ -142,3 +142,76 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
 pub fn is_panic_result(return_type: Option<&str>) -> bool {
     return_type.map_or(false, |result_type| result_type.contains("PanicResult"))
 }
+
+pub fn get_raw_function_name(fn_name: &str) -> Option<String> {
+    if fn_name.is_empty() {
+        return None;
+    }
+
+    let mut raw_fn_name = String::new();
+    let mut inside_generics = 0;
+    let mut segment = String::new();
+
+    for char in fn_name.chars() {
+        match char {
+            '<' => {
+                inside_generics += 1;
+            }
+            '>' => {
+                if inside_generics > 0 {
+                    inside_generics -= 1;
+                }
+            }
+            ':' if inside_generics == 0 => {
+                if !segment.is_empty() {
+                    if !raw_fn_name.is_empty() {
+                        raw_fn_name.push_str("::");
+                    }
+                    raw_fn_name.push_str(&segment);
+                    segment.clear();
+                }
+            }
+            _ if inside_generics == 0 => {
+                segment.push(char);
+            }
+            _ => {}
+        }
+    }
+
+    if !segment.is_empty() {
+        if !raw_fn_name.is_empty() {
+            raw_fn_name.push_str("::");
+        }
+        raw_fn_name.push_str(&segment);
+    }
+
+    Some(raw_fn_name)
+}
+
+pub fn is_loop(function_name: &str) -> bool {
+    let mut inside_brackets = false;
+    let mut found_expr = false;
+    let mut digits_found = false;
+
+    for c in function_name.chars() {
+        if c == '[' {
+            inside_brackets = true;
+            found_expr = false;
+            digits_found = false;
+        } else if c == ']' {
+            if inside_brackets && found_expr && digits_found {
+                return true;
+            }
+            inside_brackets = false;
+        } else if inside_brackets {
+            if !found_expr && function_name.contains("expr") {
+                found_expr = true;
+            }
+            if found_expr && c.is_ascii_digit() {
+                digits_found = true;
+            }
+        }
+    }
+
+    false
+}

@@ -1,6 +1,8 @@
 use crate::{
-    function_call::FunctionCall, function_calls_map::FunctionCallsMap, mappings::Mappings,
-    utils::is_panic_result,
+    function_call::FunctionCall,
+    function_calls_map::FunctionCallsMap,
+    mappings::Mappings,
+    utils::{get_raw_function_name, is_loop, is_panic_result},
 };
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
@@ -87,7 +89,7 @@ pub fn get_internal_call_trace(
         contract_call_id,
         fn_name: entrypoint_function
             .and_then(|f| f.id.debug_name.clone())
-            .and_then(|n| Some(n.to_string())),
+            .and_then(|n| get_raw_function_name(n.as_str())),
         fp: prev_fp,
         is_deepest_panic_result: false,
         arguments: Vec::new(),
@@ -113,6 +115,7 @@ pub fn get_internal_call_trace(
 
     let mut contract_call_index = 0;
 
+    let mut loop_parent_map: HashMap<String, u32> = HashMap::new();
     for (i, trace_entry) in vm_trace.iter().enumerate() {
         // Active Sierra indexes at the current step
         let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
@@ -156,39 +159,51 @@ pub fn get_internal_call_trace(
                 None => (Vec::new(), Vec::new()),
             };
 
-            if function.is_some() {
-                let new_function_call_id = *next_call_id;
-                let function_call = FunctionCall {
-                    call_id: new_function_call_id,
-                    parent_call_id: current_call_id,
-                    children_call_ids: Vec::new(),
-                    contract_call_id,
-                    fn_name: function
-                        .and_then(|f| f.id.debug_name.clone())
-                        .and_then(|n| Some(n.to_string())),
-                    fp: trace_entry.fp,
-                    is_deepest_panic_result: false,
-                    arguments: arguments.clone(),
-                    arguments_decoded: Some(arguments_decoded.clone()),
-                    results: Vec::new(),
-                    results_decoded: None,
-                    code_location: cairo_locations.first().cloned(),
-                    debugger_trace_step_index: None,
-                    is_hidden: false,
-                };
-                *next_call_id += 1;
-                function_calls_map
-                    .0
-                    .insert(new_function_call_id, function_call);
-                function_calls_map
-                    .0
-                    .get_mut(&current_call_id)
-                    .unwrap()
-                    .children_call_ids
-                    .push(new_function_call_id);
-                current_call_id = new_function_call_id;
+            if let Some(function) = function {
+                let debug_fn_name = function.id.debug_name.clone();
+                let fn_name = get_raw_function_name(&debug_fn_name.unwrap_or_default());
 
-                nesting_level += 1;
+                if let Some(fn_name) = fn_name {
+                    if is_loop(&fn_name) {
+                        if let Some(parent_id) = loop_parent_map.get(&fn_name) {
+                            current_call_id = *parent_id;
+                        } else {
+                            loop_parent_map.insert(fn_name.clone(), current_call_id);
+                        }
+                    } else {
+                        let new_function_call_id = *next_call_id;
+
+                        let function_call = FunctionCall {
+                            call_id: new_function_call_id,
+                            parent_call_id: current_call_id,
+                            children_call_ids: Vec::new(),
+                            contract_call_id,
+                            fn_name: Some(fn_name),
+                            fp: trace_entry.fp,
+                            is_deepest_panic_result: false,
+                            arguments: arguments.clone(),
+                            arguments_decoded: Some(arguments_decoded.clone()),
+                            results: Vec::new(),
+                            results_decoded: None,
+                            code_location: cairo_locations.first().cloned(),
+                            debugger_trace_step_index: None,
+                            is_hidden: false,
+                        };
+                        *next_call_id += 1;
+                        function_calls_map
+                            .0
+                            .insert(new_function_call_id, function_call);
+                        function_calls_map
+                            .0
+                            .get_mut(&current_call_id)
+                            .unwrap()
+                            .children_call_ids
+                            .push(new_function_call_id);
+                        current_call_id = new_function_call_id;
+
+                        nesting_level += 1;
+                    }
+                }
             }
         } else if trace_entry.fp < prev_fp {
             // If the FP register decreases, that means we have exited the function call
