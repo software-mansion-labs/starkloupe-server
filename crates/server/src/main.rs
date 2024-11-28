@@ -1,15 +1,15 @@
+extern crate dotenv;
 mod app_state;
 mod handlers;
 mod services;
 mod telegram_bot_service;
 
-extern crate dotenv;
-
 use app_state::AppState;
 use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_s3::config::Region;
+use aws_sdk_s3::Client;
 use axum::{routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
-use deadpool_redis;
 use dotenv::dotenv;
 use handlers::{
     classes::get_class_handler,
@@ -19,6 +19,9 @@ use handlers::{
     verification::verify_handler,
 };
 use sqlx::postgres::PgPoolOptions;
+use std::error::Error;
+use std::fs::File;
+use std::io::Write;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -29,12 +32,14 @@ use crate::handlers::{
     search::get_search_handler,
     verification::{get_verification_status_handler, verify_handler_with_rpc},
 };
-
 use sentry;
+use std::env::consts::ARCH;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
-// https://crates.io/crates/redis-macros
 // https://www.apianalytics.dev/
 // - https://github.com/tom-draper/api-analytics
 // https://docs.rs/axum-prometheus/latest/axum_prometheus/
@@ -57,27 +62,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(sentry_tracing::layer())
         .init();
 
-    let redis_addr = std::env::var("REDIS_ADDR").unwrap_or("redis://127.0.0.1/".to_string());
     let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
     let db_pool = PgPoolOptions::new()
         .max_connections(30)
         .connect(&db_addr)
         .await?;
 
-    let redis_cfg = deadpool_redis::Config::from_url(redis_addr);
-    let redis_pool = redis_cfg
-        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-        .unwrap();
 
-    let region_provider = RegionProviderChain::default_provider();
-    let shared_config = aws_config::from_env().region(region_provider).load().await;
-    let s3_client = aws_sdk_s3::Client::new(&shared_config);
+    // Configure the region and endpoint
+    let region = Region::new(std::env::var("S3_REGION").unwrap_or("".to_string()));
+    let shared_config = aws_config::from_env()
+        .region(region)
+        .endpoint_url(std::env::var("S3_ENDPOINT").unwrap_or("".to_string()))
+        .load()
+        .await;
 
+    // Create the S3 client
+    let s3_client = Client::new(&shared_config);
     sqlx::migrate!().run(&db_pool).await?;
+
+    download_binary(&s3_client, format!("sozo/{ARCH}/sozo_v1.0.1").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v_2_6_3").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v_2_6_4").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v_2_7_0").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v2.8.2").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v2.8.4").as_str()).await?;
 
     let shared_state = Arc::new(AppState {
         db_pool,
-        redis_pool,
         s3_client,
     });
 
@@ -120,6 +132,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .serve(app.into_make_service())
         .await
         .unwrap();
+
+    Ok(())
+}
+
+// downloads the binary from the S3 bucket and saves it to the local directory, gives the executable permissions
+async fn download_binary(
+    s3_client: &Client,
+    object_key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bucket_name = std::env::var("BINARIES_S3_BUCKET_NAME").unwrap_or("".to_string());
+    let binaries_save_directory_path = std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+    let local_file_path = format!("{}/{}", &binaries_save_directory_path, &object_key.replace(format!("/{}/", ARCH).as_str(), "/"));
+    // Check if the file already exists
+    let path = Path::new(&local_file_path);
+    if path.exists() {
+        println!("File already exists (skipping download): {}", local_file_path);
+        return Ok(()); // Exit early if the file exists
+    }
+    println!("Downloading object: {}/{}", bucket_name, object_key);
+
+    // Fetch the object from the S3 bucket
+    let resp = s3_client
+        .get_object()
+        .bucket(bucket_name)
+        .key(object_key)
+        .send()
+        .await?;
+
+    // Ensure the directory exists
+    if let Some(parent_dir) = std::path::Path::new(&local_file_path).parent() {
+        fs::create_dir_all(parent_dir).expect("Failed to create parent directories");
+    }
+    let mut file = File::create(&local_file_path).expect(format!("Failed to create file: {}", local_file_path).as_str());
+
+    // Stream the object content to the file
+    let data = resp.body.collect().await?;
+    file.write_all(&data.into_bytes())
+        .expect("Failed to write object data to file");
+
+    let metadata = fs::metadata(&local_file_path)?;
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o755); // rwxr-xr-x
+    fs::set_permissions(&local_file_path, permissions)
+        .expect("Failed to set executable permissions");
+
+    println!("Object downloaded successfully to: {}", local_file_path);
 
     Ok(())
 }
