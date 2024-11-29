@@ -242,7 +242,7 @@ fn run_simulation(
             &mut cheatnet_state,
             transaction_context.clone(),
             u64::MAX,
-        );
+        )?;
     }
 
     if args.transaction_type.is_none() || args.transaction_type != Some(TransactionType::Declare) {
@@ -253,7 +253,7 @@ fn run_simulation(
             &mut cheatnet_state,
             transaction_context.clone(),
             u64::MAX,
-        );
+        )?;
     }
 
     Ok(cheatnet_state)
