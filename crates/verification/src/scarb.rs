@@ -78,8 +78,10 @@ pub fn compile_with_scarb(
         ));
     }
 
+    let binaries_save_directory_path = std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
     let scarb_path = format!(
-        "binaries/scarb/scarb_cairo_v_{}_{}_{}",
+        "{}/scarb/scarb_cairo_v_{}_{}_{}",
+        binaries_save_directory_path,
         starknet_version.0, starknet_version.1, starknet_version.2
     );
     run_scarb_build(tmp_dir, &scarb_path)?;
@@ -191,11 +193,14 @@ pub fn build_with_scarb(
                 SUPPORTED_DOJO_VERSIONS.join(", ")
             ));
         }
-        let sozo_path = format!("binaries/sozo/sozo_{}", dojo_version);
+        let binaries_save_directory_path = std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+        let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
         run_sozo_build(tmp_dir, &sozo_path)?;
     } else {
+        let binaries_save_directory_path = std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let scarb_path = format!(
-            "binaries/scarb/scarb_cairo_v{}.{}.{}",
+            "{}/scarb/scarb_cairo_v{}.{}.{}",
+            binaries_save_directory_path,
             manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2
         );
         run_scarb_build(tmp_dir, &scarb_path)?;

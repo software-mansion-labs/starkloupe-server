@@ -9,7 +9,6 @@ edition = "2021"
 db = { path = "../db" }
 utoipa = "4.2.3"
 axum.workspace = true
-redis.workspace = true
 sqlx.workspace = true
 tower.workspace = true
 tower-http.workspace = true
@@ -30,7 +29,6 @@ axum-prometheus = "0.4.0"
 cookie.workspace = true
 jsonwebtoken.workspace = true
 urlencoding.workspace = true
-deadpool-redis.workspace = true
 cheatnet.workspace = true
 futures.workspace = true
 cairo-vm.workspace = true

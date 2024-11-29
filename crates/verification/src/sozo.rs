@@ -4,6 +4,9 @@ use std::process::{Command, Stdio};
 use std::{env, fs};
 use tracing::error;
 
+
+const BUILD_PROFILE: &str = "release";
+
 pub fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
     let absolute_path = fs::canonicalize(sozo_path)?;
 
@@ -17,12 +20,12 @@ pub fn run_sozo_build(tmp_dir: &PathBuf, sozo_path: &str) -> Result<()> {
 
     cmd.env("SCARB_CACHE", scarb_cache_dir_str)
         .arg("build")
+        .arg("--profile").arg(BUILD_PROFILE)
         .current_dir(tmp_dir)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
     let status = cmd.status()?;
-
     if status.success() {
         Ok(())
     } else {
