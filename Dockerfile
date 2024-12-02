@@ -23,10 +23,15 @@ FROM ubuntu:25.04 AS final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
+    curl \
     ca-certificates \
     git \
     bash && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /opt/app
 
