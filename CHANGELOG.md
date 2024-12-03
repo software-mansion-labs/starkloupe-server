@@ -2,7 +2,7 @@
 
 ### [0.0.8] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.8)
 
-- Reverted changes from 0.0.3
+- Reverted changes from version 0.0.3 that prevented call trace from displaying in the case of reverted transactions
 
 ### [0.0.7] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.7)
 
