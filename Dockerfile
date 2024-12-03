@@ -24,6 +24,7 @@ FROM ubuntu:25.04 AS final
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     curl \
+    build-essential \
     ca-certificates \
     git \
     bash && \
