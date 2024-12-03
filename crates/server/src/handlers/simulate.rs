@@ -1,4 +1,8 @@
 use crate::app_state::AppState;
+use crate::telegram_bot_service::{
+    send_telegram_notification_calldata, send_telegram_notification_custom_rpc,
+    send_telegram_notification_tx_id,
+};
 use axum::extract::Query;
 use axum::{
     debug_handler,
@@ -13,9 +17,9 @@ use simulate::{
     SimulationArgs, SimulationRawArgs,
 };
 use std::sync::Arc;
+use tracing::error;
 use url::Url;
 use walnut_shared::{extract_chain_id, rpc_url};
-use crate::telegram_bot_service::{send_telegram_notification_calldata, send_telegram_notification_custom_rpc, send_telegram_notification_tx_id};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum SimulationPayload {
@@ -48,15 +52,34 @@ pub async fn simulate_transaction(
                 Ok(args) => args,
                 Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
             };
-            if !query_params.skip_tracking.unwrap_or(String::new()).eq("true") {
-                send_telegram_notification_calldata(&simulation_args).await.unwrap();
+            if !query_params
+                .skip_tracking
+                .as_deref()
+                .unwrap_or("")
+                .eq("true")
+            {
+                if let Err(err) = send_telegram_notification_calldata(&simulation_args).await {
+                    error!("Failed to send Telegram notification. Error: {:?}", err);
+                }
             }
             simulate_by_calldata(&state.db_pool, &state.s3_client, simulation_args).await
         }
         SimulationPayload::WithTxHash(args) => {
             // don't sent Telegram notification if query param skip_tg_notification=true (it set in URLs sent to tg bot)
-            if !query_params.skip_tracking.unwrap_or(String::new()).eq("true") {
-                send_telegram_notification_custom_rpc(args.tx_hash.as_str(), args.rpc_url.as_str()).await.unwrap();
+            if !query_params
+                .skip_tracking
+                .as_deref()
+                .unwrap_or("")
+                .eq("true")
+            {
+                if let Err(err) = send_telegram_notification_custom_rpc(
+                    args.tx_hash.as_str(),
+                    args.rpc_url.as_str(),
+                )
+                .await
+                {
+                    error!("Failed to send Telegram notification. Error: {:?}", err);
+                }
             }
             let rpc_url = match Url::parse(&args.rpc_url) {
                 Ok(url) => url,
@@ -86,8 +109,17 @@ pub async fn simulate_transaction_by_hash_handler(
     Query(query_params): Query<QueryParams>,
 ) -> Response {
     // don't sent Telegram notification if query param skip_tg_notification=true (it set in URLs sent to tg bot)
-    if !query_params.skip_tracking.unwrap_or(String::new()).eq("true") {
-        send_telegram_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await.unwrap();
+    if !query_params
+        .skip_tracking
+        .as_deref()
+        .unwrap_or("")
+        .eq("true")
+    {
+        if let Err(err) =
+            send_telegram_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await
+        {
+            error!("Failed to send Telegram notification. Error: {:?}", err);
+        }
     }
 
     let chain_id = match extract_chain_id(chain_id.as_str()) {
