@@ -1,6 +1,6 @@
 # Changelog
 
-### [0.1.0] (https://github.com/walnuthq/walnut-server/releases/tag/0.1.0)
+### [0.0.10] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.10)
 
 - Update the starknet-foundry commit per [PR](https://github.com/walnuthq/starknet-foundry/pull/3)
 
