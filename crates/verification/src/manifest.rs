@@ -34,17 +34,19 @@ impl Manifest {
             }
         };
 
-        // Add the unstable-add-statements-code-locations-debug-info under [cairo]
+        // Add the sierra-replace-ids and unstable-add-statements-code-locations-debug-info under [cairo]
         if let Some(cairo_table) = scarb_config_toml
             .get_mut("cairo")
             .and_then(toml::Value::as_table_mut)
         {
+            cairo_table.insert("sierra-replace-ids".to_string(), toml::Value::Boolean(true));
             cairo_table.insert(
                 "unstable-add-statements-code-locations-debug-info".to_string(),
                 toml::Value::Boolean(true),
             );
         } else {
             let mut cairo_table = toml::map::Map::new();
+            cairo_table.insert("sierra-replace-ids".to_string(), toml::Value::Boolean(true));
             cairo_table.insert(
                 "unstable-add-statements-code-locations-debug-info".to_string(),
                 toml::Value::Boolean(true),
