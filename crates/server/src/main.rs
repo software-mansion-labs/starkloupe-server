@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v_2_7_0").as_str()).await?;
     download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v2.8.2").as_str()).await?;
     download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v2.8.4").as_str()).await?;
+    download_binary(&s3_client, format!("scarb/{ARCH}/scarb_cairo_v2.8.5").as_str()).await?;
 
     let shared_state = Arc::new(AppState {
         db_pool,

@@ -1,4 +1,6 @@
 # Changelog
+### [0.0.11] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.11)
+- added `scarb 2.8.5` support
 
 ### [0.0.10] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.10)
 
