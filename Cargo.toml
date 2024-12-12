@@ -42,7 +42,7 @@ indoc = "2"
 starknet-crypto = "0.6.2"
 dotenv = "0.15.0"
 chrono = { version = "0.4.31", features = ["serde"] }
-reqwest = { version = "0.11.22", features = ["json"] }
+reqwest = { version = "0.11.22", features = ["json", "stream"] }
 starknet-providers = "0.10.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.17", features = [
@@ -107,5 +107,13 @@ scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "84fa2
 conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "84fa298db89f8d24586f97e0a73f629ecb6d55aa" }
 universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "84fa298db89f8d24586f97e0a73f629ecb6d55aa" }
 
+# For Scarb binary download scheduler
+tokio-util = {  version = "0.7.11", features = ["compat"] }
+regex = "1.11.1"
+async-tar = "0.5.0"
+semver = "1.0"
+async-compression = { version = "0.4.1", features = ["gzip", "tokio"] }
+clokwerk = "0.4.0"
+lazy-regex = "3.3.0"
 [profile.bench]
 debug = true

@@ -7,6 +7,7 @@ pub mod scarb;
 pub mod sozo;
 pub mod utils;
 pub mod verification;
+pub mod scarb_download_scheduler;
 
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;

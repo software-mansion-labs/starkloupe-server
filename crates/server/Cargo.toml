@@ -44,3 +44,6 @@ starknet-providers.workspace = true
 starknet-old.workspace = true
 sentry-tracing.workspace = true
 sentry-tower.workspace = true
+clokwerk.workspace = true
+chrono.workspace = true
+time.workspace = true

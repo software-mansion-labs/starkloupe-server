@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::{env, fs};
+use semver::Version;
 use tracing::error;
 use walnut_shared::tuple_to_version_string;
 
@@ -13,10 +14,17 @@ use crate::manifest::Manifest;
 use crate::sozo::run_sozo_build;
 use crate::ClassVerificationData;
 
-const SUPPORTED_OLD_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 6, 3), (2, 6, 4), (2, 7, 0)];
+fn supported_old_cairo_versions() -> Vec<Version> {
+    vec![
+        Version::parse("2.6.3").unwrap(),
+        Version::parse("2.6.4").unwrap(),
+        Version::parse("2.7.0").unwrap(),
+    ]
+}
 
-const SUPPORTED_CAIRO_VERSIONS: &[(u32, u32, u32)] = &[(2, 8, 2), (2, 8, 4), (2, 8, 5)];
-
+fn minimum_supported_new_cario_version() -> Version {
+    Version::parse("2.8.2").unwrap()
+}
 const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1"];
 
 const BUILD_PROFILE: &str = "release";
@@ -72,9 +80,8 @@ pub fn compile_with_scarb(
 ) -> Result<()> {
     if !is_cairo_version_supported(starknet_version) {
         return Err(anyhow::anyhow!(
-            "Unsupported Cairo version {}.{}.{}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
-            starknet_version.0, starknet_version.1, starknet_version.2,
-            get_supported_cairo_versions()
+            "Unsupported Cairo version {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            tuple_to_version_string(starknet_version)
         ));
     }
 
@@ -124,7 +131,7 @@ pub fn compile_with_scarb(
         };
 
         let cairo_debug_info_path: Option<PathBuf> = match starknet_version {
-            version if SUPPORTED_OLD_CAIRO_VERSIONS.contains(&version) => {
+            version if is_old_cairo_version_supported(version) => {
                 Some(tmp_dir.join("target").join(BUILD_PROFILE).join(format!(
                     "{}_{}.contract_class_debug.json",
                     manifest.package_name, class_name
@@ -150,23 +157,6 @@ pub fn compile_with_scarb(
     Ok(())
 }
 
-pub fn get_supported_cairo_versions() -> String {
-    SUPPORTED_OLD_CAIRO_VERSIONS
-        .iter()
-        .chain(SUPPORTED_CAIRO_VERSIONS.iter())
-        .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-pub fn get_new_supported_cairo_versions() -> String {
-    SUPPORTED_OLD_CAIRO_VERSIONS
-        .iter()
-        .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Builds a project at a given path using Scarb for Cairo version 2.8.0 or newer.
 ///
 /// # Returns
@@ -179,9 +169,8 @@ pub fn build_with_scarb(
 ) -> Result<Vec<(String, ContractClass)>> {
     if !is_new_cairo_version_supported(manifest.cairo_version) {
         return Err(anyhow::anyhow!(
-            "Unsupported Cairo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
-            tuple_to_version_string(manifest.cairo_version),
-            get_supported_cairo_versions()
+            "Unsupported Cairo version {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            tuple_to_version_string(manifest.cairo_version)
         ));
     }
 
@@ -210,9 +199,30 @@ pub fn build_with_scarb(
 }
 
 pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    SUPPORTED_OLD_CAIRO_VERSIONS.contains(&version) || SUPPORTED_CAIRO_VERSIONS.contains(&version)
+    is_old_cairo_version_supported(version) || is_new_cairo_version_supported(version)
 }
 
 pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    SUPPORTED_CAIRO_VERSIONS.contains(&version)
+    let version_string = tuple_to_version_string(version);
+    let version_supported = match Version::parse(version_string.as_str()) {
+        Ok(version) => version > minimum_supported_new_cario_version(),
+        Err(_) => {
+            error!("Invalid cairo version on support check: {}", version_string.as_str());
+            false
+        }
+    };
+    version_supported
 }
+
+pub fn is_old_cairo_version_supported(version: (u32, u32, u32)) -> bool {
+    let version_string = tuple_to_version_string(version);
+    let old_version_supported = match Version::parse(version_string.as_str()) {
+        Ok(version) => supported_old_cairo_versions().contains(&version),
+        Err(_) => {
+            error!("Invalid cairo version on support check: {}", version_string.as_str());
+            false
+        }
+    };
+    old_version_supported
+}
+

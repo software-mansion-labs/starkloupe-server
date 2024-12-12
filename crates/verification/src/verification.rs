@@ -18,7 +18,8 @@ use walnut_shared::{felt_to_field_element, field_element_to_felt, tuple_to_versi
 
 use crate::manifest::Manifest;
 use crate::scarb::{
-    build_with_scarb, compile_with_scarb, get_supported_cairo_versions, is_cairo_version_supported,
+    build_with_scarb, compile_with_scarb,
+    is_cairo_version_supported,
     is_new_cairo_version_supported,
 };
 use crate::utils::create_files_from_map;
@@ -608,9 +609,8 @@ async fn verify(
         }
     } else {
         return Err(anyhow::anyhow!(
-            "Unsupported Cairo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
-            tuple_to_version_string(cairo_version),
-            get_supported_cairo_versions()
+            "Unsupported Cairo version {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+            tuple_to_version_string(cairo_version)
         ));
     }
 

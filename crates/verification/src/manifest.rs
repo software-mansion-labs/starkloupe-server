@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::error;
 use walnut_shared::parse_version_string_to_tuple;
 
-use crate::scarb::{get_supported_cairo_versions, is_cairo_version_supported};
+use crate::scarb::{is_cairo_version_supported};
 
 #[derive(Debug)]
 pub struct Manifest {
@@ -105,9 +105,8 @@ impl Manifest {
 
         if !is_cairo_version_supported(cairo_version) {
             let error_message = format!(
-                "Unsupported Cairo version {}.{}.{}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
+                "Unsupported Cairo version {}.{}.{}. Contact us if you need support for a different version: https://t.me/walnuthq",
                 cairo_version.0, cairo_version.1, cairo_version.2,
-                get_supported_cairo_versions()
             );
             error!("{}", error_message);
             return Err(anyhow::anyhow!(error_message));
