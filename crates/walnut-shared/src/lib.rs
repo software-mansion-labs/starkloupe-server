@@ -1,13 +1,12 @@
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 
-use std::string::FromUtf8Error;
 use anyhow::{anyhow, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use serde::Serialize;
 use starknet::core::types::{
-    BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, Felt,
-    StorageEntry,
+    BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem,
+    ExecutionResult, Felt, StorageEntry,
 };
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
@@ -205,6 +204,17 @@ pub fn block_id_to_old_block_id(block_id: BlockId) -> starknet_old_types::BlockI
                 starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Pending)
             }
         },
+    }
+}
+
+pub fn old_execution_result_to_execution_result(
+    execution_result: starknet_old_types::ExecutionResult,
+) -> ExecutionResult {
+    match execution_result {
+        starknet_old_types::ExecutionResult::Succeeded => ExecutionResult::Succeeded,
+        starknet_old_types::ExecutionResult::Reverted { reason } => {
+            ExecutionResult::Reverted { reason }
+        }
     }
 }
 

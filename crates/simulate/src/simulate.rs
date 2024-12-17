@@ -46,6 +46,7 @@ use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
+use walnut_shared::old_execution_result_to_execution_result;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
@@ -55,11 +56,14 @@ use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
+use crate::transaction_extraction::extract_block_number_transaction_receipt;
+use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_chain_id_from_felt;
+use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::transaction_extraction::extract_transaction_receipt;
+use crate::utils::calldata_to_hex;
 use crate::utils::parse_transaction_hash;
 use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
@@ -292,7 +296,7 @@ pub async fn simulate_by_calldata(
         chain_id: readable_chain_id,
         block_number,
         block_timestamp: block_timestamp.0,
-        transaction_index_in_block,
+        transaction_index_in_block: Some(transaction_index_in_block),
         nonce,
         sender_address,
         calldata,
@@ -310,6 +314,7 @@ pub async fn simulate_transaction_by_hash(
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(rpc_url.clone());
     let transaction_hash = parse_transaction_hash(tx_hash)?;
+    // Fetch transaction details
     let transaction = provider_client
         .get_transaction_by_hash(felt_to_field_element(transaction_hash))
         .await;
@@ -323,11 +328,16 @@ pub async fn simulate_transaction_by_hash(
             signature,
         )) = extract_submitted_tx(transaction)
         {
+            // Fetch receipt
             let transaction_receipt = provider_client
                 .get_transaction_receipt(felt_to_field_element(transaction_hash))
                 .await;
             if let Ok(transaction_receipt) = transaction_receipt {
-                if let Some(block_number) = extract_transaction_receipt(transaction_receipt) {
+                //Fetch block number
+                if let Some(block_number) =
+                    extract_block_number_transaction_receipt(&transaction_receipt)
+                {
+                    // Fetch or derive chain_id
                     let chain_id = match chain_id {
                         Some(chain_id) => chain_id,
                         None => extract_chain_id_from_felt(field_element_to_felt(
@@ -337,6 +347,43 @@ pub async fn simulate_transaction_by_hash(
                                 .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
                         ))?,
                     };
+
+                    // Fetch block timestamp
+                    let block_timestamp =
+                        extract_block_timestamp(&provider_client, block_number).await?;
+
+                    // Check for execution status
+                    if let Some(starknet_old_types::ExecutionResult::Reverted { reason }) =
+                        extract_execution_status_transaction_receipt(&transaction_receipt)
+                    {
+                        if reason.contains("RunResources") {
+                            let simulation_info = SimulationInfo {
+                                contract_calls_map: ContractCallsMap::new(),
+                                function_calls_map: FunctionCallsMap::new(),
+                                events: Vec::new(),
+                                execution_result: ExecutionResult::Reverted { reason },
+                                simulation_debugger_data: Some(SimulationDebuggerData {
+                                    classes_debugger_data: HashMap::new(),
+                                    debugger_trace: Vec::new(),
+                                }),
+                            };
+                            return Ok(TransactionSimulationResult {
+                                simulation_result: simulation_info,
+                                chain_id: chain_id_to_readable_string(&chain_id),
+                                block_number: starknet_old_types::BlockId::Number(block_number),
+                                block_timestamp: block_timestamp.0,
+                                transaction_index_in_block: None,
+                                nonce: nonce.0.to_u64(),
+                                sender_address: sender_address.0.to_string(),
+                                calldata: calldata_to_hex(&calldata),
+                                transaction_version: transaction_version.0.to_u64().unwrap()
+                                    as usize,
+                                transaction_type: transaction_type_to_string(transaction_type),
+                            });
+                        }
+                    }
+
+                    // Perform transaction simulation
                     let (simulation_result, block_timestamp, transaction_index_in_block) =
                         simulate(
                             db_pool,
@@ -355,22 +402,17 @@ pub async fn simulate_transaction_by_hash(
                             },
                         )
                         .await?;
-                    let calldata = calldata
-                        .0
-                        .to_vec()
-                        .iter()
-                        .map(|felt| felt.to_hex_string())
-                        .collect::<Vec<String>>();
-                    let nonce = nonce.0.to_u64();
+
+                    // Build and return simulation result
                     return Ok(TransactionSimulationResult {
                         simulation_result,
                         chain_id: chain_id_to_readable_string(&chain_id),
                         block_number: starknet_old_types::BlockId::Number(block_number),
                         block_timestamp: block_timestamp.0,
-                        transaction_index_in_block,
-                        nonce,
+                        transaction_index_in_block: Some(transaction_index_in_block),
+                        nonce: nonce.0.to_u64(),
                         sender_address: sender_address.0.to_string(),
-                        calldata,
+                        calldata: calldata_to_hex(&calldata),
                         transaction_version: transaction_version.0.to_u64().unwrap() as usize,
                         transaction_type: transaction_type_to_string(transaction_type),
                     });

@@ -106,7 +106,7 @@ pub struct TransactionSimulationResult {
     pub calldata: Vec<String>,
     pub transaction_version: usize,
     pub transaction_type: String,
-    pub transaction_index_in_block: usize,
+    pub transaction_index_in_block: Option<usize>,
 }
 
 #[derive(Error, Debug)]
