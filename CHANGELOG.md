@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.13] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.13)
+
+- Sentry fixed - Sentry now correctly receives errors
+
 ### [0.0.12] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.12)
 
 - added Scarb binary download scheduler - every given interval (~60 minutes) Github releases are checked

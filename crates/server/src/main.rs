@@ -49,91 +49,96 @@ use crate::scarb_binaries_manager_service::{download_custom_scarb_binaries, star
 // - https://github.com/tom-draper/api-analytics
 // https://docs.rs/axum-prometheus/latest/axum_prometheus/
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-
+    // SENTRY CONFIGURATION
+    // _guard must be defined on top level so Sentry will catch errors
+    // Also Tokio must be initialized manually (not with attribute)
+    let mut _guard;
+    // Start Sentry only in RELEASE build
     if !cfg!(debug_assertions) {
-        let _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
+         _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
             release: sentry::release_name!(),
-            sample_rate: 1.0,
             ..sentry::ClientOptions::default()
         }));
+
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(sentry_tracing::layer())
+            .init();
     }
 
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("info"))
-        .with(tracing_subscriber::fmt::layer())
-        .with(sentry_tracing::layer())
-        .init();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
+            let db_pool = PgPoolOptions::new()
+                .max_connections(30)
+                .connect(&db_addr)
+                .await?;
 
-    let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
-    let db_pool = PgPoolOptions::new()
-        .max_connections(30)
-        .connect(&db_addr)
-        .await?;
+            // Configure the region and endpoint
+            let region = Region::new(std::env::var("S3_REGION").unwrap_or("".to_string()));
+            let shared_config = aws_config::from_env()
+                .region(region)
+                .endpoint_url(std::env::var("S3_ENDPOINT").unwrap_or("".to_string()))
+                .load()
+                .await;
 
+            // Create the S3 client
+            let s3_client = Client::new(&shared_config);
+            sqlx::migrate!().run(&db_pool).await?;
 
-    // Configure the region and endpoint
-    let region = Region::new(std::env::var("S3_REGION").unwrap_or("".to_string()));
-    let shared_config = aws_config::from_env()
-        .region(region)
-        .endpoint_url(std::env::var("S3_ENDPOINT").unwrap_or("".to_string()))
-        .load()
-        .await;
+            // Download scarb binaries
+            download_custom_scarb_binaries(&s3_client).await?;
+            start_github_scarb_binaries_downloader_scheduler().await;
 
-    // Create the S3 client
-    let s3_client = Client::new(&shared_config);
-    sqlx::migrate!().run(&db_pool).await?;
+            let shared_state = Arc::new(AppState {
+                db_pool,
+                s3_client,
+            });
 
-    // Download scarb binaries
-    download_custom_scarb_binaries(&s3_client).await?;
-    start_github_scarb_binaries_downloader_scheduler().await;
+            let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
-    let shared_state = Arc::new(AppState {
-        db_pool,
-        s3_client,
-    });
+            let app = Router::new()
+                .route("/v1/simulate-transaction", post(simulate_transaction))
+                .route(
+                    "/v1/:chain_id/simulate-transaction/:tx_hash",
+                    get(simulate_transaction_by_hash_handler),
+                )
+                .route("/v1/:chain_id/verify", post(verify_handler))
+                .route("/v1/verify", post(verify_handler_with_rpc))
+                .route(
+                    "/v1/:chain_id/classes/:class_hash",
+                    get(get_class_handler_with_chain_id),
+                )
+                .route("/v1/classes/:class_hash", get(get_class_handler))
+                .route("/v1/contracts/:contract_address", get(get_contract_handler))
+                .route("/v1/search/:search_hash", get(get_search_handler))
+                .route(
+                    "/v1/verification/:verification_status_id/status",
+                    get(get_verification_status_handler),
+                )
+                .with_state(shared_state)
+                .route("/metrics", get(|| async move { metric_handle.render() }))
+                .route_service(
+                    "/",
+                    axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),
+                )
+                .layer(tower_http::trace::TraceLayer::new_for_http())
+                .layer(sentry_tower::NewSentryLayer::<axum::http::Request<_>>::new_from_top())
+                .layer(prometheus_layer)
+                .route("/_ah/warmup", get(|| async { "OK" }))
+                .layer(CorsLayer::permissive());
 
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+            println!("Listening on 0.0.0.0:3000");
+            axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+                .serve(app.into_make_service())
+                .await
+                .unwrap();
 
-    let app = Router::new()
-        .route("/v1/simulate-transaction", post(simulate_transaction))
-        .route(
-            "/v1/:chain_id/simulate-transaction/:tx_hash",
-            get(simulate_transaction_by_hash_handler),
-        )
-        .route("/v1/:chain_id/verify", post(verify_handler))
-        .route("/v1/verify", post(verify_handler_with_rpc))
-        .route(
-            "/v1/:chain_id/classes/:class_hash",
-            get(get_class_handler_with_chain_id),
-        )
-        .route("/v1/classes/:class_hash", get(get_class_handler))
-        .route("/v1/contracts/:contract_address", get(get_contract_handler))
-        .route("/v1/search/:search_hash", get(get_search_handler))
-        .route(
-            "/v1/verification/:verification_status_id/status",
-            get(get_verification_status_handler),
-        )
-        .with_state(shared_state)
-        .route("/metrics", get(|| async move { metric_handle.render() }))
-        .route_service(
-            "/",
-            axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),
-        )
-        .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(sentry_tower::NewSentryLayer::<axum::http::Request<_>>::new_from_top())
-        .layer(prometheus_layer)
-        .route("/_ah/warmup", get(|| async { "OK" }))
-        .layer(CorsLayer::permissive());
-
-    println!("Listening on 0.0.0.0:3000");
-
-    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
-
-    Ok(())
+            Ok(())
+        })
 }
