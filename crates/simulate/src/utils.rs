@@ -116,3 +116,11 @@ pub fn transaction_type_to_string(tx_type: TransactionType) -> String {
         TransactionType::L1Handler => "L1Handler".to_string(),
     }
 }
+
+pub fn calldata_to_hex(calldata: &Calldata) -> Vec<String> {
+    calldata
+        .0
+        .iter()
+        .map(|felt| felt.to_hex_string())
+        .collect::<Vec<String>>()
+}

@@ -110,8 +110,8 @@ pub fn extract_submitted_tx(
     }
 }
 
-pub fn extract_transaction_receipt(
-    transaction_receipt: starknet_old_types::MaybePendingTransactionReceipt,
+pub fn extract_block_number_transaction_receipt(
+    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
 ) -> Option<u64> {
     match transaction_receipt {
         starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
@@ -127,19 +127,32 @@ pub fn extract_transaction_receipt(
     }
 }
 
-pub async fn extract_block_txs_info(
+pub fn extract_execution_status_transaction_receipt(
+    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
+) -> Option<starknet_old_types::ExecutionResult> {
+    match transaction_receipt {
+        starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
+            starknet_old_types::TransactionReceipt::Invoke(invoke_receipt) => {
+                Some(invoke_receipt.execution_result.clone())
+            }
+            starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
+                Some(declare_receipt.execution_result.clone())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+async fn fetch_block_with_txs(
     provider_client: &JsonRpcClient<HttpTransport>,
-    simulation_args: &SimulationArgs,
     block_number: u64,
-) -> Result<(BlockTimestamp, usize), TransactionSimulationError> {
+) -> Result<starknet_old_types::BlockWithTxs, TransactionSimulationError> {
     let block_id = starknet_old_types::BlockId::Number(block_number);
     let block_with_txs = provider_client.get_block_with_txs(block_id).await;
+
     match block_with_txs {
-        Ok(starknet_old_types::MaybePendingBlockWithTxs::Block(block_txs)) => {
-            let block_timestamp = BlockTimestamp(block_txs.timestamp);
-            let transaction_index = extract_transaction_index(&block_txs, simulation_args);
-            Ok((block_timestamp, transaction_index))
-        }
+        Ok(starknet_old_types::MaybePendingBlockWithTxs::Block(block_txs)) => Ok(block_txs),
         Ok(starknet_old_types::MaybePendingBlockWithTxs::PendingBlock(_)) => {
             Err(TransactionSimulationError::PendingBlock(
                 "Pending block is not allowed at the configuration level".to_string(),
@@ -147,6 +160,25 @@ pub async fn extract_block_txs_info(
         }
         Err(err) => Err(TransactionSimulationError::ProviderError(err)),
     }
+}
+
+pub async fn extract_block_timestamp(
+    provider_client: &JsonRpcClient<HttpTransport>,
+    block_number: u64,
+) -> Result<BlockTimestamp, TransactionSimulationError> {
+    let block_txs = fetch_block_with_txs(provider_client, block_number).await?;
+    Ok(BlockTimestamp(block_txs.timestamp))
+}
+
+pub async fn extract_block_txs_info(
+    provider_client: &JsonRpcClient<HttpTransport>,
+    simulation_args: &SimulationArgs,
+    block_number: u64,
+) -> Result<(BlockTimestamp, usize), TransactionSimulationError> {
+    let block_txs = fetch_block_with_txs(provider_client, block_number).await?;
+    let block_timestamp = BlockTimestamp(block_txs.timestamp);
+    let transaction_index = extract_transaction_index(&block_txs, simulation_args);
+    Ok((block_timestamp, transaction_index))
 }
 
 pub fn extract_transaction_index(
