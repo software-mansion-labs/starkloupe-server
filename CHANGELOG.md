@@ -1,5 +1,13 @@
 # Changelog
 
+### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
+
+- Provide paymaster_data and resource_bounds to transaction info for simulation
+
+### [0.0.14] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.14)
+
+- Improved handling for transactions that REVERT with “RunResources” error.
+
 ### [0.0.13] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.13)
 
 - Sentry fixed - Sentry now correctly receives errors

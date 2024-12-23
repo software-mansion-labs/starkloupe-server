@@ -46,7 +46,6 @@ use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
-use walnut_shared::old_execution_result_to_execution_result;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
@@ -216,11 +215,13 @@ fn run_simulation(
     let transaction_context = extract_transaction_contex(
         &args.sender_address,
         &args.transaction_version,
-        &args.transaction_signature,
+        args.transaction_signature,
         &args.transaction_hash,
         &args.nonce,
         args.chain_id,
         &block_info,
+        args.resource_bounds,
+        args.paymaster_data,
     );
 
     let mut cheatnet_state = CheatnetState {
@@ -326,6 +327,8 @@ pub async fn simulate_transaction_by_hash(
             transaction_version,
             transaction_type,
             signature,
+            resource_bounds,
+            paymaster_data,
         )) = extract_submitted_tx(transaction)
         {
             // Fetch receipt
@@ -399,6 +402,8 @@ pub async fn simulate_transaction_by_hash(
                                 transaction_signature: Some(signature),
                                 transaction_hash: Some(TransactionHash(transaction_hash)),
                                 transaction_type: Some(transaction_type),
+                                resource_bounds: Some(resource_bounds),
+                                paymaster_data: Some(paymaster_data),
                             },
                         )
                         .await?;

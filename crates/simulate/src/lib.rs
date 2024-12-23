@@ -26,6 +26,8 @@ use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::transaction::Calldata;
+use starknet_api::transaction::PaymasterData;
+use starknet_api::transaction::ResourceBoundsMapping;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
@@ -66,6 +68,8 @@ pub struct SimulationArgs {
     pub transaction_signature: Option<TransactionSignature>,
     pub transaction_hash: Option<TransactionHash>,
     pub transaction_type: Option<TransactionType>,
+    pub resource_bounds: Option<ResourceBoundsMapping>,
+    pub paymaster_data: Option<PaymasterData>,
 }
 
 impl SimulationArgs {
@@ -90,6 +94,8 @@ impl SimulationArgs {
             transaction_signature: None,
             transaction_hash: None,
             transaction_type: None,
+            resource_bounds: None,
+            paymaster_data: None,
         })
     }
 }
