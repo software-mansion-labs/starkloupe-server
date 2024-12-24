@@ -1,8 +1,16 @@
 # Changelog
 
-### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
+### [0.0.17] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.17)
 
 - Provide paymaster_data and resource_bounds to transaction info for simulation
+
+### [0.0.16] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.16)
+
+- Decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`) fix 2
+
+### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
+
+- Decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`)
 
 ### [0.0.14] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.14)
 
