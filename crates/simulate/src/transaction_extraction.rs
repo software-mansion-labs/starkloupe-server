@@ -1,14 +1,3 @@
-use starknet::core::types::Felt;
-use starknet_api::transaction::PaymasterData;
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::JsonRpcClient;
-use starknet_providers::Provider;
-use walnut_shared::felts_to_string;
-use walnut_shared::field_element_to_felt;
-use walnut_shared::old_resource_bounds_mapping_to_resource_bounds_b_tree_map;
-use walnut_shared::vec_field_element_to_vec_felt;
-
 use blockifier::blockifier::block::BlockInfo;
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::TransactionContext;
@@ -18,8 +7,18 @@ use blockifier::transaction::objects::{
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
+use starknet::core::types::Felt;
 use starknet_api::block::BlockTimestamp;
+use starknet_api::transaction::PaymasterData;
+use starknet_old::core::types as starknet_old_types;
+use starknet_providers::jsonrpc::HttpTransport;
+use starknet_providers::JsonRpcClient;
+use starknet_providers::Provider;
 use std::sync::Arc;
+use walnut_shared::field_element_to_felt;
+use walnut_shared::old_resource_bounds_mapping_to_resource_bounds_b_tree_map;
+use walnut_shared::vec_field_element_to_vec_felt;
+use walnut_shared::{felts_to_string, max_resource_bounds_map};
 
 use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
 use starknet_api::data_availability::DataAvailabilityMode;
@@ -285,7 +284,7 @@ pub fn extract_transaction_contex(
                 sender_address: *sender_address,
                 only_query: false,
             },
-            resource_bounds: resource_bounds.unwrap_or_default(),
+            resource_bounds: resource_bounds.unwrap_or_else(max_resource_bounds_map),
             tip: Default::default(),
             nonce_data_availability_mode: DataAvailabilityMode::L1,
             fee_data_availability_mode: DataAvailabilityMode::L1,

@@ -215,6 +215,25 @@ pub fn old_resource_bounds_mapping_to_resource_bounds_b_tree_map(
     ]))
 }
 
+pub fn max_resource_bounds_map() -> ResourceBoundsMapping {
+    ResourceBoundsMapping(BTreeMap::from([
+        (
+            Resource::L1Gas,
+            ResourceBounds {
+                max_amount: u64::MAX,
+                max_price_per_unit: u128::MAX,
+            },
+        ),
+        (
+            Resource::L2Gas,
+            ResourceBounds {
+                max_amount: u64::MAX,
+                max_price_per_unit: u128::MAX,
+            },
+        ),
+    ]))
+}
+
 pub fn block_id_to_old_block_id(block_id: BlockId) -> starknet_old_types::BlockId {
     match block_id {
         BlockId::Number(block_number) => starknet_old_types::BlockId::Number(block_number),
