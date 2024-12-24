@@ -25,7 +25,7 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use utoipa::OpenApi;
 
 use crate::handlers::{
@@ -61,12 +61,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             release: sentry::release_name!(),
             ..sentry::ClientOptions::default()
         }));
-
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::filter::EnvFilter::new(std::env::var("LOG_LEVEL").unwrap_or("INFO".to_string())))
-            .with(sentry_tracing::layer())
-            .init();
     }
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(sentry_tracing::layer()) // Logging to stdout
+        .with(EnvFilter::new(std::env::var("LOG_LEVEL").unwrap_or("INFO".to_string()))) // Set the maximum log level to INFO
+        .init();
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

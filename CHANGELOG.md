@@ -1,4 +1,8 @@
 # Changelog
+### [0.0.16] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.16)
+
+- decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`) fix 2
+- 
 ### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
 
 - decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`)
