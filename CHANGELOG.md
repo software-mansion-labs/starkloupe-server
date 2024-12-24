@@ -1,5 +1,12 @@
 # Changelog
+### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
 
+- decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`)
+
+### [0.0.14] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.14)
+
+- Handle case run out of resource error
+- 
 ### [0.0.13] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.13)
 
 - Sentry fixed - Sentry now correctly receives errors

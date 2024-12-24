@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
 
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::filter::EnvFilter::new(std::env::var("LOG_LEVEL").unwrap_or("INFO".to_string())))
             .with(sentry_tracing::layer())
             .init();
     }
