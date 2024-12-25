@@ -1,16 +1,21 @@
 # Changelog
+
+### [0.0.17] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.17)
+
+- Provide paymaster_data and resource_bounds to transaction info for simulation
+
 ### [0.0.16] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.16)
 
-- decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`) fix 2
-- 
+- Decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`) fix 2
+
 ### [0.0.15] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.15)
 
-- decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`)
+- Decreased `tracing_subscriber` log level to `INFO` (was lower `tracing`)
 
 ### [0.0.14] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.14)
 
-- Handle case run out of resource error
-- 
+- Improved handling for transactions that REVERT with “RunResources” error.
+
 ### [0.0.13] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.13)
 
 - Sentry fixed - Sentry now correctly receives errors
