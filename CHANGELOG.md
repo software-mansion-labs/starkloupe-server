@@ -1,4 +1,7 @@
 # Changelog
+### [0.0.18] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.18)
+
+- fixed support for cairo version 2.8.2 - now it's correctly supported
 
 ### [0.0.17] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.17)
 

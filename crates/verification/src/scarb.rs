@@ -205,7 +205,7 @@ pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
 pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
     let version_string = tuple_to_version_string(version);
     let version_supported = match Version::parse(version_string.as_str()) {
-        Ok(version) => version > minimum_supported_new_cario_version(),
+        Ok(version) => version >= minimum_supported_new_cario_version(),
         Err(_) => {
             error!("Invalid cairo version on support check: {}", version_string.as_str());
             false
