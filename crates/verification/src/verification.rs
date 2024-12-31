@@ -348,6 +348,19 @@ pub async fn initiate_verification(
     Ok(verification_status_id)
 }
 
+// Failed verifications data for further investigation.
+// There is no auto removal from this location.
+pub async fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf, random_string: &String, e: &anyhow::Error) -> Result<()> {
+    let mut failed_tmp_dir = PathBuf::from("tmp/failed-verification");
+    failed_tmp_dir.push(&random_string);
+    error!("Failed to verify classes - moving {} to {} for further investigation. Error: {:?}", &tmp_dir.display(), &failed_tmp_dir.display(), e);
+    if !failed_tmp_dir.exists() {
+        fs::create_dir_all(&failed_tmp_dir)?;
+    }
+    fs::rename(&tmp_dir, &failed_tmp_dir)?;
+    Ok(())
+}
+
 pub async fn verify_by_class_hashes(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -364,7 +377,14 @@ pub async fn verify_by_class_hashes(
     let class_verification_data =
         verify(&tmp_dir, provider_client, classes, &mut source_code).await;
 
-    fs::remove_dir_all(&tmp_dir)?;
+    match &class_verification_data {
+        Ok(class_verification_data) => {
+            fs::remove_dir_all(&tmp_dir)?;
+        },
+        Err(e) => {
+            move_failed_verification_to_failed_tmp(&tmp_dir, &random_string, e).await?;
+        }
+    }
 
     let class_verification_data: ClassVerificationData = class_verification_data?;
 

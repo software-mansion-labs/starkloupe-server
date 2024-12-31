@@ -12,6 +12,7 @@ use walnut_shared::tuple_to_version_string;
 use crate::manifest::Manifest;
 use crate::scarb::build_with_scarb;
 use crate::utils::create_files_from_map;
+use crate::verification::move_failed_verification_to_failed_tmp;
 use crate::VerifiedClassData;
 
 pub async fn initiate_minimal_verification(
@@ -127,8 +128,14 @@ async fn verify(
     create_files_from_map(&source_code, &tmp_dir)?;
 
     let classes = build_with_scarb(manifest, &tmp_dir);
-
-    fs::remove_dir_all(&tmp_dir)?;
+    match &classes {
+        Ok(classes) => {
+            fs::remove_dir_all(&tmp_dir)?;
+        },
+        Err(e) => {
+            move_failed_verification_to_failed_tmp(&tmp_dir, &random_string, e).await?;
+        }
+    }
 
     let classes = classes?;
 
