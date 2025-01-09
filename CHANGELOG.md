@@ -1,4 +1,8 @@
 # Changelog
+### [0.0.20] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.20)
+
+- upgrading Alchemy API key
+
 ### [0.0.19] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.19)
 
 - moving failed verifications to `tmp/failed-verification` for further investigation

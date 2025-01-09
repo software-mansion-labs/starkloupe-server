@@ -67,11 +67,11 @@ pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> 
 pub fn rpc_url(chain_id: &ChainId) -> Url {
     match chain_id {
         ChainId::Mainnet => {
-            Url::parse("https://starknet-mainnet.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
                 .unwrap()
         }
         ChainId::Sepolia => {
-            Url::parse("https://starknet-sepolia.g.alchemy.com/v2/9J1ION8Owu9eHgZeyWlE9-N0yEepGA58")
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
                 .unwrap()
         }
         _ => panic!("Invalid chain id"),
