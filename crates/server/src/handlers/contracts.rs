@@ -115,30 +115,24 @@ async fn fetch_contract_data(
         .ok()?;
     let class_hash_str = field_element_to_felt(class_hash).to_fixed_hex_string();
 
-    if let Ok(_is_verified) = fetch_verified_class(&state.db_pool, &class_hash_str).await {
-        let source_code = if include_source_code {
-            match fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash_str)
-                .await
-            {
-                Ok((_, verified_class_data)) => Some(verified_class_data.source_code),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+    let is_verified = fetch_verified_class(&state.db_pool, &class_hash_str)
+        .await
+        .is_ok();
 
-        Some(ContractResponseWithSourceCode {
-            chain_id: chain_id.map(chain_id_to_readable_string),
-            class_hash: class_hash_str,
-            is_class_verified: true,
-            source_code,
-        })
+    let source_code = if is_verified && include_source_code {
+        match fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash_str)
+            .await
+        {
+            Ok((_, verified_class_data)) => Some(verified_class_data.source_code),
+            Err(_) => None,
+        }
     } else {
-        Some(ContractResponseWithSourceCode {
-            chain_id: chain_id.map(chain_id_to_readable_string),
-            class_hash: class_hash_str,
-            is_class_verified: false,
-            source_code: None,
-        })
-    }
+        None
+    };
+    Some(ContractResponseWithSourceCode {
+        chain_id: chain_id.map(chain_id_to_readable_string),
+        class_hash: class_hash_str,
+        is_class_verified: is_verified,
+        source_code,
+    })
 }

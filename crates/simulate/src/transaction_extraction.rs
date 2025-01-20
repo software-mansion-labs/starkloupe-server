@@ -7,7 +7,9 @@ use blockifier::transaction::objects::{
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
+use runtime::starknet::context::SerializableGasPrices;
 use starknet::core::types::Felt;
+use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::transaction::PaymasterData;
 use starknet_old::core::types as starknet_old_types;
@@ -191,11 +193,20 @@ pub async fn extract_block_txs_info(
     provider_client: &JsonRpcClient<HttpTransport>,
     simulation_args: &SimulationArgs,
     block_number: u64,
-) -> Result<(BlockTimestamp, usize), TransactionSimulationError> {
+) -> Result<(BlockInfo, usize, usize), TransactionSimulationError> {
     let block_txs = fetch_block_with_txs(provider_client, block_number).await?;
-    let block_timestamp = BlockTimestamp(block_txs.timestamp);
+    let block_info = BlockInfo {
+        block_number: BlockNumber(block_txs.block_number),
+        sequencer_address: field_element_to_felt(block_txs.sequencer_address)
+            .try_into()
+            .unwrap(),
+        block_timestamp: BlockTimestamp(block_txs.timestamp),
+        gas_prices: SerializableGasPrices::default().into(),
+        use_kzg_da: true,
+    };
+    let tx_number_in_block = block_txs.transactions.len();
     let transaction_index = extract_transaction_index(&block_txs, simulation_args);
-    Ok((block_timestamp, transaction_index))
+    Ok((block_info, transaction_index, tx_number_in_block))
 }
 
 pub fn extract_transaction_index(
