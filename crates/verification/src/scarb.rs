@@ -25,7 +25,7 @@ fn supported_old_cairo_versions() -> Vec<Version> {
 fn minimum_supported_new_cario_version() -> Version {
     Version::parse("2.8.2").unwrap()
 }
-const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1"];
+const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1", "v1.0.12"];
 
 const BUILD_PROFILE: &str = "release";
 

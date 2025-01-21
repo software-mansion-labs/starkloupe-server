@@ -20,6 +20,7 @@ pub async fn download_custom_scarb_binaries(s3_client: &Client) -> Result<(), Bo
         _ => return Err(Box::from(format!("Unsupported architecture: {}", architecture))),
     };
     download_binary(&s3_client, format!("sozo/{s3_folder}/sozo_v1.0.1").as_str()).await?;
+    download_binary(&s3_client, format!("sozo/{s3_folder}/sozo_v1.0.12").as_str()).await?;
     download_binary(&s3_client, format!("scarb/{s3_folder}/scarb_cairo_v_2_6_3").as_str()).await?;
     download_binary(&s3_client, format!("scarb/{s3_folder}/scarb_cairo_v_2_6_4").as_str()).await?;
     download_binary(&s3_client, format!("scarb/{s3_folder}/scarb_cairo_v_2_7_0").as_str()).await?;

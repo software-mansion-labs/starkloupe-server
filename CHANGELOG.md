@@ -1,4 +1,6 @@
 # Changelog
+### [0.0.21] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.21)
+- added support for `sozo v1.0.12`
 ### [0.0.20] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.20)
 
 - upgrading Alchemy API key
