@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::{anyhow, Result};
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
@@ -15,26 +16,26 @@ use walnut_shared::{
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct Data {
-    pub source: Source,
+    pub source: ESource,
     pub hash: String,
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
-pub enum Source {
+pub enum ESource {
     ChainId(String),
     RpcUrl(String),
 }
 
 #[derive(Debug)]
-pub enum SourceType {
+pub enum ESourceType {
     ChainId(ChainId),
     RpcUrl(Url),
 }
 
-pub fn sources_from_rpc_urls(urls: Option<&str>) -> Result<Vec<SourceType>> {
+pub fn sources_from_rpc_urls(urls: Option<&str>) -> Result<Vec<ESourceType>> {
     let mut sources = vec![
-        SourceType::ChainId(ChainId::Mainnet),
-        SourceType::ChainId(ChainId::Sepolia),
+        ESourceType::ChainId(ChainId::Mainnet),
+        ESourceType::ChainId(ChainId::Sepolia),
     ];
 
     if let Some(urls) = urls {
@@ -49,7 +50,7 @@ pub fn sources_from_rpc_urls(urls: Option<&str>) -> Result<Vec<SourceType>> {
                             trimmed_url
                         ));
                     }
-                    sources.push(SourceType::RpcUrl(parsed_url));
+                    sources.push(ESourceType::RpcUrl(parsed_url));
                 }
                 Err(err) => {
                     return Err(anyhow!("Invalid URL '{}': {}", trimmed_url, err));
@@ -60,51 +61,130 @@ pub fn sources_from_rpc_urls(urls: Option<&str>) -> Result<Vec<SourceType>> {
     Ok(sources)
 }
 
-pub async fn check_class(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>> {
-    let mut classes = Vec::new();
-    for source in sources {
-        match source {
-            SourceType::ChainId(chain_id) => {
-                let provider_client = create_rpc_client(chain_id);
-                match provider_client
-                    .get_class(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        felt_to_field_element(Felt::from_str(hash).ok()?),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        classes.push(Data {
-                            source: Source::ChainId(chain_id_to_readable_string(chain_id)),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-            SourceType::RpcUrl(url) => {
-                let client = create_rpc_client_from_url(url.clone());
-                match client
-                    .get_class(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        felt_to_field_element(Felt::from_str(hash).ok()?),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        classes.push(Data {
-                            source: Source::RpcUrl(url.to_string()),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
+pub async fn check_transaction(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data>> {
+    let hash_field = felt_to_field_element(Felt::from_str(hash).ok()?);
+
+    let mut futures: FuturesUnordered<_> = sources
+        .iter()
+        .map(|source| async move {
+            let provider = match source {
+                ESourceType::ChainId(chain_id) => create_rpc_client(chain_id),
+                ESourceType::RpcUrl(url) => create_rpc_client_from_url(url.clone()),
+            };
+
+            provider
+                .get_transaction_status(hash_field)
+                .await
+                .map(|_| Data {
+                    source: match source {
+                        ESourceType::ChainId(chain_id) => {
+                            ESource::ChainId(chain_id_to_readable_string(chain_id))
+                        }
+                        ESourceType::RpcUrl(url) => ESource::RpcUrl(url.to_string()),
+                    },
+                    hash: hash.to_string(),
+                })
+        })
+        .collect();
+
+    let mut transactions = vec![];
+
+    while let Some(result) = futures.next().await {
+        if let Ok(data) = result {
+            transactions.push(data);
+        }
+    }
+
+    if transactions.is_empty() {
+        None
+    } else {
+        Some(transactions)
+    }
+}
+
+pub async fn check_contract(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data>> {
+    let hash_field = felt_to_field_element(Felt::from_str(hash).ok()?);
+
+    let mut futures: FuturesUnordered<_> = sources
+        .iter()
+        .map(|source| async move {
+            let provider = match source {
+                ESourceType::ChainId(chain_id) => create_rpc_client(chain_id),
+                ESourceType::RpcUrl(url) => create_rpc_client_from_url(url.clone()),
+            };
+
+            provider
+                .get_class_hash_at(
+                    starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                    hash_field,
+                )
+                .await
+                .map(|_| Data {
+                    source: match source {
+                        ESourceType::ChainId(chain_id) => {
+                            ESource::ChainId(chain_id_to_readable_string(chain_id))
+                        }
+                        ESourceType::RpcUrl(url) => ESource::RpcUrl(url.to_string()),
+                    },
+                    hash: hash.to_string(),
+                })
+        })
+        .collect();
+
+    let mut contracts = vec![];
+
+    while let Some(result) = futures.next().await {
+        if let Ok(data) = result {
+            contracts.push(data);
+        }
+    }
+
+    if contracts.is_empty() {
+        None
+    } else {
+        Some(contracts)
+    }
+}
+
+pub async fn check_class(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data>> {
+    let hash_field = felt_to_field_element(Felt::from_str(hash).ok()?);
+
+    let mut futures: FuturesUnordered<_> = sources
+        .iter()
+        .map(|source| async move {
+            let provider = match source {
+                ESourceType::ChainId(chain_id) => create_rpc_client(chain_id),
+                ESourceType::RpcUrl(url) => create_rpc_client_from_url(url.clone()),
+            };
+            provider
+                .get_class(
+                    starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                    hash_field,
+                )
+                .await
+                .map(|_| Data {
+                    source: match source {
+                        ESourceType::ChainId(chain_id) => {
+                            ESource::ChainId(chain_id_to_readable_string(chain_id))
+                        }
+                        ESourceType::RpcUrl(url) => ESource::RpcUrl(url.to_string()),
+                    },
+                    hash: hash.to_string(),
+                })
+        })
+        .collect();
+
+    let mut classes = vec![];
+
+    while let Some(result) = futures.next().await {
+        if let Ok(data) = result {
+            classes.push(data);
         }
     }
 
     if classes.is_empty() {
-        return None;
+        None
+    } else {
+        Some(classes)
     }
-    Some(classes)
 }

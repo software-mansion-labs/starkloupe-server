@@ -1,4 +1,5 @@
 use blockifier::abi::abi_utils::selector_from_name;
+use blockifier::blockifier::block::BlockInfo;
 use blockifier::context::TransactionContext;
 use blockifier::execution::call_info::CallInfo;
 use blockifier::execution::call_info::Retdata;
@@ -30,6 +31,7 @@ use sqlx::Postgres;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
+use starknet_api::block;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::core::EntryPointSelector;
@@ -86,16 +88,23 @@ pub async fn simulate(
     } else {
         provider_client.block_number().await?
     };
-    let (block_timestamp, transaction_index) =
+    let (block_info, transaction_index, tx_number_in_block) =
         extract_block_txs_info(&provider_client, &args, block_number).await?;
 
+    let block_timestamp = block_info.block_timestamp;
     let mut cached_fork_state = CachedState::new(
-        ForkStateReader::new(args.rpc_url.clone(), block_number, transaction_index).map_err(
-            |e| TransactionSimulationError::StateError(StateError::StateReadError(e.to_string())),
-        )?,
+        ForkStateReader::new(
+            args.rpc_url.clone(),
+            block_number,
+            transaction_index,
+            tx_number_in_block,
+        )
+        .map_err(|e| {
+            TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
+        })?,
     );
 
-    let cheatnet_state = run_simulation(args, &mut cached_fork_state)?;
+    let cheatnet_state = run_simulation(block_info, args, &mut cached_fork_state)?;
 
     let ContractCallsMapBuilder {
         mut contract_calls_map,
@@ -208,10 +217,10 @@ fn filter_and_hide_unlinked_function_calls(
 }
 
 fn run_simulation(
+    block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
 ) -> Result<CheatnetState, TransactionSimulationError> {
-    let block_info = cached_fork_state.state.get_block_info()?;
     let transaction_context = extract_transaction_contex(
         &args.sender_address,
         &args.transaction_version,
@@ -351,15 +360,15 @@ pub async fn simulate_transaction_by_hash(
                         ))?,
                     };
 
-                    // Fetch block timestamp
-                    let block_timestamp =
-                        extract_block_timestamp(&provider_client, block_number).await?;
-
                     // Check for execution status
                     if let Some(starknet_old_types::ExecutionResult::Reverted { reason }) =
                         extract_execution_status_transaction_receipt(&transaction_receipt)
                     {
                         if reason.contains("RunResources") {
+                            // Fetch block timestamp
+                            let block_timestamp =
+                                extract_block_timestamp(&provider_client, block_number).await?;
+
                             let simulation_info = SimulationInfo {
                                 contract_calls_map: ContractCallsMap::new(),
                                 function_calls_map: FunctionCallsMap::new(),

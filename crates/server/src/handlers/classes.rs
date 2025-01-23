@@ -1,6 +1,6 @@
 use crate::{
     app_state::AppState,
-    services::search::{check_class, sources_from_rpc_urls, Source},
+    services::search::{check_class, sources_from_rpc_urls, ESource},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -62,7 +62,7 @@ pub async fn get_class_handler_with_chain_id(
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponse {
     pub verified: bool,
-    pub declared_sources: Vec<Source>,
+    pub declared_sources: Vec<ESource>,
     pub source_code: Option<HashMap<String, String>>,
 }
 

@@ -1,4 +1,3 @@
-use anyhow::Context;
 use blockifier::blockifier::block::BlockInfo;
 use blockifier::execution::contract_class::{
     ContractClass as ContractClassBlockifier, ContractClassV0, ContractClassV1,
@@ -176,7 +175,12 @@ pub struct ForkStateReader {
 }
 
 impl ForkStateReader {
-    pub fn new(url: Url, block_number: u64, transaction_index: usize) -> anyhow::Result<Self> {
+    pub fn new(
+        url: Url,
+        block_number: u64,
+        transaction_index: usize,
+        tx_number_in_block: usize,
+    ) -> anyhow::Result<Self> {
         let block_id = BlockId::Number(block_number);
         let adjusted_block_number = block_number - 1;
 
@@ -186,10 +190,6 @@ impl ForkStateReader {
             adjusted_block_number,
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
         };
-
-        let tx_number_in_block = fork_state_reader
-            .get_block_transaction_count(block_id)
-            .context("Unable to get block transactions count from node provider")?;
 
         if tx_number_in_block > 1 {
             fork_state_reader
@@ -210,22 +210,6 @@ impl ForkStateReader {
 
     fn adjusted_block_id(&self) -> BlockId {
         BlockId::Number(self.adjusted_block_number)
-    }
-
-    pub fn get_block_transaction_count(&self, block_id: BlockId) -> Result<u64, StateError> {
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(
-                self.client
-                    .get_block_transaction_count(block_id_to_old_block_id(block_id)),
-            )
-        })
-        .map_err(|err| {
-            StateError::StateReadError(format!(
-                "Unable to get block transactions count from fork ({err})"
-            ))
-        })?;
-
-        Ok(result)
     }
 
     pub fn prepare_storage_view(
