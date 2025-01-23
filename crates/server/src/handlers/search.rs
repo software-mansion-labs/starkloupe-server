@@ -1,3 +1,6 @@
+use crate::services::search::{
+    check_class, check_contract, check_transaction, sources_from_rpc_urls, Data, ESourceType,
+};
 use axum::{
     extract::{Path, Query},
     http::StatusCode,
@@ -5,17 +8,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use starknet::core::types::Felt;
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::Provider;
-use std::str::FromStr;
 use utoipa::ToSchema;
-use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, felt_str_to_fixed,
-    felt_to_field_element,
-};
-
-use crate::services::search::{check_class, sources_from_rpc_urls, Data, Source, SourceType};
+use walnut_shared::felt_str_to_fixed;
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct SearchResponse {
@@ -112,7 +106,7 @@ pub async fn get_search_handler(
     }
 }
 
-async fn check_hash(hash: &str, sources: Vec<SourceType>) -> ESearchResult {
+async fn check_hash(hash: &str, sources: Vec<ESourceType>) -> ESearchResult {
     if let Some(transactions) = check_transaction(hash, &sources).await {
         return ESearchResult::Transactions(transactions);
     }
@@ -126,96 +120,4 @@ async fn check_hash(hash: &str, sources: Vec<SourceType>) -> ESearchResult {
     }
 
     ESearchResult::None
-}
-
-async fn check_transaction(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>> {
-    let mut transactions = Vec::new();
-    for source in sources {
-        match source {
-            SourceType::ChainId(chain_id) => {
-                let provider_client = create_rpc_client(chain_id);
-                match provider_client
-                    .get_transaction_status(felt_to_field_element(Felt::from_str(hash).ok()?))
-                    .await
-                {
-                    Ok(_) => {
-                        transactions.push(Data {
-                            source: Source::ChainId(chain_id_to_readable_string(chain_id)),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-            SourceType::RpcUrl(url) => {
-                let client = create_rpc_client_from_url(url.clone());
-                match client
-                    .get_transaction_status(felt_to_field_element(Felt::from_str(hash).ok()?))
-                    .await
-                {
-                    Ok(_) => {
-                        transactions.push(Data {
-                            source: Source::RpcUrl(url.to_string()),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
-    }
-
-    if transactions.is_empty() {
-        return None;
-    }
-    Some(transactions)
-}
-
-async fn check_contract(hash: &str, sources: &[SourceType]) -> Option<Vec<Data>> {
-    let mut contracts = Vec::new();
-    for source in sources {
-        match source {
-            SourceType::ChainId(chain_id) => {
-                let provider_client = create_rpc_client(chain_id);
-                match provider_client
-                    .get_class_hash_at(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        felt_to_field_element(Felt::from_str(hash).ok()?),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        contracts.push(Data {
-                            source: Source::ChainId(chain_id_to_readable_string(chain_id)),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-            SourceType::RpcUrl(url) => {
-                let client = create_rpc_client_from_url(url.clone());
-                match client
-                    .get_class_hash_at(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        felt_to_field_element(Felt::from_str(hash).ok()?),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        contracts.push(Data {
-                            source: Source::RpcUrl(url.to_string()),
-                            hash: hash.to_string(),
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
-    }
-
-    if contracts.is_empty() {
-        return None;
-    }
-    Some(contracts)
 }
