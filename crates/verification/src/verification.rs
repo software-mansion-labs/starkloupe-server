@@ -18,8 +18,7 @@ use walnut_shared::{felt_to_field_element, field_element_to_felt, tuple_to_versi
 
 use crate::manifest::Manifest;
 use crate::scarb::{
-    build_with_scarb, compile_with_scarb,
-    is_cairo_version_supported,
+    build_with_scarb, compile_with_scarb, is_cairo_version_supported,
     is_new_cairo_version_supported,
 };
 use crate::utils::create_files_from_map;
@@ -350,10 +349,19 @@ pub async fn initiate_verification(
 
 // Failed verifications data for further investigation.
 // There is no auto removal from this location.
-pub async fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf, random_string: &String, e: &anyhow::Error) -> Result<()> {
+pub async fn move_failed_verification_to_failed_tmp(
+    tmp_dir: &PathBuf,
+    random_string: &String,
+    e: &anyhow::Error,
+) -> Result<()> {
     let mut failed_tmp_dir = PathBuf::from("tmp/failed-verification");
     failed_tmp_dir.push(&random_string);
-    error!("Failed to verify classes - moving {} to {} for further investigation. Error: {:?}", &tmp_dir.display(), &failed_tmp_dir.display(), e);
+    error!(
+        "Failed to verify classes - moving {} to {} for further investigation. Error: {:?}",
+        &tmp_dir.display(),
+        &failed_tmp_dir.display(),
+        e
+    );
     if !failed_tmp_dir.exists() {
         fs::create_dir_all(&failed_tmp_dir)?;
     }
@@ -380,7 +388,7 @@ pub async fn verify_by_class_hashes(
     match &class_verification_data {
         Ok(class_verification_data) => {
             fs::remove_dir_all(&tmp_dir)?;
-        },
+        }
         Err(e) => {
             move_failed_verification_to_failed_tmp(&tmp_dir, &random_string, e).await?;
         }
