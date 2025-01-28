@@ -1,13 +1,14 @@
 pub mod artifacts;
 pub mod db;
+pub mod helpers;
 pub mod manifest;
 pub mod minimal_verification;
 pub mod s3;
 pub mod scarb;
+pub mod scarb_download_scheduler;
 pub mod sozo;
 pub mod utils;
 pub mod verification;
-pub mod scarb_download_scheduler;
 
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
@@ -40,7 +41,7 @@ type ClassVerificationData = HashMap<
     )>,
 >;
 
-#[derive(Debug, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Type, PartialEq, Eq, Clone)]
 #[sqlx(type_name = "verification_status", rename_all = "lowercase")] // Assuming PostgreSQL
 pub enum EVerificationStatus {
     Pending,
@@ -54,6 +55,16 @@ impl fmt::Display for EVerificationStatus {
             EVerificationStatus::Pending => write!(f, "pending"),
             EVerificationStatus::Success => write!(f, "success"),
             EVerificationStatus::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl EVerificationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EVerificationStatus::Pending => "pending",
+            EVerificationStatus::Success => "success",
+            EVerificationStatus::Failed => "failed",
         }
     }
 }
@@ -82,6 +93,7 @@ pub struct VerificationStatusSerializable {
     pub project_id: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
+    pub profiles: Option<Vec<String>>,
 }
 
 impl VerificationStatusSerializable {
@@ -104,6 +116,7 @@ impl From<VerificationStatusRow> for VerificationStatusSerializable {
             project_id: row.project_id,
             created_at: row.created_at.to_string(),
             updated_at: row.updated_at.to_string(),
+            profiles: None,
         }
     }
 }

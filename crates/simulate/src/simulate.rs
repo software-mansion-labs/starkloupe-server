@@ -116,7 +116,8 @@ pub async fn simulate(
 
     let class_hashes = contract_calls_map.collect_all_class_hashes();
 
-    let classes_debugger_data = fetch_classes_debugger_data(db_pool, s3_client, class_hashes).await;
+    let classes_debugger_data =
+        fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
 
     let mut function_calls_map = create_function_calls_map(
         &mut contract_calls_map,

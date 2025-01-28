@@ -1,10 +1,13 @@
+use crate::db::fetch_verified_class;
+use crate::SierraToCairoDebugInfo;
+use crate::{VerifiedClassData, VerifiedClassRow};
 use anyhow::Result;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_smithy_types::body::SdkBody;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
 use std::collections::{HashMap, HashSet};
 use tracing::error;
-
-use crate::db::fetch_verified_class;
-use crate::{VerifiedClassData, VerifiedClassRow};
 
 pub fn key_for_class_hash(class_hash: &str) -> String {
     format!("class-{}.json", class_hash)
@@ -86,4 +89,29 @@ pub async fn fetch_class_source_code(
     };
 
     Ok(verified_class_data.source_code)
+}
+
+pub async fn upload_class_to_s3(
+    s3_client: &aws_sdk_s3::Client,
+    class_hash: &str,
+    contract_class: &ContractClass,
+    cairo_debug_info: &Option<SierraToCairoDebugInfo>,
+    source_code: &HashMap<String, String>,
+) -> Result<()> {
+    let verified_class_data = VerifiedClassData {
+        contract_class: contract_class.clone(),
+        cairo_debug_info: cairo_debug_info.clone(),
+        source_code: source_code.clone(),
+    };
+
+    let json_data = serde_json::to_string(&verified_class_data)?;
+    s3_client
+        .put_object()
+        .bucket("walnutserver-east-1-classes-verification")
+        .key(format!("class-{}.json", class_hash))
+        .body(ByteStream::new(SdkBody::from(json_data)))
+        .send()
+        .await?;
+
+    Ok(())
 }

@@ -2,7 +2,7 @@ use crate::app_state::AppState;
 use anyhow::Result;
 use axum::{
     extract::{self, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
@@ -12,8 +12,10 @@ use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
-use verification::minimal_verification::initiate_minimal_verification;
 use verification::verification::{verify_by_class_hash, verify_by_contract_address};
+use verification::{
+    db::fetch_class_hash_profiles_by_id, minimal_verification::initiate_minimal_verification,
+};
 use verification::{
     db::fetch_verification_statuses_by_id, manifest::Manifest, verification::initiate_verification,
     VerificationRequestRow, VerificationStatusSerializable,
@@ -65,17 +67,45 @@ pub async fn get_verification_status_handler(
     };
 
     match fetch_verification_statuses_by_id(&state.db_pool, verification_status_uuid).await {
-        Ok((verification_request, verification_status_rows)) => (
-            StatusCode::OK,
-            Json(VerificationStatusResponse {
-                verification_request,
-                verification_statuses: VerificationStatusSerializable::from_rows(
-                    verification_status_rows,
-                ),
-                error_message: None,
-            }),
-        )
-            .into_response(),
+        Ok((verification_request, verification_status_rows)) => {
+            let class_hash_profiles =
+                fetch_class_hash_profiles_by_id(&state.db_pool, verification_status_uuid)
+                    .await
+                    .unwrap_or_default();
+
+            // Create the verification statuses with the profiles
+            let verification_statuses = verification_status_rows
+                .iter()
+                .map(|row| {
+                    let profiles = class_hash_profiles
+                        .get(row.class_hash.as_ref().unwrap_or(&"".to_string()))
+                        .cloned();
+
+                    VerificationStatusSerializable {
+                        primary_id: row.primary_id,
+                        id: row.id.to_string(),
+                        network: row.network.clone(),
+                        class_hash: row.class_hash.clone(),
+                        status: row.status.clone(),
+                        message: row.message.clone(),
+                        project_id: row.project_id,
+                        created_at: row.created_at.to_string(),
+                        updated_at: row.updated_at.to_string(),
+                        profiles,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            (
+                StatusCode::OK,
+                Json(VerificationStatusResponse {
+                    verification_request,
+                    verification_statuses,
+                    error_message: None,
+                }),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(VerificationStatusResponse {
@@ -153,7 +183,6 @@ pub async fn verify_handler(
             payload.contract_name,
             payload.source_code,
             Some(chain_id_readable_string),
-            None,
         )
         .await
         {
@@ -184,7 +213,6 @@ pub async fn verify_handler(
             payload.contract_name,
             payload.source_code,
             Some(chain_id_readable_string),
-            None,
         )
         .await
         {
@@ -308,7 +336,6 @@ pub async fn verify_handler_with_rpc(
             class_hashes,
             class_names,
             payload.source_code,
-            None,
             None,
         )
         .await
