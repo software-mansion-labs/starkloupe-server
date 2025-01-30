@@ -69,8 +69,8 @@ pub async fn initiate_minimal_verification(
                         verification_request_id,
                         class_hash,
                         EVerificationStatus::Success.as_str(),
-                        &None,
-                        &None,
+                        None,
+                        None,
                     )
                     .await
                     {
@@ -84,8 +84,8 @@ pub async fn initiate_minimal_verification(
                         verification_request_id,
                         class_hash,
                         EVerificationStatus::Success.as_str(),
-                        &Some("This class is already verified.".to_string()),
-                        &None,
+                        Some("This class is already verified."),
+                        None,
                     )
                     .await
                     {
@@ -124,7 +124,8 @@ async fn verify(
 
     let mut verified_contract_classes: HashSet<String> = HashSet::new();
     let mut classes_to_verify_map: HashMap<String, ContractClass> = HashMap::new();
-
+    // Broadcast channel for error signalization
+    let (tx, mut rx) = tokio::sync::broadcast::channel(1);
     let mut futures: FuturesUnordered<_> = manifest
         .profiles
         .iter()
@@ -133,38 +134,52 @@ async fn verify(
             let db_pool = db_pool.clone();
             let tmp_dir = tmp_dir.clone();
             let manifest = manifest.clone();
+            let tx = tx.clone();
+            // Each thread has its own copy of receiver
+            let mut rx = rx.resubscribe();
 
             tokio::spawn(async move {
-                // Build with Scarb for the given profile
-                match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile) {
-                    Ok(classes) => {
-                        let class_hashes: Vec<String> = classes
-                            .iter()
-                            .map(|(class_hash, _)| class_hash.clone())
-                            .collect();
+                tokio::select! {
+                    //First check if signal for termination is received
+                    biased;
+                    _ = rx.recv() => {
+                        error!("Skipping profile build due to earlier failure." );
+                        Err(anyhow::anyhow!("Build project failed."))
+                    }
+                    result = async {
+                        match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile) {
+                            Ok(classes) => {
+                                let class_hashes: Vec<String> = classes
+                                    .iter()
+                                    .map(|(class_hash, _)| class_hash.clone())
+                                    .collect();
 
-                        let verified_hashes: Vec<String> =
-                            fetch_verified_classes(&db_pool, &class_hashes)
-                                .await?
-                                .into_iter()
-                                .map(|row| row.hash)
-                                .collect();
-                        Ok::<_, anyhow::Error>((verified_hashes, classes, profile))
-                    }
-                    Err(e) => {
-                        move_failed_verification_to_failed_tmp(&tmp_dir, &e)?;
-                        Err(e)
-                    }
+                                let verified_hashes: Vec<String> =
+                                    fetch_verified_classes(&db_pool, &class_hashes)
+                                        .await?
+                                        .into_iter()
+                                        .map(|row| row.hash)
+                                        .collect();
+                                Ok::<_, anyhow::Error>((verified_hashes, classes, profile))
+                            }
+                            Err(e) => {
+                                // Send signal to other thread to terminate
+                                let _ = tx.send(());
+                                Err(e)
+                            }
+                        }
+                    } => result
                 }
             })
         })
         .collect();
 
+    let mut encountered_error = false;
+
     while let Some(result) = futures.next().await {
         match result {
             Ok(Ok((verified_hashes, classes, profile))) => {
                 verified_contract_classes.extend(verified_hashes);
-
                 for (class_hash, contract_class) in classes {
                     if let Err(err) =
                         insert_class_hash_profiles(db_pool, &class_hash, &profile, verification_id)
@@ -172,9 +187,7 @@ async fn verify(
                     {
                         error!("Failed to insert class hash with profile: {:?}", err);
                     }
-                    if verified_contract_classes.contains(&class_hash) {
-                        continue;
-                    } else {
+                    if !verified_contract_classes.contains(&class_hash) {
                         classes_to_verify_map
                             .entry(class_hash)
                             .or_insert(contract_class);
@@ -183,15 +196,30 @@ async fn verify(
             }
             Ok(Err(e)) => {
                 error!("Error processing profile: {:?}", e);
+                encountered_error = true;
             }
-            Err(e) => error!("Tokio task failed: {:?}", e),
+            Err(e) => {
+                error!("Tokio task failed: {:?}", e);
+                encountered_error = true;
+            }
         }
+    }
+
+    if encountered_error {
+        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
+            let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
+            error!("{:?}", err);
+            return Err(anyhow::anyhow!(err));
+        }
+        return Err(anyhow::anyhow!(
+            "Verification failed due to build project errors."
+        ));
     }
 
     // Database and S3 operations are now performed after all class_hash values are collected.
     for (class_hash, contract_class) in &classes_to_verify_map {
         upload_class_to_s3(s3_client, class_hash, contract_class, &None, &source_code).await?;
-        insert_contract_class(db_pool, class_hash, true, true, true, &None).await?;
+        insert_contract_class(db_pool, class_hash, true, true, true, None).await?;
     }
     fs::remove_dir_all(&tmp_dir)?;
     Ok((

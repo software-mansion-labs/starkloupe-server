@@ -122,8 +122,8 @@ pub async fn initiate_verification(
             verification_status_id,
             class_hash,
             status.as_str(),
-            message,
-            &chain_id,
+            message.as_deref(),
+            chain_id.as_deref(),
         )
         .await
         {
@@ -292,7 +292,7 @@ pub async fn verify_by_class_hashes(
             fs::remove_dir_all(&tmp_dir)?;
         }
         Err(e) => {
-            move_failed_verification_to_failed_tmp(&tmp_dir, e)?;
+            error!("{:?}", e);
         }
     }
 
@@ -320,7 +320,7 @@ pub async fn verify_by_class_hashes(
                 true,
                 is_cairo_debug_info,
                 true,
-                &chain_id,
+                chain_id.as_deref(),
             )
             .await?;
 

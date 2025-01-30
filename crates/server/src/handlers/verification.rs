@@ -169,7 +169,7 @@ pub async fn verify_handler(
         let class_hash_fixed = match felt_str_to_fixed(&class_hash) {
             Ok(fixed) => fixed,
             Err(e) => {
-                let error_message = format!("Failed to convert class hash: {}", e.to_string());
+                let error_message = format!("Failed to convert class hash: {}", e);
                 error!(error_message);
                 return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
             }

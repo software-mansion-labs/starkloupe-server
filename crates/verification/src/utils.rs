@@ -1,4 +1,5 @@
 use anyhow::Result;
+use fs_extra::dir::{copy, CopyOptions};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -49,18 +50,24 @@ pub fn create_temp_directory() -> Result<PathBuf> {
 
 // Failed verifications data for further investigation.
 // There is no auto removal from this location.
-pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf, e: &anyhow::Error) -> Result<()> {
-    let failed_tmp_dir = PathBuf::from("tmp/failed-verification").join(Uuid::new_v4().to_string());
+pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
+    let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
 
     error!(
-        "Failed to verify classes - moving {} to {} for further investigation. Error: {:#}",
+        "Failed to verify classes - moving {} to {} for further investigation.",
         &tmp_dir.display(),
         &failed_tmp_dir.display(),
-        e
     );
     if !failed_tmp_dir.exists() {
         fs::create_dir_all(&failed_tmp_dir)?;
     }
-    fs::rename(tmp_dir, &failed_tmp_dir)?;
+
+    let mut options = CopyOptions::new();
+    options.copy_inside = true;
+
+    copy(tmp_dir, failed_tmp_dir, &options)?;
+
+    fs::remove_dir_all(tmp_dir)?;
+
     Ok(())
 }

@@ -47,11 +47,9 @@ pub async fn insert_contract_class(
     is_sierra_debug_info: bool,
     is_cairo_debug_info: bool,
     is_source_code: bool,
-    network: &Option<String>,
+    network: Option<&str>,
 ) -> Result<()> {
-    match network {
-        Some(network) => {
-            sqlx::query!(
+    sqlx::query!(
                 r#"
                 INSERT INTO contract_classes (hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code, chain_id)
                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (hash) DO NOTHING
@@ -64,22 +62,6 @@ pub async fn insert_contract_class(
             )
             .execute(db_pool)
             .await?;
-        }
-        None => {
-            sqlx::query!(
-                r#"
-                INSERT INTO contract_classes (hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code)
-                VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING
-                "#,
-                class_hash,
-                is_sierra_debug_info,
-                is_cairo_debug_info,
-                is_source_code,
-            )
-            .execute(db_pool)
-            .await?;
-        }
-    }
 
     Ok(())
 }
@@ -229,67 +211,22 @@ pub async fn insert_verification_status(
     verification_id: Uuid,
     class_hash: &str,
     status: &str,
-    message: &Option<String>,
-    network: &Option<String>,
+    message: Option<&str>,
+    network: Option<&str>,
 ) -> Result<()> {
-    match (message, network) {
-        (Some(message), Some(network)) => {
-            sqlx::query!(
-                r#"
+    sqlx::query!(
+        r#"
                 INSERT INTO verification_status (id, class_hash, status, message, network)
                 VALUES ($1, $2, $3, $4, $5)
                 "#,
-                verification_id,
-                class_hash,
-                status,
-                message,
-                network
-            )
-            .execute(db_pool)
-            .await?;
-        }
-        (Some(message), None) => {
-            sqlx::query!(
-                r#"
-                INSERT INTO verification_status (id, class_hash, status, message)
-                VALUES ($1, $2, $3, $4)
-                "#,
-                verification_id,
-                class_hash,
-                status,
-                message
-            )
-            .execute(db_pool)
-            .await?;
-        }
-        (None, Some(network)) => {
-            sqlx::query!(
-                r#"
-                INSERT INTO verification_status (id, class_hash, status, network)
-                VALUES ($1, $2, $3, $4)
-                "#,
-                verification_id,
-                class_hash,
-                status,
-                network
-            )
-            .execute(db_pool)
-            .await?;
-        }
-        (None, None) => {
-            sqlx::query!(
-                r#"
-                INSERT INTO verification_status (id, class_hash, status)
-                VALUES ($1, $2, $3)
-                "#,
-                verification_id,
-                class_hash,
-                status
-            )
-            .execute(db_pool)
-            .await?;
-        }
-    }
+        verification_id,
+        class_hash,
+        status,
+        message,
+        network
+    )
+    .execute(db_pool)
+    .await?;
 
     Ok(())
 }
