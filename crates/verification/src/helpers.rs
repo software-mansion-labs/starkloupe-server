@@ -20,7 +20,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
 use tokio::sync::broadcast::Sender;
-use tokio::task::JoinHandle;
 use tracing::error;
 use uuid::Uuid;
 use walnut_shared::felt_to_field_element;
