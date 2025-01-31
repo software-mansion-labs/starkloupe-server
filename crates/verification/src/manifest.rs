@@ -1,16 +1,17 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::error;
 use walnut_shared::parse_version_string_to_tuple;
 
-use crate::scarb::{is_cairo_version_supported};
+use crate::scarb::is_cairo_version_supported;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Manifest {
     pub package_name: String,
     pub dojo_version: Option<String>,
     pub dojo_namespace_name: Option<String>,
     pub cairo_version: (u32, u32, u32),
+    pub profiles: HashSet<String>,
 }
 
 impl Manifest {
@@ -34,23 +35,43 @@ impl Manifest {
             }
         };
 
+        fn insert_cairo_debug_info(cairo_table: &mut toml::map::Map<String, toml::Value>) {
+            cairo_table.insert("sierra-replace-ids".to_string(), toml::Value::Boolean(true));
+            cairo_table.insert(
+                "unstable-add-statements-code-locations-debug-info".to_string(),
+                toml::Value::Boolean(true),
+            );
+        }
+
+        let mut profiles: HashSet<String> =
+            HashSet::from(["release".to_string(), "dev".to_string()]);
+        if let Some(profile_table) = scarb_config_toml
+            .get_mut("profile")
+            .and_then(toml::Value::as_table_mut)
+        {
+            for (profile_name, profile_value) in profile_table.iter_mut() {
+                profiles.insert(profile_name.to_string());
+                if let Some(cairo_table) = profile_value
+                    .as_table_mut()
+                    .and_then(|table| table.get_mut("cairo").and_then(toml::Value::as_table_mut))
+                {
+                    insert_cairo_debug_info(cairo_table);
+                } else if let Some(profile_table) = profile_value.as_table_mut() {
+                    let mut cairo_table = toml::map::Map::new();
+                    insert_cairo_debug_info(&mut cairo_table);
+                    profile_table.insert("cairo".to_string(), toml::Value::Table(cairo_table));
+                }
+            }
+        }
         // Add the sierra-replace-ids and unstable-add-statements-code-locations-debug-info under [cairo]
         if let Some(cairo_table) = scarb_config_toml
             .get_mut("cairo")
             .and_then(toml::Value::as_table_mut)
         {
-            cairo_table.insert("sierra-replace-ids".to_string(), toml::Value::Boolean(true));
-            cairo_table.insert(
-                "unstable-add-statements-code-locations-debug-info".to_string(),
-                toml::Value::Boolean(true),
-            );
+            insert_cairo_debug_info(cairo_table);
         } else {
             let mut cairo_table = toml::map::Map::new();
-            cairo_table.insert("sierra-replace-ids".to_string(), toml::Value::Boolean(true));
-            cairo_table.insert(
-                "unstable-add-statements-code-locations-debug-info".to_string(),
-                toml::Value::Boolean(true),
-            );
+            insert_cairo_debug_info(&mut cairo_table);
             scarb_config_toml
                 .as_table_mut()
                 .unwrap()
@@ -121,6 +142,7 @@ impl Manifest {
             .and_then(toml::Value::as_str)
             .map(|s| s.to_string());
 
+        // TODO Check if we need this, inside Scarb.toml we have the name of dojo_project
         let dojo_namespace_name = match source_code.get("dojo_dev.toml") {
             Some(contents) => {
                 let dojo_config_toml = match contents.parse::<toml::Value>() {
@@ -145,6 +167,7 @@ impl Manifest {
             dojo_version: dojo_tag,
             dojo_namespace_name,
             cairo_version,
+            profiles,
         })
     }
 }

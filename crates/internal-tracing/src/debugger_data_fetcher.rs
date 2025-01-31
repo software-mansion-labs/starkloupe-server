@@ -33,14 +33,18 @@ async fn fetch_and_parse_file(
 pub async fn fetch_classes_debugger_data(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    classes: Vec<String>,
+    classes: &[String],
 ) -> HashMap<String, ClassDebuggerDataWithContractClass> {
     let mut classes_debugger_data: HashMap<String, ClassDebuggerDataWithContractClass> =
         HashMap::new();
 
-    let verified_classes = fetch_verified_classes(db_pool, classes.clone())
-        .await
-        .unwrap();
+    let verified_classes = match fetch_verified_classes(db_pool, classes).await {
+        Ok(vc) => vc,
+        Err(e) => {
+            error!("Failed to fetch verified classes: {:?}", e);
+            Vec::new()
+        }
+    };
 
     let fetches = verified_classes.iter().map(|verified_class| {
         fetch_and_parse_file(

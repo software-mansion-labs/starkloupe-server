@@ -1,8 +1,9 @@
+use crate::utils::{deserialize_json, read_file};
+
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
 use starknet::core::types::contract::SierraClass;
-use std::fs;
 use std::path::PathBuf;
 use tracing::error;
 
@@ -27,65 +28,98 @@ struct ContractArtifact {
     casm: Option<String>,
 }
 
-pub fn read_scarb_artifacts(
+pub fn read_new_cairo_version_artifacts(
     tmp_dir: &PathBuf,
     package_name: &str,
     build_profile: &str,
 ) -> Result<Vec<(String, ContractClass)>> {
+    read_starknet_artifacts(tmp_dir, package_name, build_profile, false)?
+        .into_iter()
+        .map(|(class_hash, contract_class, _)| Ok((class_hash, contract_class)))
+        .collect()
+}
+
+pub fn read_old_cairo_version_artifacts(
+    tmp_dir: &PathBuf,
+    package_name: &str,
+    build_profile: &str,
+) -> Result<Vec<(String, ContractClass, PathBuf)>> {
+    read_starknet_artifacts(tmp_dir, package_name, build_profile, true)?
+        .into_iter()
+        .map(|(class_hash, contract_class, debug_info_path)| {
+            let debug_info_path =
+                debug_info_path.ok_or_else(|| anyhow::anyhow!("Debug info path missing"))?;
+            Ok((class_hash, contract_class, debug_info_path))
+        })
+        .collect()
+}
+
+pub fn read_starknet_artifacts(
+    tmp_dir: &PathBuf,
+    package_name: &str,
+    build_profile: &str,
+    include_debug_info: bool,
+) -> Result<Vec<(String, ContractClass, Option<PathBuf>)>> {
     let artifacts_file_path = tmp_dir
         .join("target")
         .join(build_profile)
         .join(format!("{}.starknet_artifacts.json", package_name));
 
-    let artifacts_contents = fs::read_to_string(&artifacts_file_path)?;
-    let starknet_artifacts: StarknetArtifacts = serde_json::from_str(&artifacts_contents)?;
+    let artifacts_contents = read_file(&artifacts_file_path)?;
+    let starknet_artifacts: StarknetArtifacts =
+        deserialize_json(&artifacts_contents, "StarknetArtifacts")?;
 
-    let mut classes: Vec<(String, ContractClass)> = Vec::new();
-
+    let mut classes = Vec::new();
     for contract_artifact in &starknet_artifacts.contracts {
-        if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
-            let contract_sierra_path = tmp_dir.join("target").join(build_profile).join(sierra_path);
+        match process_contract_artifact(
+            tmp_dir,
+            build_profile,
+            contract_artifact,
+            include_debug_info,
+        ) {
+            Ok((class_hash, contract_class, debug_info_path)) => {
+                classes.push((class_hash, contract_class, debug_info_path));
+            }
+            Err(e) => {
+                error!("Failed to process contract artifact: {:?}", e);
+                return Err(e);
+            }
+        }
+    }
 
-            let contract_class_file_contents = match fs::read_to_string(&contract_sierra_path) {
-                Ok(contents) => contents,
-                Err(e) => {
-                    let error_message = format!("Failed to read contract class file: {:?}", e);
-                    error!("{}", error_message);
-                    return Err(anyhow::anyhow!(error_message));
-                }
-            };
+    Ok(classes)
+}
 
-            let contract_class_v1: SierraClass =
-                match serde_json::from_str(&contract_class_file_contents) {
-                    Ok(class) => class,
-                    Err(e) => {
-                        let error_message =
-                            format!("Failed to deserialize contract class: {:?}", e);
-                        error!("{}", error_message);
-                        return Err(anyhow::anyhow!(error_message));
-                    }
-                };
+fn process_contract_artifact(
+    tmp_dir: &PathBuf,
+    build_profile: &str,
+    contract_artifact: &ContractArtifacts,
+    include_debug_info_file: bool,
+) -> Result<(String, ContractClass, Option<PathBuf>)> {
+    if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
+        let contract_sierra_path = tmp_dir.join("target").join(build_profile).join(sierra_path);
+        let contract_class_file_contents = read_file(&contract_sierra_path)?;
 
-            let class_hash = match contract_class_v1.class_hash() {
-                Ok(hash) => hash.to_fixed_hex_string(),
-                Err(e) => {
-                    let error_message = format!("Failed to compute class hash: {:?}", e);
-                    error!(error_message);
-                    return Err(anyhow::anyhow!(error_message));
-                }
-            };
+        let contract_class_v1: SierraClass =
+            deserialize_json(&contract_class_file_contents, "SierraClass")?;
+        let class_hash = contract_class_v1
+            .class_hash()
+            .map(|hash| hash.to_fixed_hex_string())
+            .map_err(|e| {
+                let error_message = format!("Failed to compute class hash: {:?}", e);
+                error!("{}", error_message);
+                anyhow::anyhow!(error_message)
+            })?;
 
-            let contract_class_v2: ContractClass =
-                match serde_json::from_str(&contract_class_file_contents) {
-                    Ok(class) => class,
-                    Err(e) => {
-                        let error_message =
-                            format!("Failed to deserialize contract class: {:?}", e);
-                        error!("{}", error_message);
-                        return Err(anyhow::anyhow!(error_message));
-                    }
-                };
+        let contract_class_v2: ContractClass =
+            deserialize_json(&contract_class_file_contents, "ContractClass")?;
 
+        let debug_info_path = if include_debug_info_file {
+            Some(tmp_dir.join("target").join(build_profile).join(format!(
+                "{}_{}.contract_class_debug.json",
+                contract_artifact.package_name, contract_artifact.contract_name
+            )))
+        } else {
             match &contract_class_v2.sierra_program_debug_info {
                 Some(debug_info) => {
                     if let Some(coverage_info) = debug_info
@@ -113,10 +147,11 @@ pub fn read_scarb_artifacts(
                     return Err(anyhow::anyhow!(error_message));
                 }
             };
+            None
+        };
 
-            classes.push((class_hash, contract_class_v2));
-        }
+        Ok((class_hash, contract_class_v2, debug_info_path))
+    } else {
+        Err(anyhow::anyhow!("Missing Sierra path in contract artifact"))
     }
-
-    Ok(classes)
 }
