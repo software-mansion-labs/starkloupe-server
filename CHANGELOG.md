@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.24] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.24)
+
+- verification build for all profiles
+
 ### [0.0.23] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.23)
 
 - api key removed
