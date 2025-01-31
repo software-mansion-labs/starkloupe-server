@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE verification_status\n                SET status = $1\n                WHERE id = $2 AND class_hash = ANY($3)\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0205e0f60b552d711e5e793271b011e867a380814c871c64597ec0ec48f996b9"
+}

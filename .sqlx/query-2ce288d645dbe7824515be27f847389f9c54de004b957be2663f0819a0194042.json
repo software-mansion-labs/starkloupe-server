@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM simulations WHERE project_id = 2 AND status = 'failure' AND created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at DESC;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "project_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "chain_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "block_at",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "transaction_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "nonce",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "max_fee",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "cairo_version",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "wallet_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "calldata",
+        "type_info": "VarcharArray"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 12,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "error_message",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 14,
+        "name": "error_contract_address",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "2ce288d645dbe7824515be27f847389f9c54de004b957be2663f0819a0194042"
+}

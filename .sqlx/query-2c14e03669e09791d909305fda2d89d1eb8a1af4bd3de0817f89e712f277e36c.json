@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO contract_classes (hash, is_sierra_debug_info, is_cairo_debug_info, is_source_code, chain_id)\n                VALUES ($1, $2, $3, $4, $5) ON CONFLICT (hash) DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2c14e03669e09791d909305fda2d89d1eb8a1af4bd3de0817f89e712f277e36c"
+}

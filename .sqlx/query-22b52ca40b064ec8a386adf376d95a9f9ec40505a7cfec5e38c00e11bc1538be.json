@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT class_hash, ARRAY_AGG(profile) AS profiles\n        FROM class_hash_profiles\n        WHERE verification_id = $1\n        GROUP BY class_hash\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "class_hash",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "profiles",
+        "type_info": "VarcharArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "22b52ca40b064ec8a386adf376d95a9f9ec40505a7cfec5e38c00e11bc1538be"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                UPDATE verification_requests\n                SET status = $1, updated_at = NOW(), message = $2\n                WHERE id = $3\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09441e75d7ba7589d277d7f35ddce7b3baa6973c443b712e1e87fbcd481849bd"
+}

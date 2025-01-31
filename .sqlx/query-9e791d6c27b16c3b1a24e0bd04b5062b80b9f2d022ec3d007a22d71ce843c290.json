@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO class_hash_profiles (class_hash, profile, verification_id)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (class_hash, profile, verification_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e791d6c27b16c3b1a24e0bd04b5062b80b9f2d022ec3d007a22d71ce843c290"
+}
