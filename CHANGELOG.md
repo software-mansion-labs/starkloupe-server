@@ -1,4 +1,7 @@
 # Changelog
+### [0.0.25] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.25)
+
+- Automated downloader for new DOJO releases
 
 ### [0.0.24] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.24)
 

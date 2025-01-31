@@ -19,11 +19,20 @@ fn supported_old_cairo_versions() -> Vec<Version> {
     ]
 }
 
-fn minimum_supported_new_cario_version() -> Version {
+fn supported_old_dojo_versions() -> Vec<Version> {
+    vec![
+        Version::parse("1.0.1").unwrap(),
+        Version::parse("1.0.12").unwrap(),
+    ]
+}
+
+fn minimum_supported_new_cairo_version() -> Version {
     Version::parse("2.8.2").unwrap()
 }
 
-const SUPPORTED_DOJO_VERSIONS: &[&str] = &["v1.0.1", "v1.0.12"];
+fn minimum_supported_new_dojo_version() -> Version {
+    Version::parse("1.1.0").unwrap()
+}
 
 fn run_scarb_build_for_profile(tmp_dir: &PathBuf, scarb_path: &str, profile: &str) -> Result<()> {
     let mut cmd = ScarbCommand::new();
@@ -102,20 +111,16 @@ pub fn build_with_scarb_for_profile(
     }
 
     if let Some(dojo_version) = &manifest.dojo_version {
-        if !SUPPORTED_DOJO_VERSIONS.contains(&dojo_version.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Unsupported Dojo version {}. Currently, we support versions {}. Contact us if you need support for a different version: https://t.me/walnuthq",
-                dojo_version,
-                SUPPORTED_DOJO_VERSIONS.join(", ")
-            ));
+        if !is_dojo_version_supported(&dojo_version.as_str()) {
+            return Err(anyhow::anyhow!("Unsupported Dojo version {}.", dojo_version));
         }
         let binaries_save_directory_path =
-            std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+            env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
         run_sozo_build_for_profile(tmp_dir, &sozo_path, profile)?;
     } else {
         let binaries_save_directory_path =
-            std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+            env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let scarb_path = format!(
             "{}/scarb/scarb_cairo_v{}.{}.{}",
             binaries_save_directory_path,
@@ -132,32 +137,44 @@ pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
     is_old_cairo_version_supported(version) || is_new_cairo_version_supported(version)
 }
 
-pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    let version_string = tuple_to_version_string(version);
-    let version_supported = match Version::parse(version_string.as_str()) {
-        Ok(version) => version >= minimum_supported_new_cario_version(),
-        Err(_) => {
-            error!(
-                "Invalid cairo version on support check: {}",
-                version_string.as_str()
-            );
-            false
-        }
-    };
-    version_supported
+pub fn is_old_cairo_version_supported(version: (u32, u32, u32)) -> bool {
+    is_old_version_supported(tuple_to_version_string(version).as_str(), &supported_old_cairo_versions(), "cairo")
 }
 
-pub fn is_old_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    let version_string = tuple_to_version_string(version);
-    let old_version_supported = match Version::parse(version_string.as_str()) {
-        Ok(version) => supported_old_cairo_versions().contains(&version),
+pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
+    is_new_version_supported(tuple_to_version_string(version).as_str(), minimum_supported_new_cairo_version(), "cairo")
+}
+
+pub fn is_dojo_version_supported(version: &str) -> bool {
+    is_old_dojo_version_supported(version) || is_new_dojo_version_supported(version)
+}
+
+pub fn is_old_dojo_version_supported(version: &str) -> bool {
+    is_old_version_supported(version, &supported_old_dojo_versions(), "dojo")
+}
+
+pub fn is_new_dojo_version_supported(version: &str) -> bool {
+    is_new_version_supported(version, minimum_supported_new_dojo_version(), "dojo")
+}
+
+fn is_old_version_supported(version: &str, supported_old_versions: &Vec<Version>, tool_name: &str) -> bool {
+    let old_version_supported = match Version::parse(version) {
+        Ok(version) => supported_old_versions.contains(&version),
         Err(_) => {
-            error!(
-                "Invalid cairo version on support check: {}",
-                version_string.as_str()
-            );
+            error!("Invalid {} version on support check: {}", tool_name, version);
             false
         }
     };
     old_version_supported
+}
+
+fn is_new_version_supported(version: &str, minimum_supported_version: Version, tool_name: &str) -> bool {
+    let version_supported = match Version::parse(version) {
+        Ok(version) => version >= minimum_supported_version,
+        Err(_) => {
+            error!("Invalid {} version on support check: {}", tool_name, version);
+            false
+        }
+    };
+    version_supported
 }
