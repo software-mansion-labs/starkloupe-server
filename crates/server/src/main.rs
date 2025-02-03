@@ -38,9 +38,11 @@ use std::env::consts::ARCH;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use axum::extract::State;
+use axum::http::StatusCode;
 use clokwerk::{Job, AsyncScheduler, TimeUnits};
 use tokio::spawn;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tracing::{error, info};
 use crate::binaries_manager_service::{download_scarb_and_sozo_binaries_from_s3, start_github_dojo_binaries_downloader_scheduler, start_github_scarb_binaries_downloader_scheduler};
 // Resources
@@ -105,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
             let app = Router::new()
+                .route("/health", get(health_check))
                 .route("/v1/simulate-transaction", post(simulate_transaction))
                 .route(
                     "/v1/:chain_id/simulate-transaction/:tx_hash",
@@ -143,4 +146,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         })
+}
+
+// If DB is down SQLX query is hanging, this is why 3 secs timeout
+async fn health_check(State(state): State<Arc<AppState>>) -> StatusCode {
+    let db_status = match timeout(Duration::from_secs(3), sqlx::query("SELECT 1").execute(&state.db_pool)).await  {
+        db_status =>
+            match db_status {
+                Ok(_) => StatusCode::OK,
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            },
+    };
+    // If the database is down, we should return an error
+    db_status
 }
