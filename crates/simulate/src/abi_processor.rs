@@ -152,13 +152,14 @@ impl AbiProcessor {
                         let simplified_member_type = simplify_type_name(member_type);
                         let data = Parameter {
                             name: member_name.to_string(),
-                            type_name: simplified_member_type.to_string(),
+                            type_name: simplified_member_type,
                         };
                         datas.push(data);
                     }
                 }
+                let simplified_struct_name = simplify_type_name(name);
                 let struct_item = StructAbi {
-                    name: name.clone(),
+                    name: simplified_struct_name,
                     parameters: datas,
                 };
                 self.struct_abis.push(struct_item);

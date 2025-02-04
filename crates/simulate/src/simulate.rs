@@ -46,6 +46,8 @@ use walnut_shared::felt_to_field_element;
 use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
+use walnut_shared::EnumAbi;
+use walnut_shared::StructAbi;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
@@ -53,6 +55,7 @@ use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
+use crate::event_calls_map;
 use crate::event_calls_map::EventCallsMap;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
@@ -126,6 +129,8 @@ pub async fn simulate(
     filter_and_hide_unlinked_function_calls(&mut contract_calls_map, &function_calls_map);
 
     let mut event_abis: Vec<EventAbi> = Vec::new();
+    let mut struct_abis: Vec<StructAbi> = Vec::new();
+    let mut enum_abis: Vec<EnumAbi> = Vec::new();
 
     for call in contract_calls_map.0.values_mut() {
         if let Some(class_hash) = call.entry_point.class_hash {
@@ -144,13 +149,16 @@ pub async fn simulate(
                 call.arguments_names = abi_processor.function_arguments_names;
                 call.arguments_types = abi_processor.function_arguments_types;
                 call.result_types = abi_processor.function_return_result_types;
-                event_abis.extend(abi_processor.event_abis.into_iter());
                 let (sierra_version, cairo_version) =
                     extract_sierra_and_cairo_versions(&class.sierra_program);
                 call.sierra_version = sierra_version;
                 call.cairo_version = cairo_version;
                 call.decode_call_result(&abi_processor.struct_abis, &abi_processor.enum_abis);
-                call.decode_call_arguments(&abi_processor.struct_abis, &abi_processor.enum_abis)
+                call.decode_call_arguments(&abi_processor.struct_abis, &abi_processor.enum_abis);
+
+                event_abis.extend(abi_processor.event_abis);
+                struct_abis.extend(abi_processor.struct_abis);
+                enum_abis.extend(abi_processor.enum_abis);
             }
         }
     }
@@ -159,6 +167,8 @@ pub async fn simulate(
         &mut contract_calls_map,
         &mut next_call_id,
         &event_abis,
+        &struct_abis,
+        &enum_abis,
         &cheatnet_state_detected_events,
     );
 

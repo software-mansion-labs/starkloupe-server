@@ -1,6 +1,15 @@
 # Changelog
+
+### [0.0.28] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.28)
+
+- decode event datas
+
+### [0.0.27] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.27)
+
+- add event to call trace
+
 ### [0.0.26] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.26)
- 
+
 - healthcheck endpoint added: `/health`
 
 ### [0.0.25] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.25)
