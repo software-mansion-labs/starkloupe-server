@@ -9,10 +9,9 @@ use crate::contract_calls_map::ContractCallsMap;
 
 pub fn create_function_calls_map(
     contract_calls_map: &mut ContractCallsMap,
-    next_call_id: u32,
+    next_call_id: &mut u32,
     classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
 ) -> FunctionCallsMap {
-    let mut next_call_id = next_call_id;
     let mut function_calls_map = FunctionCallsMap::new();
 
     for (id, call) in contract_calls_map.0.iter_mut() {
@@ -25,7 +24,7 @@ pub fn create_function_calls_map(
                             vm_trace,
                             full_class_debugger_data,
                             &mut function_calls_map,
-                            &mut next_call_id,
+                            next_call_id,
                             *id,
                             &call.children_call_ids,
                         ) {

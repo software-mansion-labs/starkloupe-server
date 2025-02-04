@@ -69,9 +69,10 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_member_type = simplify_type_name(member_type);
                         let data = Parameter {
                             name: member_name.to_string(),
-                            type_name: member_type.to_string(),
+                            type_name: simplified_member_type,
                         };
                         datas.push(data);
                     }
@@ -93,18 +94,14 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_member_type = simplify_type_name(member_type);
                         let data = Parameter {
                             name: member_name.to_string(),
-                            type_name: member_type.to_string(),
+                            type_name: simplified_member_type,
                         };
                         datas.push(data);
                     }
                 }
-                // let event_item = EventItems {
-                //     name: name.clone(),
-                //     members: datas,
-                // };
-                //self.event_items.push(event_item);
             }
         }
     }
@@ -117,9 +114,10 @@ impl AbiProcessor {
                     if let Value::Object(member_obj) = member {
                         let member_name = member_obj.get("name").unwrap().as_str().unwrap();
                         let member_type = member_obj.get("type").unwrap().as_str().unwrap();
+                        let simplified_member_type = simplify_type_name(member_type);
                         let data = Parameter {
                             name: member_name.to_string(),
-                            type_name: member_type.to_string(),
+                            type_name: simplified_member_type,
                         };
                         datas.push(data);
                     }
