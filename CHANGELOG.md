@@ -1,4 +1,7 @@
 # Changelog
+### [0.0.29] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.29)
+
+- parsing DOJO version bug fix
 
 ### [0.0.28] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.28)
 

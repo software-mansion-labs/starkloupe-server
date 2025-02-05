@@ -158,8 +158,9 @@ pub fn is_new_dojo_version_supported(version: &str) -> bool {
 }
 
 fn is_old_version_supported(version: &str, supported_old_versions: &Vec<Version>, tool_name: &str) -> bool {
-    let old_version_supported = match Version::parse(version) {
-        Ok(version) => supported_old_versions.contains(&version),
+    let version_stripped = version.strip_prefix('v').unwrap_or(version);
+    let old_version_supported = match Version::parse(&version_stripped) {
+        Ok(ver) => supported_old_versions.contains(&ver),
         Err(_) => {
             error!("Invalid {} version on support check: {}", tool_name, version);
             false
@@ -169,8 +170,9 @@ fn is_old_version_supported(version: &str, supported_old_versions: &Vec<Version>
 }
 
 fn is_new_version_supported(version: &str, minimum_supported_version: Version, tool_name: &str) -> bool {
-    let version_supported = match Version::parse(version) {
-        Ok(version) => version >= minimum_supported_version,
+    let version_stripped = version.strip_prefix('v').unwrap_or(version);
+    let version_supported = match Version::parse(&version_stripped) {
+        Ok(ver) => ver >= minimum_supported_version,
         Err(_) => {
             error!("Invalid {} version on support check: {}", tool_name, version);
             false
