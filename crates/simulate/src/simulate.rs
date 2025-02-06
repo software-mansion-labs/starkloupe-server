@@ -162,16 +162,34 @@ pub async fn simulate(
         }
     }
 
+    let mut contract_names_fetcher = ContractNamesFetcher::new(provider_client, &chain_id);
+    // The StarkNet transaction emits this `Transfer` event from the StarkGate ETH token contract.
+    // This event is present inside the transaction receipt but is not found in the Foundry-emitted
+    // events array.
+    // To maintain consistency with blockchain explorers, we need to manually append this event
+    // to the vector of all events.
+    let strkgate_emitted_event = if let Some(event) = strkgate_event {
+        let contract_address_felt = field_element_to_felt(event.from_address);
+        let contract_address_str = contract_address_felt.to_fixed_hex_string();
+
+        let contract_name = contract_names_fetcher
+            .fetch_single_contract_name(contract_address_str)
+            .await;
+        EmittedEvent::convert_event_to_emitted_event(&event, &contract_name)
+    } else {
+        None
+    };
+
     let events = EmittedEvent::create_emitted_events_list(
         &mut contract_calls_map,
         &event_abis,
         &struct_abis,
         &enum_abis,
         &cheatnet_state_detected_events,
-        strkgate_event,
+        strkgate_emitted_event,
     );
 
-    ContractNamesFetcher::new(provider_client, &chain_id)
+    contract_names_fetcher
         .set_contract_names(&mut contract_calls_map)
         .await;
 

@@ -1,3 +1,6 @@
+use crate::contract_names::ContractName;
+use crate::events;
+use crate::ContractCall;
 use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
 use data_decoder::calldata_decoder::decode_calldata;
@@ -17,6 +20,7 @@ use walnut_shared::StructAbi;
 #[derive(Debug, Serialize, Clone)]
 pub struct EmittedEvent {
     pub contract_call_id: u32,
+    pub contract_name: String,
     pub name: String,
     pub selector: String,
     pub datas: Option<Vec<DecodedValue>>,
@@ -29,18 +33,34 @@ impl EmittedEvent {
         struct_abis: &[StructAbi],
         enum_abis: &[EnumAbi],
         cheatnet_state_detected_events: &[Event],
-        strkgate_event: Option<starknet_old::core::types::Event>,
+        strkgate_emitted_event: Option<EmittedEvent>,
     ) -> Vec<EmittedEvent> {
+        fn get_contract_name(contract_call: &ContractCall) -> String {
+            let mut contract_name: Option<String> = None;
+
+            if let Some(ref name) = contract_call.contract_name {
+                contract_name = Some(name.clone());
+            } else if let (Some(ref token_name), Some(ref token_symbol)) = (
+                &contract_call.erc20_token_name,
+                &contract_call.erc20_token_symbol,
+            ) {
+                contract_name = Some(format!("{} ({})", token_name, token_symbol));
+            } else if let Some(ref entry_point) = contract_call.entry_point_interface_name {
+                contract_name = entry_point.split("::").last().map(String::from);
+            }
+
+            contract_name.unwrap_or_else(|| {
+                contract_call
+                    .entry_point
+                    .storage_address
+                    .to_fixed_hex_string()
+            })
+        }
+
         let mut events = Vec::new();
 
-        // The StarkNet transaction emits this `Transfer` event from the StarkGate ETH token contract.
-        // This event is present inside the transaction receipt but is not found in the Foundry-emitted
-        // events array.
-        // To maintain consistency with blockchain explorers, we need to manually append this event
-        // to the vector of all events.
-        if let Some(event) = strkgate_event {
-            let strkgate_event_decoded = Self::convert_event_to_emitted(&event);
-            events.push(strkgate_event_decoded);
+        if let Some(strkgate_emitted_event) = strkgate_emitted_event {
+            events.push(strkgate_emitted_event);
         }
 
         let mut storage_address_to_call_id = HashMap::new();
@@ -54,7 +74,7 @@ impl EmittedEvent {
             if let Some(contract_call_id) =
                 storage_address_to_call_id.get(&cheatnet_state_event.from)
             {
-                if let Some(_contract_call) = contract_calls_map.0.get_mut(contract_call_id) {
+                if let Some(contract_call) = contract_calls_map.0.get_mut(contract_call_id) {
                     if let Some(event_abi) = event_abis
                         .iter()
                         .find(|abi| selector_from_name(&abi.name).0 == event_selector)
@@ -89,6 +109,7 @@ impl EmittedEvent {
 
                         let event = EmittedEvent {
                             contract_call_id: *contract_call_id,
+                            contract_name: get_contract_name(contract_call),
                             name: event_abi.name.clone(),
                             selector: event_selector.to_fixed_hex_string(),
                             datas: decoded_event_data,
@@ -103,55 +124,78 @@ impl EmittedEvent {
         events
     }
 
-    fn convert_event_to_emitted(event: &starknet_old::core::types::Event) -> EmittedEvent {
-        let selector_felt = field_element_to_felt(event.keys[0]); // Konverzija FieldElement u Felt
-        let selector_str = selector_felt.to_fixed_hex_string(); // Pretvaranje u hex string
-        let event_name = get_selector(&selector_str)
-            .unwrap_or("Transfer")
-            .to_string();
+    pub fn convert_event_to_emitted_event(
+        event: &starknet_old::core::types::Event,
+        contract_name: &Option<ContractName>,
+    ) -> Option<EmittedEvent> {
+        fn decode_event_data(event: &starknet_old::core::types::Event) -> Vec<DecodedValue> {
+            vec![
+                create_decoded_value(
+                    Some("from"),
+                    "ContractAddress",
+                    DecodedValueType::Single(field_element_to_felt(event.data[0])),
+                ),
+                create_decoded_value(
+                    Some("to"),
+                    "ContractAddress",
+                    DecodedValueType::Single(field_element_to_felt(event.data[1])),
+                ),
+                create_decoded_value(
+                    Some("amount"),
+                    "u256",
+                    DecodedValueType::Struct(decode_amount(event)),
+                ),
+            ]
+        }
 
-        let datas = vec![
-            create_decoded_value(
-                Some("from"),
-                "ContractAddress",
-                DecodedValueType::Single(field_element_to_felt(event.data[0])),
-            ),
-            create_decoded_value(
-                Some("to"),
-                "ContractAddress",
-                DecodedValueType::Single(field_element_to_felt(event.data[1])),
-            ),
-            create_decoded_value(
-                Some("amount"),
-                "u256",
-                DecodedValueType::Struct({
-                    let mut amount_map = HashMap::new();
-                    amount_map.insert(
-                        0,
-                        create_decoded_value(
-                            Some("low"),
-                            "u128",
-                            DecodedValueType::Single(field_element_to_felt(event.data[2])),
-                        ),
-                    );
-                    amount_map.insert(
-                        1,
-                        create_decoded_value(
-                            Some("high"),
-                            "u128",
-                            DecodedValueType::Single(field_element_to_felt(event.data[3])),
-                        ),
-                    );
-                    amount_map
-                }),
-            ),
-        ];
+        fn decode_amount(event: &starknet_old::core::types::Event) -> HashMap<usize, DecodedValue> {
+            let mut amount_map = HashMap::new();
+            amount_map.insert(
+                0,
+                create_decoded_value(
+                    Some("low"),
+                    "u128",
+                    DecodedValueType::Single(field_element_to_felt(event.data[2])),
+                ),
+            );
+            amount_map.insert(
+                1,
+                create_decoded_value(
+                    Some("high"),
+                    "u128",
+                    DecodedValueType::Single(field_element_to_felt(event.data[3])),
+                ),
+            );
+            amount_map
+        }
 
-        EmittedEvent {
-            contract_call_id: 0, // Ako nema, možeš koristiti `None` ako je opcioni tip
-            name: event_name,
-            selector: selector_str,
-            datas: Some(datas),
+        let selector_str = field_element_to_felt(event.keys[0]).to_fixed_hex_string();
+        let event_name = get_selector(&selector_str);
+
+        match (event_name, contract_name) {
+            (Some(event_name), Some(contract_name)) => {
+                if let Some(contract_name) = &contract_name.name {
+                    // Only process the event if the contract name is "StarkGate" and event is "Transfer"
+                    if event_name == "Transfer"
+                        && contract_name == "StarkGate: ETH Token"
+                        && event.data.len() == 4
+                    {
+                        let datas = decode_event_data(event);
+                        Some(EmittedEvent {
+                            contract_call_id: 0,
+                            contract_name: contract_name.to_string(),
+                            name: event_name.to_string(),
+                            selector: selector_str,
+                            datas: Some(datas),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }

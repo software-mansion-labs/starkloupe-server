@@ -81,7 +81,7 @@ pub fn rpc_url(chain_id: &ChainId) -> Url {
 pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     match chain_id {
         ChainId::Mainnet => Some("https://api.voyager.online/beta/"),
-        ChainId::Sepolia => Some("https://sepolia-api.voyager.online/beta"),
+        ChainId::Sepolia => Some("https://sepolia-api.voyager.online/beta/"),
         _ => None,
     }
 }
