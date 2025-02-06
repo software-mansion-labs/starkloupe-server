@@ -6,13 +6,15 @@ use tracing::debug;
 use tracing::error;
 
 use crate::contract_calls_map::ContractCallsMap;
+use internal_tracing::event_calls_map::EventCallsMap;
 
 pub fn create_function_calls_map(
     contract_calls_map: &mut ContractCallsMap,
     next_call_id: &mut u32,
     classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
-) -> FunctionCallsMap {
+) -> (FunctionCallsMap, EventCallsMap) {
     let mut function_calls_map = FunctionCallsMap::new();
+    let mut event_calls_map = EventCallsMap::default();
 
     for (id, call) in contract_calls_map.0.iter_mut() {
         let result = match (&call.class_hash, &call.vm_memory, &call.vm_trace) {
@@ -24,6 +26,7 @@ pub fn create_function_calls_map(
                             vm_trace,
                             full_class_debugger_data,
                             &mut function_calls_map,
+                            &mut event_calls_map,
                             next_call_id,
                             *id,
                             &call.children_call_ids,
@@ -62,5 +65,5 @@ pub fn create_function_calls_map(
         call.vm_memory = None;
     }
 
-    function_calls_map
+    (function_calls_map, event_calls_map)
 }

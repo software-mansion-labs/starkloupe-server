@@ -15,7 +15,10 @@ use cairo_lang_sierra::{
 };
 use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
-use cairo_lang_starknet_classes::contract_class::ContractClass;
+use cairo_lang_starknet_classes::{
+    abi::{Event, Item},
+    contract_class::ContractClass,
+};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::internal_function_decoder::decode_internal_datas;
 use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
@@ -25,12 +28,13 @@ use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
+use tracing::error;
 use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::felts_to_string;
 
 use crate::{
-    call_trace::{ContractCall, ESysCall, InternalFnCallIO},
+    call_trace::{ContractCall, ESysCall, EventSysCall, InternalFnCallIO},
     utils::{
         compile_sierra_contract_class, get_pc_mappings, get_pc_to_ptr_sys_call_mappings,
         is_panic_result, make_casm_to_sierra_map,
@@ -49,13 +53,11 @@ pub struct Mappings {
     pub type_names: HashMap<ConcreteTypeId, SmolStr>,
     pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
     pub type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration>,
+    pub events: HashSet<Event>,
 }
 
 impl Mappings {
-    pub fn new(
-        relocated_memory: &Vec<Option<Felt>>,
-        contract_class: ContractClass,
-    ) -> Result<Self> {
+    pub fn new(relocated_memory: &[Option<Felt>], contract_class: ContractClass) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
             warn!("Failed to extract sierra program: {:?}", e);
             e
@@ -67,6 +69,22 @@ impl Mappings {
             .clone()
             .unwrap()
             .type_names;
+
+        let events: HashSet<Event> = contract_class
+            .abi
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .clone()
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        Item::Event(event) => Some(event),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let casm_program =
             compile_sierra_contract_class(contract_class, usize::MAX).map_err(|e| {
                 warn!("Failed to compile sierra contract class: {:?}", e);
@@ -117,6 +135,7 @@ impl Mappings {
             type_names,
             sierra_statement_info: casm_program.debug_info.sierra_statement_info,
             type_declaration_map,
+            events,
         })
     }
 
@@ -195,7 +214,7 @@ impl Mappings {
 
     pub fn get_arguments_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt>>,
+        relocated_memory: &[Option<Felt>],
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
@@ -279,7 +298,7 @@ impl Mappings {
 
     pub fn get_results_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt>>,
+        relocated_memory: &[Option<Felt>],
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
@@ -353,7 +372,7 @@ impl Mappings {
 
     pub fn get_system_call_at_trace_step(
         &self,
-        relocated_memory: &Vec<Option<Felt>>,
+        relocated_memory: &[Option<Felt>],
         trace_entry: &RelocatedTraceEntry,
     ) -> Option<ESysCall> {
         let pc = trace_entry.pc;
@@ -389,6 +408,59 @@ impl Mappings {
                                     function_selector,
                                 };
                                 Some(ESysCall::ContractCall(contract_call))
+                            }
+                            DeprecatedSyscallSelector::EmitEvent => {
+                                let _felt_value = relocated_memory.get(ptr).unwrap();
+
+                                ptr += 1;
+                                let felt_value: Felt =
+                                    (*relocated_memory.get(ptr).unwrap()).unwrap();
+
+                                let id = felt_value.to_string().parse::<usize>();
+
+                                let (event_selector, event_key) = match id {
+                                    Ok(id) => {
+                                        let event_selector = relocated_memory
+                                            .get(id)
+                                            .and_then(|v| v.as_ref().copied())
+                                            .or_else(|| {
+                                                error!("Error: event_selector not found at index");
+                                                None
+                                            });
+
+                                        let event_key = relocated_memory
+                                            .get(id + 1)
+                                            .and_then(|v| v.as_ref().copied())
+                                            .or_else(|| {
+                                                error!("Error: event_key not found at index");
+                                                None
+                                            });
+
+                                        (event_selector, event_key)
+                                    }
+                                    Err(_e) => {
+                                        error!("Error: id is None, skipping event processing.");
+                                        return None;
+                                    }
+                                };
+
+                                let (event_selector, event_key) = match (event_selector, event_key)
+                                {
+                                    (Some(selector), Some(key)) => (selector, key),
+                                    _ => {
+                                        error!(
+                                            "Error: Either event_selector or event_key is missing."
+                                        );
+                                        return None;
+                                    }
+                                };
+
+                                let event_sys_call = EventSysCall {
+                                    event_selector,
+                                    event_key,
+                                };
+
+                                Some(ESysCall::EventCall(event_sys_call))
                             }
                             _ => None,
                         }
@@ -459,7 +531,7 @@ pub fn adjust_decoded_element(decoded_element: DecodedValue) -> Option<DecodedVa
 }
 
 pub fn get_values_from_cell_expressions(
-    memory: &Vec<Option<Felt>>,
+    memory: &[Option<Felt>],
     trace_entry: &RelocatedTraceEntry,
     cell_expressions: &Vec<CellExpression>,
     ap_change: &ApChange,
@@ -490,7 +562,7 @@ pub enum GetCellRefValueError {
 }
 
 pub fn get_cell_ref_value(
-    memory: &Vec<Option<Felt>>,
+    memory: &[Option<Felt>],
     trace_entry: &RelocatedTraceEntry,
     cell_ref: &CellRef,
     ap_change: &ApChange,
@@ -517,7 +589,7 @@ pub fn get_cell_ref_value(
 }
 
 pub fn get_value_from_cell_expression(
-    memory: &Vec<Option<Felt>>,
+    memory: &[Option<Felt>],
     trace_entry: &RelocatedTraceEntry,
     cell_expression: &CellExpression,
     ap_change: &ApChange,

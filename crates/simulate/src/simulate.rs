@@ -23,6 +23,8 @@ use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_event
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
+use internal_tracing::event_calls_map;
+use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
@@ -43,11 +45,8 @@ use std::sync::Arc;
 use tracing::warn;
 use url::Url;
 use walnut_shared::felt_to_field_element;
-use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
-use walnut_shared::EnumAbi;
-use walnut_shared::StructAbi;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
 use crate::abi_processor::AbiProcessor;
@@ -55,8 +54,6 @@ use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
-use crate::event_calls_map;
-use crate::event_calls_map::EventCallsMap;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_number_transaction_receipt;
@@ -70,7 +67,6 @@ use crate::utils::calldata_to_hex;
 use crate::utils::parse_transaction_hash;
 use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
-use crate::EventAbi;
 use crate::FunctionCallsMap;
 use crate::SimulationArgs;
 use crate::SimulationInfo;
@@ -111,7 +107,6 @@ pub async fn simulate(
         mut contract_calls_map,
         mut next_call_id,
         deepest_failed_contract_call_id,
-        cheatnet_state_detected_events,
         ..
     } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state);
 
@@ -120,17 +115,13 @@ pub async fn simulate(
     let classes_debugger_data =
         fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
 
-    let mut function_calls_map = create_function_calls_map(
+    let (mut function_calls_map, event_calls_map) = create_function_calls_map(
         &mut contract_calls_map,
         &mut next_call_id,
         &classes_debugger_data,
     );
 
     filter_and_hide_unlinked_function_calls(&mut contract_calls_map, &function_calls_map);
-
-    let mut event_abis: Vec<EventAbi> = Vec::new();
-    let mut struct_abis: Vec<StructAbi> = Vec::new();
-    let mut enum_abis: Vec<EnumAbi> = Vec::new();
 
     for call in contract_calls_map.0.values_mut() {
         if let Some(class_hash) = call.entry_point.class_hash {
@@ -156,21 +147,12 @@ pub async fn simulate(
                 call.decode_call_result(&abi_processor.struct_abis, &abi_processor.enum_abis);
                 call.decode_call_arguments(&abi_processor.struct_abis, &abi_processor.enum_abis);
 
-                event_abis.extend(abi_processor.event_abis);
-                struct_abis.extend(abi_processor.struct_abis);
-                enum_abis.extend(abi_processor.enum_abis);
+                //event_abis.extend(abi_processor.event_abis);
+                //struct_abis.extend(abi_processor.struct_abis);
+                //enum_abis.extend(abi_processor.enum_abis);
             }
         }
     }
-
-    let event_calls_map = EventCallsMap::create_event_calls_map(
-        &mut contract_calls_map,
-        &mut next_call_id,
-        &event_abis,
-        &struct_abis,
-        &enum_abis,
-        &cheatnet_state_detected_events,
-    );
 
     ContractNamesFetcher::new(provider_client, &chain_id)
         .set_contract_names(&mut contract_calls_map)

@@ -1,6 +1,8 @@
 pub mod build_debugger_data;
 pub mod call_trace;
 pub mod debugger_data_fetcher;
+pub mod event_call;
+pub mod event_calls_map;
 pub mod function_call;
 pub mod function_calls_map;
 pub mod mappings;
