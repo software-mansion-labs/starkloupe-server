@@ -3,9 +3,7 @@ pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;
 pub mod debugger_trace;
-pub mod event_abi;
-pub mod event_call;
-pub mod event_calls_map;
+pub mod events;
 pub mod function_calls;
 pub mod simulate;
 pub mod state;
@@ -18,7 +16,7 @@ use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
-use event_calls_map::EventCallsMap;
+use events::EmittedEvent;
 use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
@@ -178,7 +176,7 @@ where
 pub struct SimulationInfo {
     pub contract_calls_map: ContractCallsMap,
     pub function_calls_map: FunctionCallsMap,
-    pub event_calls_map: EventCallsMap,
+    pub events: Vec<EmittedEvent>,
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }

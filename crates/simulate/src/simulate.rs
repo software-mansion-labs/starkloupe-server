@@ -19,7 +19,6 @@ use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
-use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
@@ -43,7 +42,6 @@ use std::sync::Arc;
 use tracing::warn;
 use url::Url;
 use walnut_shared::felt_to_field_element;
-use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::EnumAbi;
@@ -55,8 +53,7 @@ use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
-use crate::event_calls_map;
-use crate::event_calls_map::EventCallsMap;
+use crate::events::EmittedEvent;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_number_transaction_receipt;
@@ -163,9 +160,8 @@ pub async fn simulate(
         }
     }
 
-    let event_calls_map = EventCallsMap::create_event_calls_map(
+    let events = EmittedEvent::create_emitted_events_list(
         &mut contract_calls_map,
-        &mut next_call_id,
         &event_abis,
         &struct_abis,
         &enum_abis,
@@ -195,7 +191,7 @@ pub async fn simulate(
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
-        event_calls_map,
+        events,
         execution_result,
         simulation_debugger_data: Some(SimulationDebuggerData {
             classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
@@ -382,7 +378,7 @@ pub async fn simulate_transaction_by_hash(
                             let simulation_info = SimulationInfo {
                                 contract_calls_map: ContractCallsMap::new(),
                                 function_calls_map: FunctionCallsMap::new(),
-                                event_calls_map: EventCallsMap::default(),
+                                events: Vec::new(),
                                 execution_result: ExecutionResult::Reverted { reason },
                                 simulation_debugger_data: Some(SimulationDebuggerData {
                                     classes_debugger_data: HashMap::new(),
