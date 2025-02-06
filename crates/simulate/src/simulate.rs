@@ -61,6 +61,7 @@ use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_chain_id_from_felt;
 use crate::transaction_extraction::extract_execution_status_transaction_receipt;
+use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
 use crate::utils::calldata_to_hex;
@@ -101,6 +102,7 @@ pub async fn simulate(
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
         })?,
     );
+    let strkgate_event = args.strkgate_event.clone();
 
     let cheatnet_state = run_simulation(block_info, args, &mut cached_fork_state)?;
 
@@ -166,6 +168,7 @@ pub async fn simulate(
         &struct_abis,
         &enum_abis,
         &cheatnet_state_detected_events,
+        strkgate_event,
     );
 
     ContractNamesFetcher::new(provider_client, &chain_id)
@@ -401,6 +404,8 @@ pub async fn simulate_transaction_by_hash(
                         }
                     }
 
+                    let strkgate_event =
+                        extract_starkgate_event_transaction_receipt(&transaction_receipt);
                     // Perform transaction simulation
                     let (simulation_result, block_timestamp, transaction_index_in_block) =
                         simulate(
@@ -419,6 +424,7 @@ pub async fn simulate_transaction_by_hash(
                                 transaction_type: Some(transaction_type),
                                 resource_bounds: Some(resource_bounds),
                                 paymaster_data: Some(paymaster_data),
+                                strkgate_event,
                             },
                         )
                         .await?;

@@ -71,6 +71,7 @@ pub struct SimulationArgs {
     pub transaction_type: Option<TransactionType>,
     pub resource_bounds: Option<ResourceBoundsMapping>,
     pub paymaster_data: Option<PaymasterData>,
+    pub strkgate_event: Option<starknet_old_types::Event>,
 }
 
 impl SimulationArgs {
@@ -97,6 +98,7 @@ impl SimulationArgs {
             transaction_type: None,
             resource_bounds: None,
             paymaster_data: None,
+            strkgate_event: None,
         })
     }
 }
