@@ -1,8 +1,7 @@
 use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
 use data_decoder::calldata_decoder::decode_calldata;
-use data_decoder::create_decoded_value;
-use data_decoder::{DecodedValue, DecodedValueType};
+use data_decoder::DecodedValue;
 use serde::Serialize;
 
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
@@ -14,7 +13,7 @@ use walnut_shared::StructAbi;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct EmittedEvent {
-    pub contract_call_id: Option<u32>,
+    pub contract_call_id: u32,
     pub name: String,
     pub selector: String,
     pub datas: Option<Vec<DecodedValue>>,
@@ -74,7 +73,7 @@ impl EmittedEvent {
                         );
 
                         let event = EmittedEvent {
-                            contract_call_id: Some(*contract_call_id),
+                            contract_call_id: *contract_call_id,
                             name: event_abi.name.clone(),
                             selector: event_selector.to_fixed_hex_string(),
                             datas: decoded_event_data,
