@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.29] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.29)
+
+- List of all emitted events, remove events from call trace
+
 ### [0.0.28] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.28)
 
 - decode event datas
