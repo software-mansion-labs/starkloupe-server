@@ -19,7 +19,6 @@ use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
-use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
@@ -43,7 +42,6 @@ use std::sync::Arc;
 use tracing::warn;
 use url::Url;
 use walnut_shared::felt_to_field_element;
-use walnut_shared::felt_vec_to_hex_vec;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::EnumAbi;
@@ -55,8 +53,7 @@ use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
-use crate::event_calls_map;
-use crate::event_calls_map::EventCallsMap;
+use crate::events::EmittedEvent;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_number_transaction_receipt;
@@ -64,6 +61,7 @@ use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_chain_id_from_felt;
 use crate::transaction_extraction::extract_execution_status_transaction_receipt;
+use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
 use crate::utils::calldata_to_hex;
@@ -104,6 +102,7 @@ pub async fn simulate(
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
         })?,
     );
+    let strkgate_event = args.strkgate_event.clone();
 
     let cheatnet_state = run_simulation(block_info, args, &mut cached_fork_state)?;
 
@@ -163,16 +162,34 @@ pub async fn simulate(
         }
     }
 
-    let event_calls_map = EventCallsMap::create_event_calls_map(
+    let mut contract_names_fetcher = ContractNamesFetcher::new(provider_client, &chain_id);
+    // The StarkNet transaction emits this `Transfer` event from the StarkGate ETH token contract.
+    // This event is present inside the transaction receipt but is not found in the Foundry-emitted
+    // events array.
+    // To maintain consistency with blockchain explorers, we need to manually append this event
+    // to the vector of all events.
+    let strkgate_emitted_event = if let Some(event) = strkgate_event {
+        let contract_address_felt = field_element_to_felt(event.from_address);
+        let contract_address_str = contract_address_felt.to_fixed_hex_string();
+
+        let contract_name = contract_names_fetcher
+            .fetch_single_contract_name(contract_address_str)
+            .await;
+        EmittedEvent::convert_event_to_emitted_event(&event, &contract_name)
+    } else {
+        None
+    };
+
+    let events = EmittedEvent::create_emitted_events_list(
         &mut contract_calls_map,
-        &mut next_call_id,
         &event_abis,
         &struct_abis,
         &enum_abis,
         &cheatnet_state_detected_events,
+        strkgate_emitted_event,
     );
 
-    ContractNamesFetcher::new(provider_client, &chain_id)
+    contract_names_fetcher
         .set_contract_names(&mut contract_calls_map)
         .await;
 
@@ -195,7 +212,7 @@ pub async fn simulate(
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
-        event_calls_map,
+        events,
         execution_result,
         simulation_debugger_data: Some(SimulationDebuggerData {
             classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
@@ -382,7 +399,7 @@ pub async fn simulate_transaction_by_hash(
                             let simulation_info = SimulationInfo {
                                 contract_calls_map: ContractCallsMap::new(),
                                 function_calls_map: FunctionCallsMap::new(),
-                                event_calls_map: EventCallsMap::default(),
+                                events: Vec::new(),
                                 execution_result: ExecutionResult::Reverted { reason },
                                 simulation_debugger_data: Some(SimulationDebuggerData {
                                     classes_debugger_data: HashMap::new(),
@@ -405,6 +422,8 @@ pub async fn simulate_transaction_by_hash(
                         }
                     }
 
+                    let strkgate_event =
+                        extract_starkgate_event_transaction_receipt(&transaction_receipt);
                     // Perform transaction simulation
                     let (simulation_result, block_timestamp, transaction_index_in_block) =
                         simulate(
@@ -423,6 +442,7 @@ pub async fn simulate_transaction_by_hash(
                                 transaction_type: Some(transaction_type),
                                 resource_bounds: Some(resource_bounds),
                                 paymaster_data: Some(paymaster_data),
+                                strkgate_event,
                             },
                         )
                         .await?;

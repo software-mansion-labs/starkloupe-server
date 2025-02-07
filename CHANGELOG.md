@@ -1,4 +1,9 @@
 # Changelog
+
+### [0.0.30] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.30)
+
+- List of all emitted events, remove events from call trace
+
 ### [0.0.29] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.29)
 
 - parsing DOJO version bug fix
