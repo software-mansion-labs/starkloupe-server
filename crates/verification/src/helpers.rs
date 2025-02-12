@@ -322,8 +322,7 @@ pub async fn process_old_cairo_version_verification(
     verification_id: Uuid,
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
-    let mut classes_to_verify_map: HashMap<String, (ContractClass, String, PathBuf)> =
-        HashMap::new();
+    let mut classes_to_verify_map: HashMap<String, (ContractClass, PathBuf)> = HashMap::new();
     let encountered_error = spawn_old_cairo_version_verification_tasks(
         manifest,
         cairo_version,
@@ -359,62 +358,16 @@ async fn spawn_old_cairo_version_verification_tasks(
     tmp_dir: &PathBuf,
     db_pool: &Pool<Postgres>,
     verification_id: Uuid,
-    classes_to_verify_map: &mut HashMap<String, (ContractClass, String, PathBuf)>,
+    classes_to_verify_map: &mut HashMap<String, (ContractClass, PathBuf)>,
 ) -> bool {
     // Broadcast channel for error signalization
     let (tx, _) = tokio::sync::broadcast::channel(1);
     let mut encountered_error = false;
-    let mut inline_class_hashes: Vec<(String, ContractClass, PathBuf)> = Vec::new();
 
-    // First build profil with inline strategy, if it exists
-    if let Some(inline_strategy_profile) = manifest.profile_with_inline_strategy.keys().next() {
-        match compile_with_scarb_for_profile(
-            manifest,
-            cairo_version,
-            tmp_dir,
-            inline_strategy_profile,
-        ) {
-            Ok(classes) => {
-                for (class_hash, contract_class, cairo_debug_info_path) in classes {
-                    inline_class_hashes.push((
-                        class_hash.clone(),
-                        contract_class.clone(),
-                        cairo_debug_info_path.clone(),
-                    ));
-                    if let Err(err) = insert_class_hash_profiles(
-                        db_pool,
-                        &class_hash,
-                        inline_strategy_profile,
-                        verification_id,
-                        &true,
-                        Some(&class_hash),
-                    )
-                    .await
-                    {
-                        error!(
-                            "Failed to insert inline strategy class hash profile: {:?}",
-                            err
-                        );
-                        encountered_error = true;
-                    }
-                    classes_to_verify_map.insert(
-                        class_hash.clone(),
-                        (contract_class, class_hash.clone(), cairo_debug_info_path),
-                    );
-                }
-            }
-            Err(e) => {
-                error!("Failed to build inline strategy profile: {:?}", e);
-                return true;
-            }
-        }
-    }
-
-    // Buld other profiles, skip inline profile
+    // Buld profiles, skip inline profile
     let mut futures: FuturesUnordered<_> = manifest
         .profiles
         .iter()
-        .filter(|&profile| !manifest.profile_with_inline_strategy.contains_key(profile))
         .cloned()
         .map(|profile| {
             let tmp_dir_clone = tmp_dir.clone();
@@ -453,36 +406,23 @@ async fn spawn_old_cairo_version_verification_tasks(
     while let Some(result) = futures.next().await {
         match result {
             Ok(Ok((classes, profile))) => {
-                if classes.len() == inline_class_hashes.len() {
-                    for (idx, (class_hash, _contract_class, _cairo_debug_info_path)) in
-                        classes.into_iter().enumerate()
+                for (class_hash, contract_class, cairo_debug_info_path) in classes {
+                    if let Err(err) = insert_class_hash_profiles(
+                        db_pool,
+                        &class_hash,
+                        &profile,
+                        verification_id,
+                        &false,
+                        None,
+                    )
+                    .await
                     {
-                        if let Some((
-                            inline_class_hash,
-                            inline_contract_class,
-                            inline_debug_info_path,
-                        )) = inline_class_hashes.get(idx).cloned()
-                        {
-                            if let Err(err) = insert_class_hash_profiles(
-                                db_pool,
-                                &class_hash,
-                                &profile,
-                                verification_id,
-                                &false,
-                                Some(&inline_class_hash),
-                            )
-                            .await
-                            {
-                                error!("Failed to insert class hash with profile: {:?}", err);
-                            }
-
-                            classes_to_verify_map.entry(class_hash).or_insert((
-                                inline_contract_class,
-                                inline_class_hash,
-                                inline_debug_info_path,
-                            ));
-                        }
+                        error!("Failed to insert class hash with profile: {:?}", err);
                     }
+
+                    classes_to_verify_map
+                        .entry(class_hash)
+                        .or_insert((contract_class, cairo_debug_info_path));
                 }
             }
             Ok(Err(_e)) => {
@@ -500,39 +440,37 @@ async fn spawn_old_cairo_version_verification_tasks(
 
 fn update_old_cairo_version_class_verification_data(
     class_verification_data: &mut ClassVerificationData,
-    classes_to_verify_map: &HashMap<String, (ContractClass, String, PathBuf)>,
+    classes_to_verify_map: &HashMap<String, (ContractClass, PathBuf)>,
 ) {
     for (class_hash, class_result) in class_verification_data.iter_mut() {
-        if let Some((inline_contract_class, inline_class_hash, inline_cairo_debug_info_path)) =
-            classes_to_verify_map.get(class_hash)
+        if let Some((contract_class, cairo_debug_info_path)) = classes_to_verify_map.get(class_hash)
         {
             // If the class is found, update the contract_class and cairo_info_path in class_result
             if let Ok((
                 _,
                 program_from_blockchain,
                 _,
-                ref mut contract_class,
-                ref mut inline_strategy_class_hash,
-                ref mut cairo_debug_info_path,
-                ref mut cairo_debug_info,
+                ref mut existing_contract_class,
+                _,
+                ref mut existing_cairo_debug_info_path,
+                ref mut existing_cairo_debug_info,
             )) = class_result
             {
-                *contract_class = Some(inline_contract_class.clone());
-                *inline_strategy_class_hash = Some(inline_class_hash.clone());
-                *cairo_debug_info_path = Some(inline_cairo_debug_info_path.clone());
+                *existing_contract_class = Some(contract_class.clone());
+                *existing_cairo_debug_info_path = Some(cairo_debug_info_path.clone());
 
-                //                if !programs_match(inline_contract_class, program_from_blockchain) {
-                //                    let err = anyhow::anyhow!(
-                //                        "Contract class does not match for class hash: {}",
-                //                        class_hash
-                //                    );
-                //                    error!("{:?}", err);
-                //                    *class_result = Err(err);
-                //                    continue;
-                //                }
+                if !programs_match(contract_class, program_from_blockchain) {
+                    let err = anyhow::anyhow!(
+                        "Contract class does not match for class hash: {}",
+                        class_hash
+                    );
+                    error!("{:?}", err);
+                    *class_result = Err(err);
+                    continue;
+                }
 
-                match load_cairo_debug_info(inline_cairo_debug_info_path) {
-                    Ok(debug_info) => *cairo_debug_info = Some(debug_info),
+                match load_cairo_debug_info(cairo_debug_info_path) {
+                    Ok(debug_info) => *existing_cairo_debug_info = Some(debug_info),
                     Err(err) => {
                         error!("{}", err);
                         *class_result = Err(err);
