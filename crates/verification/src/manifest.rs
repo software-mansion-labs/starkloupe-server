@@ -12,6 +12,7 @@ pub struct Manifest {
     pub dojo_namespace_name: Option<String>,
     pub cairo_version: (u32, u32, u32),
     pub profiles: HashSet<String>,
+    pub profile_with_inline_strategy: HashMap<String, bool>,
 }
 
 impl Manifest {
@@ -43,6 +44,14 @@ impl Manifest {
             );
         }
 
+        fn is_cairo_inline_strategy_on(cairo_table: &toml::map::Map<String, toml::Value>) -> bool {
+            match cairo_table.get("inlining-strategy") {
+                Some(toml::Value::String(value)) => "avoid" == value,
+                _ => false,
+            }
+        }
+
+        let mut profile_with_inline_strategy = HashMap::new();
         let mut profiles: HashSet<String> =
             HashSet::from(["release".to_string(), "dev".to_string()]);
         if let Some(profile_table) = scarb_config_toml
@@ -56,6 +65,10 @@ impl Manifest {
                     .and_then(|table| table.get_mut("cairo").and_then(toml::Value::as_table_mut))
                 {
                     insert_cairo_debug_info(cairo_table);
+                    if is_cairo_inline_strategy_on(cairo_table) {
+                        profile_with_inline_strategy.insert(profile_name.to_string(), true);
+                    } else {
+                    }
                 } else if let Some(profile_table) = profile_value.as_table_mut() {
                     let mut cairo_table = toml::map::Map::new();
                     insert_cairo_debug_info(&mut cairo_table);
@@ -69,6 +82,9 @@ impl Manifest {
             .and_then(toml::Value::as_table_mut)
         {
             insert_cairo_debug_info(cairo_table);
+            if is_cairo_inline_strategy_on(cairo_table) {
+                profile_with_inline_strategy.insert("default_profile".to_string(), true);
+            }
         } else {
             let mut cairo_table = toml::map::Map::new();
             insert_cairo_debug_info(&mut cairo_table);
@@ -76,6 +92,35 @@ impl Manifest {
                 .as_table_mut()
                 .unwrap()
                 .insert("cairo".to_string(), toml::Value::Table(cairo_table));
+        }
+
+        // If we did not found the inlining-strategy as build confirgurtion,
+        // the  profile_with_inline_strategy is empty, so we can create the new profile
+        // walnut-debug with inining strategy flag on
+        if profile_with_inline_strategy.is_empty() {
+            let mut walnut_profile = toml::map::Map::new();
+            let mut cairo_table = toml::map::Map::new();
+            insert_cairo_debug_info(&mut cairo_table);
+            cairo_table.insert(
+                "inlining-strategy".to_string(),
+                toml::Value::String("avoid".to_string()),
+            );
+            walnut_profile.insert("cairo".to_string(), toml::Value::Table(cairo_table));
+
+            let profile_table = scarb_config_toml
+                .as_table_mut()
+                .unwrap()
+                .entry("profile")
+                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+
+            if let toml::Value::Table(profile_table) = profile_table {
+                profile_table.insert(
+                    "walnut-debug".to_string(),
+                    toml::Value::Table(walnut_profile),
+                );
+            }
+            profiles.insert("walnut-debug".to_string());
+            profile_with_inline_strategy.insert("walnut-debug".to_string(), true);
         }
 
         // Remove the "license-file" field under the "package" section if it exists
@@ -168,6 +213,7 @@ impl Manifest {
             dojo_namespace_name,
             cairo_version,
             profiles,
+            profile_with_inline_strategy,
         })
     }
 }

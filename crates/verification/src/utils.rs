@@ -71,3 +71,24 @@ pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
 
     Ok(())
 }
+
+pub fn remove_walnut_debug_from_scarb(source_code: &mut HashMap<String, String>) {
+    if let Some(scarb_toml_contents) = source_code.get("Scarb.toml") {
+        if let Ok(mut scarb_toml_parsed) = scarb_toml_contents.parse::<toml::Value>() {
+            if let Some(profile_table) = scarb_toml_parsed
+                .get_mut("profile")
+                .and_then(toml::Value::as_table_mut)
+            {
+                profile_table.remove("walnut-debug");
+                match toml::to_string(&scarb_toml_parsed) {
+                    Ok(updated_scarb_config) => {
+                        source_code.insert("Scarb.toml".to_string(), updated_scarb_config);
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize and update Scarb.toml: {}", e);
+                    }
+                }
+            }
+        }
+    }
+}

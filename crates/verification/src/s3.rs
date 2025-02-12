@@ -1,4 +1,4 @@
-use crate::db::fetch_verified_class;
+use crate::db::{fetch_verified_class, fetch_verified_class_with_inlining_class};
 use crate::SierraToCairoDebugInfo;
 use crate::{VerifiedClassData, VerifiedClassRow};
 use anyhow::Result;
@@ -11,6 +11,65 @@ use tracing::error;
 
 pub fn key_for_class_hash(class_hash: &str) -> String {
     format!("class-{}.json", class_hash)
+}
+
+pub async fn fetch_verified_class_hash_with_contract_class_data(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    class_hash: &str,
+) -> Result<(String, Option<ContractClass>)> {
+    let verified_class = fetch_verified_class_with_inlining_class(db_pool, class_hash).await?;
+
+    let primary_class_hash = &verified_class.0;
+    let bucket_name = "walnutserver-east-1-classes-verification";
+
+    // First try to fetch class data with inline_class_hash, if we have it
+    if let Some(inline_class_hash) = &verified_class.1 {
+        let key = key_for_class_hash(inline_class_hash);
+        if let Ok(verified_class_data) = fetch_and_parse_file(s3_client, bucket_name, key).await {
+            return Ok((
+                primary_class_hash.clone(),
+                Some(verified_class_data.contract_class),
+            ));
+        }
+    }
+
+    // If inline_class_hash does not exist, or there is no class data on s3, try with primary_class_hash
+    let key = key_for_class_hash(primary_class_hash);
+    let contract_class_data = fetch_and_parse_file(s3_client, bucket_name, key)
+        .await
+        .ok()
+        .map(|d| d.contract_class);
+
+    Ok((primary_class_hash.clone(), contract_class_data))
+}
+
+pub async fn fetch_verified_class_hash_with_source_code_data(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    class_hash: &str,
+) -> Result<Option<HashMap<String, String>>> {
+    let verified_class = fetch_verified_class_with_inlining_class(db_pool, class_hash).await?;
+
+    let primary_class_hash = &verified_class.0;
+    let bucket_name = "walnutserver-east-1-classes-verification";
+
+    // First try to fetch class data with inline_class_hash, if we have it
+    if let Some(inline_class_hash) = &verified_class.1 {
+        let key = key_for_class_hash(inline_class_hash);
+        if let Ok(verified_class_data) = fetch_and_parse_file(s3_client, bucket_name, key).await {
+            return Ok(Some(verified_class_data.source_code));
+        }
+    }
+
+    // If inline_class_hash does not exist, or there is no class data on s3, try with primary_class_hash
+    let key = key_for_class_hash(primary_class_hash);
+    let source_code_data = fetch_and_parse_file(s3_client, bucket_name, key)
+        .await
+        .ok()
+        .map(|d| d.source_code);
+
+    Ok(source_code_data)
 }
 
 pub async fn fetch_verified_class_with_data(

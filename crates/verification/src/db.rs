@@ -41,6 +41,106 @@ pub async fn fetch_verified_class(
     Ok(verified_class)
 }
 
+pub async fn fetch_verified_classes_with_inlining_classes(
+    db_pool: &Pool<Postgres>,
+    class_hashes: &[String],
+) -> Result<HashMap<String, Option<String>>> {
+    let verified_classes = sqlx::query_as!(
+        VerifiedClassRow,
+        r#"SELECT *
+        FROM contract_classes
+        WHERE hash = ANY($1)"#,
+        &class_hashes
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    let verified_classes_hashes: Vec<String> = verified_classes
+        .iter()
+        .map(|c| c.hash.to_string())
+        .collect();
+
+    let verification_ids_rows = sqlx::query!(
+        r#"SELECT verification_id FROM class_hash_profiles WHERE class_hash = ANY($1)"#,
+        &verified_classes_hashes
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    let verification_ids = verification_ids_rows
+        .into_iter()
+        .map(|row| row.verification_id)
+        .collect::<Vec<Uuid>>();
+
+    let inline_class_hashes = sqlx::query!(
+        r#"SELECT class_hash, inline_strategy_class_hash, verification_id
+        FROM class_hash_profiles
+        WHERE verification_id = ANY($1) and class_hash = ANY($2)"#,
+        &verification_ids,
+        &verified_classes_hashes
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    let class_hash_map: HashMap<String, Option<String>> = inline_class_hashes
+        .into_iter()
+        .map(|row| (row.class_hash, row.inline_strategy_class_hash))
+        .collect();
+
+    Ok(class_hash_map)
+}
+
+pub async fn fetch_verified_class_with_inlining_class(
+    db_pool: &Pool<Postgres>,
+    class_hash: &str,
+) -> Result<(String, Option<String>)> {
+    let verified_class = sqlx::query_as!(
+        VerifiedClassRow,
+        r#"SELECT *
+        FROM contract_classes
+        WHERE hash = $1"#,
+        &class_hash
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    if verified_class.is_empty() {
+        return Ok((class_hash.to_string(), None));
+    }
+
+    let verified_class_hash: String = verified_class.iter().map(|c| c.hash.to_string()).collect();
+
+    let verification_ids_rows = sqlx::query!(
+        r#"SELECT verification_id FROM class_hash_profiles WHERE class_hash = $1"#,
+        &verified_class_hash
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    let verification_ids = verification_ids_rows
+        .into_iter()
+        .map(|row| row.verification_id)
+        .collect::<Vec<Uuid>>();
+
+    if verification_ids.is_empty() {
+        return Ok((verified_class_hash, None));
+    }
+
+    let inline_class_hash = sqlx::query!(
+        r#"SELECT class_hash, inline_strategy_class_hash, verification_id
+        FROM class_hash_profiles
+        WHERE verification_id = ANY($1) and class_hash = $2"#,
+        &verification_ids,
+        &verified_class_hash
+    )
+    .fetch_optional(db_pool)
+    .await?;
+
+    let inline_hash = inline_class_hash.and_then(|row| row.inline_strategy_class_hash);
+
+    Ok((verified_class_hash, inline_hash))
+}
+
 pub async fn insert_contract_class(
     db_pool: &Pool<Postgres>,
     class_hash: &str,
@@ -71,16 +171,20 @@ pub async fn insert_class_hash_profiles(
     class_hash: &str,
     profile: &str,
     verification_id: Uuid,
+    is_inline_strategy_active: &bool,
+    inline_strategy_class_hash: Option<&str>,
 ) -> Result<()> {
     sqlx::query!(
         r#"
-        INSERT INTO class_hash_profiles (class_hash, profile, verification_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO class_hash_profiles (class_hash, profile, verification_id, is_inline_strategy_active, inline_strategy_class_hash)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (class_hash, profile, verification_id) DO NOTHING
         "#,
         class_hash,
         profile,
-        verification_id
+        verification_id,
+        is_inline_strategy_active,
+        inline_strategy_class_hash
     )
     .execute(db_pool)
     .await?;

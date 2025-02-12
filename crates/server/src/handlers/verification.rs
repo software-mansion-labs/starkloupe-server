@@ -73,29 +73,42 @@ pub async fn get_verification_status_handler(
                     .await
                     .unwrap_or_default();
 
-            // Create the verification statuses with the profiles
+            // Create the verification statuses with the profiles, filtering out invalid rows
             let verification_statuses = verification_status_rows
                 .iter()
-                .map(|row| {
-                    let profiles = class_hash_profiles
-                        .get(row.class_hash.as_ref().unwrap_or(&"".to_string()))
-                        .cloned();
-
-                    VerificationStatusSerializable {
-                        primary_id: row.primary_id,
-                        id: row.id.to_string(),
-                        network: row.network.clone(),
-                        class_hash: row.class_hash.clone(),
-                        status: row.status.clone(),
-                        message: row.message.clone(),
-                        project_id: row.project_id,
-                        created_at: row.created_at.to_string(),
-                        updated_at: row.updated_at.to_string(),
-                        profiles,
+                .filter_map(|row| {
+                    if let Some(class_hash) = row.class_hash.as_ref() {
+                        if let Some(profiles) = class_hash_profiles.get(class_hash) {
+                            // If "walnut-debug" is the only profile, skip this row
+                            if profiles.contains(&"walnut-debug".to_string()) && profiles.len() == 1
+                            {
+                                return None;
+                            } else {
+                                // Otherwise, create the verification status
+                                return Some(VerificationStatusSerializable {
+                                    primary_id: row.primary_id,
+                                    id: row.id.to_string(),
+                                    network: row.network.clone(),
+                                    class_hash: row.class_hash.clone(),
+                                    status: row.status.clone(),
+                                    message: row.message.clone(),
+                                    project_id: row.project_id,
+                                    created_at: row.created_at.to_string(),
+                                    updated_at: row.updated_at.to_string(),
+                                    profiles: Some(
+                                        profiles
+                                            .iter()
+                                            .filter(|&profile| profile != "walnut-debug")
+                                            .cloned()
+                                            .collect(),
+                                    ),
+                                });
+                            }
+                        }
                     }
+                    None
                 })
                 .collect::<Vec<_>>();
-
             (
                 StatusCode::OK,
                 Json(VerificationStatusResponse {

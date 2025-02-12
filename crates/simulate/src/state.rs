@@ -6,23 +6,27 @@ use blockifier::state::cached_state::StorageEntry;
 use blockifier::state::errors::StateError::{self, StateReadError};
 use blockifier::state::state_api::{StateReader, StateResult};
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cheatnet::state::BlockInfoReader;
 use conversions::FromConv;
 use flate2::read::GzDecoder;
 use num_bigint::BigUint;
 use runtime::starknet::context::SerializableGasPrices;
+use sqlx::Pool;
+use sqlx::Postgres;
 use starknet::core::types::{
     BlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
-    DeployedContractItem, Felt,
+    DeployedContractItem, Felt, FlattenedSierraClass,
 };
+use starknet::core::types::{EntryPointsByType, SierraEntryPoint};
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::deprecated_contract_class::{
     ContractClass as DeprecatedContractClass, EntryPoint, EntryPointType,
 };
 use starknet_api::state::StorageKey;
-use starknet_old::core::types as starknet_old_types;
+use starknet_old::core::types::{self as starknet_old_types};
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::Provider;
 use starknet_providers::{JsonRpcClient, ProviderError};
@@ -32,6 +36,7 @@ use std::io::Read;
 use tracing::error;
 use universal_sierra_compiler_api::{compile_sierra, SierraType};
 use url::Url;
+use verification::s3::fetch_verified_class_hash_with_contract_class_data;
 use walnut_shared::{
     block_id_to_old_block_id, felt_to_field_element, field_element_to_felt,
     old_declared_classes_to_declared_classes, old_deploy_contracts_to_deploy_contracts,
@@ -172,6 +177,8 @@ pub struct ForkStateReader {
     block_number: u64,
     adjusted_block_number: u64,
     pub in_memory_fork_cache: RefCell<InMemoryForkCache>, // Wrap in RefCell
+    db_pool: Pool<Postgres>,
+    s3_client: aws_sdk_s3::Client,
 }
 
 impl ForkStateReader {
@@ -180,6 +187,8 @@ impl ForkStateReader {
         block_number: u64,
         transaction_index: usize,
         tx_number_in_block: usize,
+        db_pool: &Pool<Postgres>,
+        s3_client: &aws_sdk_s3::Client,
     ) -> anyhow::Result<Self> {
         let block_id = BlockId::Number(block_number);
         let adjusted_block_number = block_number - 1;
@@ -189,6 +198,8 @@ impl ForkStateReader {
             block_number,
             adjusted_block_number,
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
+            db_pool: db_pool.clone(),
+            s3_client: s3_client.clone(),
         };
 
         if tx_number_in_block > 1 {
@@ -343,6 +354,92 @@ impl ForkStateReader {
                 continue;
             }
         }
+    }
+
+    fn fetch_and_compile_verified_contract_class(
+        &self,
+        class_hash: ClassHash,
+        contract_class: ContractClass,
+    ) -> StateResult<()> {
+        let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
+
+        let converted_sierra_program: Vec<Felt> = contract_class
+            .sierra_program
+            .iter()
+            .map(|element| Felt::from(element.value.clone()))
+            .collect();
+
+        let entry_points = &contract_class.entry_points_by_type;
+        let entry_points_converted = EntryPointsByType {
+            constructor: entry_points
+                .constructor
+                .iter()
+                .map(|entry| SierraEntryPoint {
+                    selector: Felt::from_dec_str(&entry.selector.to_str_radix(10))
+                        .expect("Invalid Felt conversion"),
+                    function_idx: entry.function_idx as u64,
+                })
+                .collect(),
+            external: entry_points
+                .external
+                .iter()
+                .map(|entry| SierraEntryPoint {
+                    selector: Felt::from_dec_str(&entry.selector.to_str_radix(10))
+                        .expect("Invalid Felt conversion"),
+                    function_idx: entry.function_idx as u64,
+                })
+                .collect(),
+            l1_handler: entry_points
+                .l1_handler
+                .iter()
+                .map(|entry| SierraEntryPoint {
+                    selector: Felt::from_dec_str(&entry.selector.to_str_radix(10))
+                        .expect("Invalid Felt conversion"),
+                    function_idx: entry.function_idx as u64,
+                })
+                .collect(),
+        };
+
+        let contract_class_starknet = ContractClassStarknet::Sierra(FlattenedSierraClass {
+            sierra_program: converted_sierra_program,
+            contract_class_version: contract_class.contract_class_version.clone(),
+            entry_points_by_type: entry_points_converted,
+            abi: contract_class.abi.as_ref().unwrap().json(),
+        });
+
+        in_memory_fork_cache.cache_contract_class(class_hash, contract_class_starknet);
+
+        let sierra_contract_class = serde_json::json!({
+            "sierra_program": contract_class.sierra_program,
+            "contract_class_version": contract_class.contract_class_version,
+            "entry_points_by_type": contract_class.entry_points_by_type,
+            "abi": contract_class.abi
+        });
+
+        let casm_contract_class_raw =
+            compile_sierra(&sierra_contract_class, None, &SierraType::Contract)
+                .map_err(|err| StateError::StateReadError(err.to_string()))?;
+
+        let casm_contract_class: CasmContractClass = serde_json::from_str(&casm_contract_class_raw)
+            .map_err(|e| {
+                StateError::StateReadError(format!(
+                    "Unable to deserialize CasmContractClass: {}",
+                    e
+                ))
+            })?;
+
+        let compiled_contract_class = ContractClassBlockifier::V1(
+            ContractClassV1::try_from(casm_contract_class).map_err(|e| {
+                StateError::StateReadError(format!(
+                    "Unable to create ContractClassV1 from CasmContractClass: {}",
+                    e
+                ))
+            })?,
+        );
+
+        in_memory_fork_cache.cache_compiled_contract_class(class_hash, compiled_contract_class);
+
+        Ok(())
     }
 
     fn fetch_and_compile_contract_class(
@@ -638,16 +735,51 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
-        self.fetch_and_compile_contract_class(class_hash, self.adjusted_block_id())?;
-        self.in_memory_fork_cache
-            .borrow()
-            .get_compiled_contract_class(class_hash)
-            .map_err(|_| {
-                StateError::StateReadError(format!(
-                    "Failed to retrieve compiled contract class for class_hash: {}",
-                    class_hash
-                ))
-            })
+        match tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                fetch_verified_class_hash_with_contract_class_data(
+                    &self.db_pool,
+                    &self.s3_client,
+                    &class_hash.to_fixed_hex_string(),
+                ),
+            )
+        }) {
+            Ok((class_hash, Some(contract_class))) => {
+                let class_hash_felt = Felt::from_hex(&class_hash).unwrap();
+
+                self.fetch_and_compile_verified_contract_class(
+                    ClassHash(class_hash_felt),
+                    contract_class,
+                )?;
+                self.in_memory_fork_cache
+                    .borrow()
+                    .get_compiled_contract_class(ClassHash(class_hash_felt))
+                    .map_err(|_| {
+                        StateError::StateReadError(format!(
+                            "Failed to retrieve compiled contract class for class_hash: {}",
+                            class_hash
+                        ))
+                    })
+            }
+            Ok((class_hash, None)) => {
+                let class_hash_felt = Felt::from_hex(&class_hash).unwrap();
+
+                self.fetch_and_compile_contract_class(
+                    ClassHash(class_hash_felt),
+                    self.adjusted_block_id(),
+                )?;
+                self.in_memory_fork_cache
+                    .borrow()
+                    .get_compiled_contract_class(ClassHash(class_hash_felt))
+                    .map_err(|_| {
+                        StateError::StateReadError(format!(
+                            "Failed to retrieve compiled contract class for class_hash: {}",
+                            class_hash
+                        ))
+                    })
+            }
+            Err(e) => Err(StateError::StateReadError(format!("{}", e))),
+        }
     }
 
     fn get_compiled_class_hash(&self, _class_hash: ClassHash) -> StateResult<CompiledClassHash> {

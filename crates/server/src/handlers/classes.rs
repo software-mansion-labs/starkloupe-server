@@ -15,7 +15,10 @@ use tracing::error;
 use utoipa::ToSchema;
 use verification::{
     db::fetch_verified_class,
-    s3::{fetch_class_source_code, fetch_verified_class_with_data},
+    s3::{
+        fetch_class_source_code, fetch_verified_class_hash_with_source_code_data,
+        fetch_verified_class_with_data,
+    },
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -123,9 +126,16 @@ pub async fn get_class_handler(
         .is_ok();
 
     let source_code = if query.include_source_code.unwrap_or(false) && is_verified {
-        fetch_class_source_code(&state.s3_client, &class_hash_fixed)
-            .await
-            .ok()
+        match fetch_verified_class_hash_with_source_code_data(
+            &state.db_pool,
+            &state.s3_client,
+            &class_hash_fixed,
+        )
+        .await
+        {
+            Ok(source_code) => source_code,
+            Err(_) => None,
+        }
     } else {
         None
     };

@@ -8,7 +8,7 @@ use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use tracing::error;
 use verification::{
-    db::fetch_verified_classes, s3::key_for_class_hash, CodeLocation,
+    db::fetch_verified_classes_with_inlining_classes, s3::key_for_class_hash, CodeLocation,
     SierraStatementToCairoDebugInfo, VerifiedClassData,
 };
 
@@ -38,20 +38,26 @@ pub async fn fetch_classes_debugger_data(
     let mut classes_debugger_data: HashMap<String, ClassDebuggerDataWithContractClass> =
         HashMap::new();
 
-    let verified_classes = match fetch_verified_classes(db_pool, classes).await {
-        Ok(vc) => vc,
-        Err(e) => {
-            error!("Failed to fetch verified classes: {:?}", e);
-            Vec::new()
-        }
-    };
+    let verified_classes =
+        match fetch_verified_classes_with_inlining_classes(db_pool, classes).await {
+            Ok(vc) => vc,
+            Err(e) => {
+                error!("Failed to fetch verified classes: {:?}", e);
+                HashMap::new()
+            }
+        };
 
-    let fetches = verified_classes.iter().map(|verified_class| {
-        fetch_and_parse_file(
+    let fetches = verified_classes.iter().map(|(key, value)| match value {
+        Some(value) => fetch_and_parse_file(
             s3_client,
             "walnutserver-east-1-classes-verification",
-            key_for_class_hash(&verified_class.hash),
-        )
+            key_for_class_hash(value),
+        ),
+        None => fetch_and_parse_file(
+            s3_client,
+            "walnutserver-east-1-classes-verification",
+            key_for_class_hash(key),
+        ),
     });
 
     let results = match future::try_join_all(fetches).await {
@@ -136,8 +142,9 @@ pub async fn fetch_classes_debugger_data(
         };
 
         classes_debugger_data.insert(
-            verified_class_row.hash.clone(),
+            verified_class_row.0.clone(),
             ClassDebuggerDataWithContractClass {
+                inline_strategy_class_hash: verified_class_row.1.clone(),
                 class_debugger_data,
                 contract_class: verified_class_data.contract_class.clone(),
             },

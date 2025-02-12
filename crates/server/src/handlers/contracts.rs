@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use url::Url;
 use utoipa::ToSchema;
-use verification::{db::fetch_verified_class, s3::fetch_verified_class_with_data};
+use verification::{db::fetch_verified_class, s3::fetch_verified_class_hash_with_source_code_data};
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
     field_element_to_felt,
@@ -120,15 +120,20 @@ async fn fetch_contract_data(
         .is_ok();
 
     let source_code = if is_verified && include_source_code {
-        match fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash_str)
-            .await
+        match fetch_verified_class_hash_with_source_code_data(
+            &state.db_pool,
+            &state.s3_client,
+            &class_hash_str,
+        )
+        .await
         {
-            Ok((_, verified_class_data)) => Some(verified_class_data.source_code),
+            Ok(source_code) => source_code,
             Err(_) => None,
         }
     } else {
         None
     };
+
     Some(ContractResponseWithSourceCode {
         chain_id: chain_id.map(chain_id_to_readable_string),
         class_hash: class_hash_str,

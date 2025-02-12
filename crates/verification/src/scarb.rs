@@ -112,7 +112,10 @@ pub fn build_with_scarb_for_profile(
 
     if let Some(dojo_version) = &manifest.dojo_version {
         if !is_dojo_version_supported(&dojo_version.as_str()) {
-            return Err(anyhow::anyhow!("Unsupported Dojo version {}.", dojo_version));
+            return Err(anyhow::anyhow!(
+                "Unsupported Dojo version {}.",
+                dojo_version
+            ));
         }
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -138,11 +141,19 @@ pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
 }
 
 pub fn is_old_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    is_old_version_supported(tuple_to_version_string(version).as_str(), &supported_old_cairo_versions(), "cairo")
+    is_old_version_supported(
+        tuple_to_version_string(version).as_str(),
+        &supported_old_cairo_versions(),
+        "cairo",
+    )
 }
 
 pub fn is_new_cairo_version_supported(version: (u32, u32, u32)) -> bool {
-    is_new_version_supported(tuple_to_version_string(version).as_str(), minimum_supported_new_cairo_version(), "cairo")
+    is_new_version_supported(
+        tuple_to_version_string(version).as_str(),
+        minimum_supported_new_cairo_version(),
+        "cairo",
+    )
 }
 
 pub fn is_dojo_version_supported(version: &str) -> bool {
@@ -157,24 +168,38 @@ pub fn is_new_dojo_version_supported(version: &str) -> bool {
     is_new_version_supported(version, minimum_supported_new_dojo_version(), "dojo")
 }
 
-fn is_old_version_supported(version: &str, supported_old_versions: &Vec<Version>, tool_name: &str) -> bool {
+fn is_old_version_supported(
+    version: &str,
+    supported_old_versions: &Vec<Version>,
+    tool_name: &str,
+) -> bool {
     let version_stripped = version.strip_prefix('v').unwrap_or(version);
     let old_version_supported = match Version::parse(&version_stripped) {
         Ok(ver) => supported_old_versions.contains(&ver),
         Err(_) => {
-            error!("Invalid {} version on support check: {}", tool_name, version);
+            error!(
+                "Invalid {} version on support check: {}",
+                tool_name, version
+            );
             false
         }
     };
     old_version_supported
 }
 
-fn is_new_version_supported(version: &str, minimum_supported_version: Version, tool_name: &str) -> bool {
+fn is_new_version_supported(
+    version: &str,
+    minimum_supported_version: Version,
+    tool_name: &str,
+) -> bool {
     let version_stripped = version.strip_prefix('v').unwrap_or(version);
     let version_supported = match Version::parse(&version_stripped) {
         Ok(ver) => ver >= minimum_supported_version,
         Err(_) => {
-            error!("Invalid {} version on support check: {}", tool_name, version);
+            error!(
+                "Invalid {} version on support check: {}",
+                tool_name, version
+            );
             false
         }
     };

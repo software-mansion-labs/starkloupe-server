@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.31] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.31)
+
+- Inline strategy debug support
+
 ### [0.0.30] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.30)
 
 - List of all emitted events, remove events from call trace

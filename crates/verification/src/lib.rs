@@ -27,6 +27,7 @@ use uuid::Uuid;
 /// - `Vec<Felt>`: The program from the network.
 /// - `(u32, u32, u32)`: The Cairo version from the network.
 /// - `Option<ContractClass>`: The Sierra contract class compiled from the source code.
+/// - `Option<String>`: The class_hash that is caluclated with inline strategy on
 /// - `Option<PathBuf>`: The path to the debug info file compiled from the source code.
 /// - `Option<SierraToCairoDebugInfo>`: The Cairo debug info compiled from the source code.
 type ClassVerificationData = HashMap<
@@ -36,6 +37,7 @@ type ClassVerificationData = HashMap<
         Vec<Felt>,
         (u32, u32, u32),
         Option<ContractClass>,
+        Option<String>,
         Option<PathBuf>,
         Option<SierraToCairoDebugInfo>,
     )>,
