@@ -1,4 +1,7 @@
 # Changelog
+### [0.0.31] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.31)
+ 
+- fix in moving failed verifications to failed_tmp - now folder names are verification_ids
 
 ### [0.0.30] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.30)
 

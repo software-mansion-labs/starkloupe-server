@@ -206,7 +206,7 @@ async fn verify(
     }
 
     if encountered_error {
-        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
+        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
