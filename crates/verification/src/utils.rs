@@ -50,8 +50,8 @@ pub fn create_temp_directory() -> Result<PathBuf> {
 
 // Failed verifications data for further investigation.
 // There is no auto removal from this location.
-pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
-    let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
+pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf, verification_id: &Uuid) -> Result<()> {
+    let failed_tmp_dir = PathBuf::from(format!("tmp/failed-verification/{}", verification_id));
 
     error!(
         "Failed to verify classes - moving {} to {} for further investigation.",
