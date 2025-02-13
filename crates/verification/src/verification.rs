@@ -1,5 +1,6 @@
 use crate::db::{
-    insert_contract_class, insert_verification_status, update_verification_status,
+    fetch_verified_class, insert_contract_class, insert_verification_request,
+    insert_verification_status, update_verification_request, update_verification_status,
     update_verification_statuses,
 };
 use crate::helpers::{
@@ -10,9 +11,7 @@ use crate::helpers::{
 use crate::manifest::Manifest;
 use crate::s3::upload_class_to_s3;
 use crate::scarb::{is_cairo_version_supported, is_new_cairo_version_supported};
-use crate::utils::{
-    create_files_from_map, create_temp_directory, move_failed_verification_to_failed_tmp,
-};
+use crate::utils::{create_files_from_map, create_temp_directory};
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Postgres};
@@ -250,15 +249,6 @@ pub async fn initiate_verification(
                 {
                     error!("Failed to update verification  statuses: {:?}", err)
                 };
-
-                error!(
-                    class_hash = format!("{:?}", pending_class_hashes),
-                    verification_id = verification_status_id.to_string(),
-                    chain_id = chain_id,
-                    tags.verification_status = "failed",
-                    "Verification failed: {}",
-                    e.to_string()
-                );
             }
         }
     });
@@ -277,7 +267,7 @@ pub async fn verify_by_class_hashes(
 ) -> Result<HashMap<String, (EVerificationStatus, Option<String>)>> {
     let tmp_dir = create_temp_directory()?;
 
-    let class_verification_data = verify(
+    match verify(
         &tmp_dir,
         db_pool,
         &provider_client,
@@ -285,55 +275,73 @@ pub async fn verify_by_class_hashes(
         verification_id,
         &mut source_code,
     )
-    .await;
-
-    match &class_verification_data {
-        Ok(_class_verification_data) => {
+    .await
+    {
+        Ok(class_verification_data) => {
             fs::remove_dir_all(&tmp_dir)?;
+            if let Err(e) = update_verification_request(
+                &db_pool,
+                verification_id,
+                EVerificationStatus::Success.as_str(),
+                &None,
+            )
+            .await
+            {
+                error!("Failed to update verification request status: {:?}", e);
+            }
+
+            let mut class_status_map: HashMap<String, (EVerificationStatus, Option<String>)> =
+                HashMap::new();
+
+            for (class_hash, class_result) in class_verification_data.iter() {
+                if let Ok((_, _, _, Some(contract_class), _, cairo_debug_info)) = class_result {
+                    upload_class_to_s3(
+                        s3_client,
+                        class_hash,
+                        contract_class,
+                        cairo_debug_info,
+                        &source_code,
+                    )
+                    .await?;
+
+                    let is_cairo_debug_info = cairo_debug_info.is_some();
+
+                    insert_contract_class(
+                        db_pool,
+                        class_hash,
+                        true,
+                        is_cairo_debug_info,
+                        true,
+                        chain_id.as_deref(),
+                    )
+                    .await?;
+
+                    class_status_map
+                        .insert(class_hash.clone(), (EVerificationStatus::Success, None));
+                } else if let Err(e) = class_result {
+                    class_status_map.insert(
+                        class_hash.clone(),
+                        (EVerificationStatus::Failed, Some(e.to_string())),
+                    );
+                }
+            }
+
+            Ok(class_status_map)
         }
         Err(e) => {
-            error!("{:?}", e);
-        }
-    }
-
-    let class_verification_data: ClassVerificationData = class_verification_data?;
-
-    let mut class_status_map: HashMap<String, (EVerificationStatus, Option<String>)> =
-        HashMap::new();
-
-    for (class_hash, class_result) in class_verification_data.iter() {
-        if let Ok((_, _, _, Some(contract_class), _, cairo_debug_info)) = class_result {
-            upload_class_to_s3(
-                s3_client,
-                class_hash,
-                contract_class,
-                cairo_debug_info,
-                &source_code,
-            )
-            .await?;
-
-            let is_cairo_debug_info = cairo_debug_info.is_some();
-
-            insert_contract_class(
+            if let Err(err) = update_verification_request(
                 db_pool,
-                class_hash,
-                true,
-                is_cairo_debug_info,
-                true,
-                chain_id.as_deref(),
+                verification_id,
+                EVerificationStatus::Failed.as_str(),
+                &Some(e.to_string()),
             )
-            .await?;
-
-            class_status_map.insert(class_hash.clone(), (EVerificationStatus::Success, None));
-        } else if let Err(e) = class_result {
-            class_status_map.insert(
-                class_hash.clone(),
-                (EVerificationStatus::Failed, Some(e.to_string())),
-            );
+            .await
+            {
+                error!("Failed to update verification request status: {:?}", err);
+            }
+            Err(e)
         }
     }
-
-    Ok(class_status_map)
 }
 
 async fn verify(
@@ -396,6 +404,16 @@ async fn verify(
     })?;
 
     let manifest = Manifest::new(source_code, Some(cairo_version))?;
+    insert_verification_request(
+        db_pool,
+        verification_id,
+        "pending",
+        tuple_to_version_string(manifest.cairo_version).as_str(),
+        &manifest.package_name,
+    )
+    .await
+    .context("Failed to insert verification request status entry")?;
+
     create_files_from_map(source_code, tmp_dir)?;
 
     if is_new_cairo_version_supported(cairo_version) {

@@ -226,7 +226,6 @@ async fn spawn_new_cairo_version_verification_tasks(
                 }
             }
             Ok(Err(e)) => {
-                error!("Error processing profile: {:?}", e);
                 encountered_error = Some(e);
             }
             Err(e) => {
@@ -284,7 +283,6 @@ pub async fn process_old_cairo_version_verification(
     )
     .await
     {
-        error!("Verification failed: {:?}", encountered_error);
         if let Err(move_err) = move_failed_verification_to_failed_tmp(tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
@@ -368,10 +366,7 @@ async fn spawn_old_cairo_version_verification_tasks(
                         .or_insert((contract_class, cairo_debug_info_path));
                 }
             }
-            Ok(Err(e)) => {
-                error!("Error processing profile: {:?}", e);
-                encountered_error = Some(e)
-            }
+            Ok(Err(e)) => encountered_error = Some(e),
             Err(e) => {
                 error!("Tokio task failed: {:?}", e);
                 encountered_error = Some(e.into())

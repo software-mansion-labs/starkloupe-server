@@ -195,11 +195,9 @@ async fn verify(
                 }
             }
             Ok(Err(e)) => {
-                error!("Error processing profile: {:?}", e);
                 encountered_error = Some(e);
             }
             Err(e) => {
-                error!("Tokio task failed: {:?}", e);
                 encountered_error = Some(e.into());
             }
         }
