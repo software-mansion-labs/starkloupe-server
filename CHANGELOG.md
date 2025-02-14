@@ -1,8 +1,12 @@
 # Changelog
 
-### [0.0.32] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.32)
+### [0.0.33] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.33)
 
 - Inline strategy debug support
+
+### [0.0.32] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.32)
+
+- Show error stack trace in case of project build fail
 
 ### [0.0.31] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.31)
 

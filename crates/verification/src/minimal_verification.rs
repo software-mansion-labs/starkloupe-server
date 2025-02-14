@@ -125,8 +125,6 @@ async fn verify(
 
     let mut verified_contract_classes: HashSet<String> = HashSet::new();
     let mut classes_to_verify_map: HashMap<String, (ContractClass, String)> = HashMap::new();
-
-    let mut encountered_error = false;
     let mut inline_class_hashes: Vec<(String, ContractClass)> = Vec::new();
 
     // First build profil with inline strategy, if it exists
@@ -149,7 +147,6 @@ async fn verify(
                             "Failed to insert inline strategy class hash profile: {:?}",
                             err
                         );
-                        encountered_error = true;
                     }
                     classes_to_verify_map
                         .insert(class_hash.clone(), (contract_class, class_hash.clone()));
@@ -212,6 +209,8 @@ async fn verify(
         })
         .collect();
 
+    let mut encountered_error: Option<anyhow::Error> = None;
+
     while let Some(result) = futures.next().await {
         match result {
             Ok(Ok((verified_hashes, classes, profile))) => {
@@ -241,25 +240,21 @@ async fn verify(
                 }
             }
             Ok(Err(e)) => {
-                error!("Error processing profile: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e);
             }
             Err(e) => {
-                error!("Tokio task failed: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e.into());
             }
         }
     }
 
-    if encountered_error {
+    if let Some(error) = encountered_error {
         if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
         }
-        return Err(anyhow::anyhow!(
-            "Verification failed due to build project errors."
-        ));
+        return Err(error);
     }
     // Database and S3 operations are now performed after all class_hash values are collected.
     for class_hash in classes_to_verify_map.keys() {

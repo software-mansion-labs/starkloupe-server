@@ -1,6 +1,6 @@
 use crate::db::{
-    insert_contract_class, insert_verification_status, update_verification_status,
-    update_verification_statuses,
+    insert_contract_class, insert_verification_request, insert_verification_status,
+    update_verification_request, update_verification_status, update_verification_statuses,
 };
 use crate::helpers::{
     fetch_class_from_blockchain, initialize_status_map, process_new_cairo_version_verification,
@@ -248,15 +248,6 @@ pub async fn initiate_verification(
                 {
                     error!("Failed to update verification  statuses: {:?}", err)
                 };
-
-                error!(
-                    class_hash = format!("{:?}", pending_class_hashes),
-                    verification_id = verification_status_id.to_string(),
-                    chain_id = chain_id,
-                    tags.verification_status = "failed",
-                    "Verification failed: {}",
-                    e.to_string()
-                );
             }
         }
     });
@@ -275,7 +266,7 @@ pub async fn verify_by_class_hashes(
 ) -> Result<HashMap<String, (EVerificationStatus, Option<String>)>> {
     let tmp_dir = create_temp_directory()?;
 
-    let class_verification_data = verify(
+    match verify(
         &tmp_dir,
         db_pool,
         &provider_client,
@@ -283,84 +274,102 @@ pub async fn verify_by_class_hashes(
         verification_id,
         &mut source_code,
     )
-    .await;
-
-    match &class_verification_data {
-        Ok(_class_verification_data) => {
+    .await
+    {
+        Ok(class_verification_data) => {
             fs::remove_dir_all(&tmp_dir)?;
-        }
-        Err(e) => {
-            error!("{:?}", e);
-        }
-    }
+            if let Err(e) = update_verification_request(
+                &db_pool,
+                verification_id,
+                EVerificationStatus::Success.as_str(),
+                &None,
+            )
+            .await
+            {
+                error!("Failed to update verification request status: {:?}", e);
+            }
 
-    let class_verification_data: ClassVerificationData = class_verification_data?;
+            let mut class_status_map: HashMap<String, (EVerificationStatus, Option<String>)> =
+                HashMap::new();
 
-    let mut class_status_map: HashMap<String, (EVerificationStatus, Option<String>)> =
-        HashMap::new();
+            for (class_hash, class_result) in class_verification_data.iter() {
+                if let Ok((
+                    _,
+                    _,
+                    _,
+                    Some(contract_class),
+                    inline_strategy_class_hash,
+                    _,
+                    cairo_debug_info,
+                )) = class_result
+                {
+                    //We are uploading to s3 the related inline class hash if it exist, as this one we need to get the
+                    //inline denug information
+                    remove_walnut_debug_from_scarb(&mut source_code);
+                    match inline_strategy_class_hash {
+                        Some(inline_strategy_class_hash) => {
+                            upload_class_to_s3(
+                                s3_client,
+                                inline_strategy_class_hash,
+                                contract_class,
+                                cairo_debug_info,
+                                &source_code,
+                            )
+                            .await?;
+                        }
+                        None => {
+                            upload_class_to_s3(
+                                s3_client,
+                                class_hash,
+                                contract_class,
+                                cairo_debug_info,
+                                &source_code,
+                            )
+                            .await?;
+                        }
+                    }
 
-    for (class_hash, class_result) in class_verification_data.iter() {
-        if let Ok((
-            _,
-            _,
-            _,
-            Some(contract_class),
-            inline_strategy_class_hash,
-            _,
-            cairo_debug_info,
-        )) = class_result
-        {
-            //We are uploading to s3 the related inline class hash if it exist, as this one we need to get the
-            //inline denug information
-            remove_walnut_debug_from_scarb(&mut source_code);
-            match inline_strategy_class_hash {
-                Some(inline_strategy_class_hash) => {
-                    upload_class_to_s3(
-                        s3_client,
-                        inline_strategy_class_hash,
-                        contract_class,
-                        cairo_debug_info,
-                        &source_code,
-                    )
-                    .await?;
-                }
-                None => {
-                    upload_class_to_s3(
-                        s3_client,
+                    let is_cairo_debug_info = cairo_debug_info.is_some();
+                    // In db for contract_class table, we are insert the class_hash, as this one is from
+                    // user request for verification
+                    // We are not inserting the inline class hash here,as this one is not requested from
+                    // the user for the verification
+                    insert_contract_class(
+                        db_pool,
                         class_hash,
-                        contract_class,
-                        cairo_debug_info,
-                        &source_code,
+                        true,
+                        is_cairo_debug_info,
+                        true,
+                        chain_id.as_deref(),
                     )
                     .await?;
+
+                    class_status_map
+                        .insert(class_hash.clone(), (EVerificationStatus::Success, None));
+                } else if let Err(e) = class_result {
+                    class_status_map.insert(
+                        class_hash.clone(),
+                        (EVerificationStatus::Failed, Some(e.to_string())),
+                    );
                 }
             }
 
-            let is_cairo_debug_info = cairo_debug_info.is_some();
-            // In db for contract_class table, we are insert the class_hash, as this one is from
-            // user request for verification
-            // We are not inserting the inline class hash here,as this one is not requested from
-            // the user for the verification
-            insert_contract_class(
+            Ok(class_status_map)
+        }
+        Err(e) => {
+            if let Err(err) = update_verification_request(
                 db_pool,
-                class_hash,
-                true,
-                is_cairo_debug_info,
-                true,
-                chain_id.as_deref(),
+                verification_id,
+                EVerificationStatus::Failed.as_str(),
+                &Some(e.to_string()),
             )
-            .await?;
-
-            class_status_map.insert(class_hash.clone(), (EVerificationStatus::Success, None));
-        } else if let Err(e) = class_result {
-            class_status_map.insert(
-                class_hash.clone(),
-                (EVerificationStatus::Failed, Some(e.to_string())),
-            );
+            .await
+            {
+                error!("Failed to update verification request status: {:?}", err);
+            }
+            Err(e)
         }
     }
-
-    Ok(class_status_map)
 }
 
 async fn verify(
@@ -424,6 +433,16 @@ async fn verify(
     })?;
 
     let manifest = Manifest::new(source_code, Some(cairo_version))?;
+    insert_verification_request(
+        db_pool,
+        verification_id,
+        "pending",
+        tuple_to_version_string(manifest.cairo_version).as_str(),
+        &manifest.package_name,
+    )
+    .await
+    .context("Failed to insert verification request status entry")?;
+
     create_files_from_map(source_code, tmp_dir)?;
 
     if is_new_cairo_version_supported(cairo_version) {

@@ -138,24 +138,21 @@ pub async fn process_new_cairo_version_verification(
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
     let mut classes_to_verify_map: HashMap<String, (ContractClass, String)> = HashMap::new();
-    let encountered_error = spawn_new_cairo_version_verification_tasks(
+    if let Err(encountered_error) = spawn_new_cairo_version_verification_tasks(
         manifest,
         tmp_dir,
         db_pool,
         verification_id,
         &mut classes_to_verify_map,
     )
-    .await;
-
-    if encountered_error {
+    .await
+    {
         if let Err(move_err) = move_failed_verification_to_failed_tmp(tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
         }
-        return Err(anyhow::anyhow!(
-            "Verification failed due to build project errors."
-        ));
+        return Err(encountered_error);
     }
 
     update_new_cairo_version_class_verification_data(
@@ -172,10 +169,10 @@ async fn spawn_new_cairo_version_verification_tasks(
     db_pool: &Pool<Postgres>,
     verification_id: Uuid,
     classes_to_verify_map: &mut HashMap<String, (ContractClass, String)>,
-) -> bool {
+) -> Result<(), anyhow::Error> {
     // Broadcast channel for error signalization
     let (tx, _) = tokio::sync::broadcast::channel(1);
-    let mut encountered_error = false;
+    let mut encountered_error: Option<anyhow::Error> = None;
     let mut inline_class_hashes: Vec<(String, ContractClass)> = Vec::new();
 
     // First build profil with inline strategy, if it exists
@@ -198,7 +195,6 @@ async fn spawn_new_cairo_version_verification_tasks(
                             "Failed to insert inline strategy class hash profile: {:?}",
                             err
                         );
-                        encountered_error = true;
                     }
                     classes_to_verify_map
                         .insert(class_hash.clone(), (contract_class, class_hash.clone()));
@@ -206,7 +202,7 @@ async fn spawn_new_cairo_version_verification_tasks(
             }
             Err(e) => {
                 error!("Failed to build inline strategy profile: {:?}", e);
-                return true;
+                encountered_error = Some(e);
             }
         }
     }
@@ -275,17 +271,21 @@ async fn spawn_new_cairo_version_verification_tasks(
                     }
                 }
             }
-            Ok(Err(_e)) => {
-                encountered_error = true;
+            Ok(Err(e)) => {
+                encountered_error = Some(e);
             }
             Err(e) => {
                 error!("Tokio task failed: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e.into());
             }
         }
     }
 
-    encountered_error
+    if let Some(e) = encountered_error {
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 fn update_new_cairo_version_class_verification_data(
@@ -323,7 +323,8 @@ pub async fn process_old_cairo_version_verification(
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
     let mut classes_to_verify_map: HashMap<String, (ContractClass, PathBuf)> = HashMap::new();
-    let encountered_error = spawn_old_cairo_version_verification_tasks(
+
+    if let Err(encountered_error) = spawn_old_cairo_version_verification_tasks(
         manifest,
         cairo_version,
         tmp_dir,
@@ -331,17 +332,14 @@ pub async fn process_old_cairo_version_verification(
         verification_id,
         &mut classes_to_verify_map,
     )
-    .await;
-
-    if encountered_error {
+    .await
+    {
         if let Err(move_err) = move_failed_verification_to_failed_tmp(tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
         }
-        return Err(anyhow::anyhow!(
-            "Verification failed due to project build errors."
-        ));
+        return Err(encountered_error);
     }
 
     update_old_cairo_version_class_verification_data(
@@ -359,10 +357,10 @@ async fn spawn_old_cairo_version_verification_tasks(
     db_pool: &Pool<Postgres>,
     verification_id: Uuid,
     classes_to_verify_map: &mut HashMap<String, (ContractClass, PathBuf)>,
-) -> bool {
+) -> Result<(), anyhow::Error> {
     // Broadcast channel for error signalization
     let (tx, _) = tokio::sync::broadcast::channel(1);
-    let mut encountered_error = false;
+    let mut encountered_error: Option<anyhow::Error> = None;
 
     // Buld profiles, skip inline profile
     let mut futures: FuturesUnordered<_> = manifest
@@ -390,14 +388,14 @@ async fn spawn_old_cairo_version_verification_tasks(
                         cairo_version,
                         &tmp_dir_clone,
                         &profile,
-                    ) {
-                        Ok(classes) => Ok((classes, profile)),
-                        Err(e) => {
-                            let _ = tx.send(());
-                            Err(e)
+                        ) {
+                            Ok(classes) => Ok((classes, profile)),
+                            Err(e) => {
+                                let _ = tx.send(());
+                                Err(e)
+                            }
                         }
-                    }
-                        } => result
+                    } => result
                 }
             })
         })
@@ -425,17 +423,19 @@ async fn spawn_old_cairo_version_verification_tasks(
                         .or_insert((contract_class, cairo_debug_info_path));
                 }
             }
-            Ok(Err(_e)) => {
-                encountered_error = true;
-            }
+            Ok(Err(e)) => encountered_error = Some(e),
             Err(e) => {
                 error!("Tokio task failed: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e.into())
             }
         }
     }
 
-    encountered_error
+    if let Some(e) = encountered_error {
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 fn update_old_cairo_version_class_verification_data(
