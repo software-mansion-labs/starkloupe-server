@@ -1,7 +1,6 @@
 use crate::db::{
-    fetch_verified_class, insert_contract_class, insert_verification_request,
-    insert_verification_status, update_verification_request, update_verification_status,
-    update_verification_statuses,
+    insert_contract_class, insert_verification_request, insert_verification_status,
+    update_verification_request, update_verification_status, update_verification_statuses,
 };
 use crate::helpers::{
     fetch_class_from_blockchain, initialize_status_map, process_new_cairo_version_verification,
@@ -11,7 +10,7 @@ use crate::helpers::{
 use crate::manifest::Manifest;
 use crate::s3::upload_class_to_s3;
 use crate::scarb::{is_cairo_version_supported, is_new_cairo_version_supported};
-use crate::utils::{create_files_from_map, create_temp_directory};
+use crate::utils::{create_files_from_map, create_temp_directory, remove_walnut_debug_from_scarb};
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Postgres};
@@ -294,18 +293,47 @@ pub async fn verify_by_class_hashes(
                 HashMap::new();
 
             for (class_hash, class_result) in class_verification_data.iter() {
-                if let Ok((_, _, _, Some(contract_class), _, cairo_debug_info)) = class_result {
-                    upload_class_to_s3(
-                        s3_client,
-                        class_hash,
-                        contract_class,
-                        cairo_debug_info,
-                        &source_code,
-                    )
-                    .await?;
+                if let Ok((
+                    _,
+                    _,
+                    _,
+                    Some(contract_class),
+                    inline_strategy_class_hash,
+                    _,
+                    cairo_debug_info,
+                )) = class_result
+                {
+                    //We are uploading to s3 the related inline class hash if it exist, as this one we need to get the
+                    //inline denug information
+                    remove_walnut_debug_from_scarb(&mut source_code);
+                    match inline_strategy_class_hash {
+                        Some(inline_strategy_class_hash) => {
+                            upload_class_to_s3(
+                                s3_client,
+                                inline_strategy_class_hash,
+                                contract_class,
+                                cairo_debug_info,
+                                &source_code,
+                            )
+                            .await?;
+                        }
+                        None => {
+                            upload_class_to_s3(
+                                s3_client,
+                                class_hash,
+                                contract_class,
+                                cairo_debug_info,
+                                &source_code,
+                            )
+                            .await?;
+                        }
+                    }
 
                     let is_cairo_debug_info = cairo_debug_info.is_some();
-
+                    // In db for contract_class table, we are insert the class_hash, as this one is from
+                    // user request for verification
+                    // We are not inserting the inline class hash here,as this one is not requested from
+                    // the user for the verification
                     insert_contract_class(
                         db_pool,
                         class_hash,
@@ -383,6 +411,7 @@ async fn verify(
                         class_name.clone(),
                         program_from_blockchain.clone(),
                         *version,
+                        None,
                         None,
                         None,
                         None,

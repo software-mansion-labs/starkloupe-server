@@ -87,6 +87,7 @@ pub async fn simulate(
     } else {
         provider_client.block_number().await?
     };
+
     let (block_info, transaction_index, tx_number_in_block) =
         extract_block_txs_info(&provider_client, &args, block_number).await?;
 
@@ -97,6 +98,8 @@ pub async fn simulate(
             block_number,
             transaction_index,
             tx_number_in_block,
+            db_pool,
+            s3_client,
         )
         .map_err(|e| {
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
