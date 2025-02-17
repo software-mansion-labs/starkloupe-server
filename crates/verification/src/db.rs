@@ -67,26 +67,33 @@ pub async fn fetch_verified_classes_with_inlining_classes(
     .fetch_all(db_pool)
     .await?;
 
+    // Create an initial map with all verfied class_hash values set to None
+    let mut class_hash_map: HashMap<String, Option<String>> = verified_classes_hashes
+        .iter()
+        .map(|hash| (hash.clone(), None))
+        .collect();
+
     let verification_ids = verification_ids_rows
         .into_iter()
         .map(|row| row.verification_id)
         .collect::<Vec<Uuid>>();
 
-    let inline_class_hashes = sqlx::query!(
-        r#"SELECT class_hash, inline_strategy_class_hash, verification_id
+    if !verification_ids.is_empty() {
+        let inline_class_hashes = sqlx::query!(
+            r#"SELECT class_hash, inline_strategy_class_hash, verification_id
         FROM class_hash_profiles
         WHERE verification_id = ANY($1) and class_hash = ANY($2)"#,
-        &verification_ids,
-        &verified_classes_hashes
-    )
-    .fetch_all(db_pool)
-    .await?;
+            &verification_ids,
+            &verified_classes_hashes
+        )
+        .fetch_all(db_pool)
+        .await?;
 
-    let class_hash_map: HashMap<String, Option<String>> = inline_class_hashes
-        .into_iter()
-        .map(|row| (row.class_hash, row.inline_strategy_class_hash))
-        .collect();
-
+        // Update the map only for entries that have an inline_strategy_class_hash
+        for row in inline_class_hashes {
+            class_hash_map.insert(row.class_hash, row.inline_strategy_class_hash);
+        }
+    }
     Ok(class_hash_map)
 }
 
