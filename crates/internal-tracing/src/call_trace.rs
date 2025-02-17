@@ -243,14 +243,13 @@ pub fn get_internal_call_trace(
 
                 if parent_call.fp == trace_entry.fp {
                     for result in results.iter() {
-                        if nesting_level > deepest_panic_result_level {
-                            if is_panic_result(result.type_name.as_deref())
-                                && result.value[0] == "1"
-                            {
-                                deepest_panic_result_level = nesting_level;
-                                deepest_panic_result_call_id = Some(current_call_id);
-                                break;
-                            }
+                        if nesting_level > deepest_panic_result_level
+                            && is_panic_result(result.type_name.as_deref())
+                            && result.value[0] == "1"
+                        {
+                            deepest_panic_result_level = nesting_level;
+                            deepest_panic_result_call_id = Some(current_call_id);
+                            break;
                         }
                     }
 
@@ -305,7 +304,7 @@ pub fn get_internal_call_trace(
                         || cairo_locations == prev_cairo_locations
                     {
                         // If there are arguments or results
-                        if results.len() > 0 || arguments.len() > 0 {
+                        if !results.is_empty() || !arguments.is_empty() {
                             // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
                             if let Some(DebuggerTraceEntry::WithLocation(last_with_location)) =
                                 debugger_execution_trace.iter_mut().rev().find(|entry| {
@@ -380,7 +379,9 @@ pub fn get_internal_call_trace(
                         members: event_members,
                         is_hidden: false,
                     };
-
+                    current_function_call
+                        .children_call_ids
+                        .push(new_event_call_id);
                     *next_call_id += 1;
                     event_calls_map.0.insert(new_event_call_id, event_call);
                 }

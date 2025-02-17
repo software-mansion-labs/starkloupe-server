@@ -38,7 +38,7 @@ impl AbiProcessor {
 
     pub fn process_abi(&mut self, abi: String) {
         let parsed_abi: Vec<Value> = serde_json::from_str(&abi).unwrap();
-        //self.process_abi_event(&parsed_abi);
+        self.process_abi_event(&parsed_abi);
         self.process_abi_struct(&parsed_abi);
         self.process_abi_enum(&parsed_abi);
         self.process_abi_internal(&parsed_abi);

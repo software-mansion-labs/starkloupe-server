@@ -1,5 +1,25 @@
 # Changelog
 
+### [0.0.33] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.33)
+
+- Inline strategy debug support
+
+### [0.0.32] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.32)
+
+- Show error stack trace in case of project build fail
+
+### [0.0.31] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.31)
+
+- fix in moving failed verifications to failed_tmp - now folder names are verification_ids
+
+### [0.0.30] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.30)
+
+- List of all emitted events, remove events from call trace
+
+### [0.0.29] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.29)
+
+- parsing DOJO version bug fix
+
 ### [0.0.28] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.28)
 
 - decode event datas

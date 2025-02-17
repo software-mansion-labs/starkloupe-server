@@ -73,15 +73,23 @@ pub async fn get_verification_status_handler(
                     .await
                     .unwrap_or_default();
 
-            // Create the verification statuses with the profiles
+            // Create the verification statuses with the profiles, filtering out invalid rows
             let verification_statuses = verification_status_rows
                 .iter()
-                .map(|row| {
-                    let profiles = class_hash_profiles
-                        .get(row.class_hash.as_ref().unwrap_or(&"".to_string()))
-                        .cloned();
+                .filter_map(|row| {
+                    // Retrieve profiles if available; otherwise, default to an empty Vec.
+                    let profiles: Vec<String> = row
+                        .class_hash
+                        .as_ref()
+                        .and_then(|class_hash| class_hash_profiles.get(class_hash).cloned())
+                        .unwrap_or_default();
 
-                    VerificationStatusSerializable {
+                    // If "walnut-debug" is the only profile, skip this row.
+                    if profiles.len() == 1 && profiles.contains(&"walnut-debug".to_string()) {
+                        return None;
+                    }
+
+                    Some(VerificationStatusSerializable {
                         primary_id: row.primary_id,
                         id: row.id.to_string(),
                         network: row.network.clone(),
@@ -91,11 +99,16 @@ pub async fn get_verification_status_handler(
                         project_id: row.project_id,
                         created_at: row.created_at.to_string(),
                         updated_at: row.updated_at.to_string(),
-                        profiles,
-                    }
+                        // Set profiles with any profiles except "walnut-debug"; if none, the vec will be empty.
+                        profiles: Some(
+                            profiles
+                                .into_iter()
+                                .filter(|profile| profile != "walnut-debug")
+                                .collect(),
+                        ),
+                    })
                 })
                 .collect::<Vec<_>>();
-
             (
                 StatusCode::OK,
                 Json(VerificationStatusResponse {

@@ -16,6 +16,7 @@ use crate::s3::upload_class_to_s3;
 use crate::scarb::build_with_scarb_for_profile;
 use crate::utils::{
     create_files_from_map, create_temp_directory, move_failed_verification_to_failed_tmp,
+    remove_walnut_debug_from_scarb,
 };
 use crate::EVerificationStatus;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -116,19 +117,53 @@ async fn verify(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     verification_id: Uuid,
-    source_code: HashMap<String, String>,
+    mut source_code: HashMap<String, String>,
     manifest: Manifest,
 ) -> Result<(HashSet<String>, HashSet<String>)> {
     let tmp_dir = create_temp_directory()?;
     create_files_from_map(&source_code, &tmp_dir)?;
 
     let mut verified_contract_classes: HashSet<String> = HashSet::new();
-    let mut classes_to_verify_map: HashMap<String, ContractClass> = HashMap::new();
+    let mut classes_to_verify_map: HashMap<String, (ContractClass, String)> = HashMap::new();
+    let mut inline_class_hashes: Vec<(String, ContractClass)> = Vec::new();
+
+    // First build profil with inline strategy, if it exists
+    if let Some(inline_strategy_profile) = manifest.profile_with_inline_strategy.keys().next() {
+        match build_with_scarb_for_profile(&manifest, &tmp_dir, inline_strategy_profile) {
+            Ok(classes) => {
+                for (class_hash, contract_class) in classes {
+                    inline_class_hashes.push((class_hash.clone(), contract_class.clone()));
+                    if let Err(err) = insert_class_hash_profiles(
+                        db_pool,
+                        &class_hash,
+                        inline_strategy_profile,
+                        verification_id,
+                        &true,
+                        Some(&class_hash),
+                    )
+                    .await
+                    {
+                        error!(
+                            "Failed to insert inline strategy class hash profile: {:?}",
+                            err
+                        );
+                    }
+                    classes_to_verify_map
+                        .insert(class_hash.clone(), (contract_class, class_hash.clone()));
+                }
+            }
+            Err(e) => {
+                error!("Failed to build inline strategy profile: {:?}", e);
+            }
+        }
+    }
+
     // Broadcast channel for error signalization
-    let (tx, mut rx) = tokio::sync::broadcast::channel(1);
+    let (tx, rx) = tokio::sync::broadcast::channel(1);
     let mut futures: FuturesUnordered<_> = manifest
         .profiles
         .iter()
+        .filter(|&profile| !manifest.profile_with_inline_strategy.contains_key(profile))
         .cloned()
         .map(|profile| {
             let db_pool = db_pool.clone();
@@ -174,52 +209,69 @@ async fn verify(
         })
         .collect();
 
-    let mut encountered_error = false;
+    let mut encountered_error: Option<anyhow::Error> = None;
 
     while let Some(result) = futures.next().await {
         match result {
             Ok(Ok((verified_hashes, classes, profile))) => {
                 verified_contract_classes.extend(verified_hashes);
-                for (class_hash, contract_class) in classes {
-                    if let Err(err) =
-                        insert_class_hash_profiles(db_pool, &class_hash, &profile, verification_id)
-                            .await
+                for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
+                    if let Some((inline_class_hash, inline_contract_class)) =
+                        inline_class_hashes.get(idx).cloned()
                     {
-                        error!("Failed to insert class hash with profile: {:?}", err);
-                    }
-                    if !verified_contract_classes.contains(&class_hash) {
-                        classes_to_verify_map
-                            .entry(class_hash)
-                            .or_insert(contract_class);
+                        if let Err(err) = insert_class_hash_profiles(
+                            db_pool,
+                            &class_hash,
+                            &profile,
+                            verification_id,
+                            &false,
+                            Some(&inline_class_hash),
+                        )
+                        .await
+                        {
+                            error!("Failed to insert class hash with profile: {:?}", err);
+                        }
+                        if !verified_contract_classes.contains(&class_hash) {
+                            classes_to_verify_map
+                                .entry(class_hash)
+                                .or_insert((inline_contract_class, inline_class_hash));
+                        }
                     }
                 }
             }
             Ok(Err(e)) => {
-                error!("Error processing profile: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e);
             }
             Err(e) => {
-                error!("Tokio task failed: {:?}", e);
-                encountered_error = true;
+                encountered_error = Some(e.into());
             }
         }
     }
 
-    if encountered_error {
-        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
+    if let Some(error) = encountered_error {
+        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir, &verification_id) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
         }
-        return Err(anyhow::anyhow!(
-            "Verification failed due to build project errors."
-        ));
+        return Err(error);
     }
-
     // Database and S3 operations are now performed after all class_hash values are collected.
-    for (class_hash, contract_class) in &classes_to_verify_map {
-        upload_class_to_s3(s3_client, class_hash, contract_class, &None, &source_code).await?;
-        insert_contract_class(db_pool, class_hash, true, true, true, None).await?;
+    for class_hash in classes_to_verify_map.keys() {
+        if let Some((inline_contract_class, inline_class_hash)) =
+            classes_to_verify_map.get(class_hash)
+        {
+            remove_walnut_debug_from_scarb(&mut source_code);
+            upload_class_to_s3(
+                s3_client,
+                inline_class_hash,
+                inline_contract_class,
+                &None,
+                &source_code,
+            )
+            .await?;
+            insert_contract_class(db_pool, class_hash, true, true, true, None).await?;
+        };
     }
     fs::remove_dir_all(&tmp_dir)?;
     Ok((

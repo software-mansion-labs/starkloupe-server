@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO class_hash_profiles (class_hash, profile, verification_id, is_inline_strategy_active, inline_strategy_class_hash)\n        VALUES ($1, $2, $3, $4, $5)\n        ON CONFLICT (class_hash, profile, verification_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Uuid",
+        "Bool",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "923ddb4ba2220efb5ff26687654bafe161b0ca8fd649b3b63cbe70ea9380e48b"
+}

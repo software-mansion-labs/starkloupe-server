@@ -24,6 +24,7 @@ pub struct SimulationDebuggerData {
 /// Contains the debugger data for a class with the Sierra contract class
 #[derive(Debug)]
 pub struct ClassDebuggerDataWithContractClass {
+    pub inline_strategy_class_hash: Option<String>,
     pub class_debugger_data: Option<ClassDebuggerData>,
     pub contract_class: ContractClass,
 }

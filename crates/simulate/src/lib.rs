@@ -3,7 +3,7 @@ pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;
 pub mod debugger_trace;
-pub mod event_abi;
+pub mod events;
 pub mod function_calls;
 pub mod simulate;
 pub mod state;
@@ -16,6 +16,7 @@ use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
+use events::EmittedEvent;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
@@ -42,7 +43,6 @@ use utils::{
     parse_block_number, parse_calldata, parse_chain_id_and_rpc_url, parse_contract_address,
     parse_nonce, parse_transaction_version,
 };
-use walnut_shared::EventAbi;
 use walnut_shared::Parameter;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -71,6 +71,7 @@ pub struct SimulationArgs {
     pub transaction_type: Option<TransactionType>,
     pub resource_bounds: Option<ResourceBoundsMapping>,
     pub paymaster_data: Option<PaymasterData>,
+    pub strkgate_event: Option<starknet_old_types::Event>,
 }
 
 impl SimulationArgs {
@@ -97,6 +98,7 @@ impl SimulationArgs {
             transaction_type: None,
             resource_bounds: None,
             paymaster_data: None,
+            strkgate_event: None,
         })
     }
 }
@@ -177,6 +179,7 @@ pub struct SimulationInfo {
     pub contract_calls_map: ContractCallsMap,
     pub function_calls_map: FunctionCallsMap,
     pub event_calls_map: EventCallsMap,
+    pub events: Vec<EmittedEvent>,
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }

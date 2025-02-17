@@ -8,6 +8,7 @@ use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
 use std::collections::{HashMap, HashSet};
+use tracing::info;
 use walnut_shared::felt_to_field_element;
 use walnut_shared::{bytes_to_text, get_voyager_api_url};
 
@@ -38,6 +39,21 @@ impl ContractNamesFetcher {
             token_addresses: HashSet::new(),
             token_contract_names: HashMap::new(),
             contract_names: HashMap::new(),
+        }
+    }
+
+    pub async fn fetch_single_contract_name(
+        &self,
+        contract_address: String,
+    ) -> Option<ContractName> {
+        match &self.voyager_api_url {
+            Some(voyager_api_url) => {
+                let name = self
+                    .query_voyager_and_decode(voyager_api_url, contract_address)
+                    .await;
+                Some(ContractName { name, symbol: None })
+            }
+            None => None,
         }
     }
 
@@ -176,7 +192,7 @@ impl ContractNamesFetcher {
                 }
             }
             Err(e) => {
-                println!("Failed to fetch contract details from voyager api: {}", e);
+                info!("Failed to fetch contract details from voyager api: {}", e);
                 None
             }
         }

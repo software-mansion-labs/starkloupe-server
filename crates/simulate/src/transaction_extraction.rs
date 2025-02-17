@@ -12,7 +12,7 @@ use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::transaction::PaymasterData;
-use starknet_old::core::types as starknet_old_types;
+use starknet_old::core::types::{self as starknet_old_types, Event};
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
@@ -156,6 +156,23 @@ pub fn extract_execution_status_transaction_receipt(
             }
             starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
                 Some(declare_receipt.execution_result.clone())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub fn extract_starkgate_event_transaction_receipt(
+    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
+) -> Option<Event> {
+    match transaction_receipt {
+        starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
+            starknet_old_types::TransactionReceipt::Invoke(invoke_receipt) => {
+                invoke_receipt.events.last().cloned()
+            }
+            starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
+                declare_receipt.events.last().cloned()
             }
             _ => None,
         },

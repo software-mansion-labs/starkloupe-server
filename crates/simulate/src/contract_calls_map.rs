@@ -31,7 +31,7 @@ pub struct ContractCallsMapBuilder {
     pub next_call_id: u32,
     pub deepest_failed_contract_call_id: Option<u32>,
     pub deepest_failed_nesting_level: u32,
-    //pub cheatnet_state_detected_events: Vec<Event>,
+    pub cheatnet_state_detected_events: Vec<Event>,
 }
 
 impl ContractCallsMapBuilder {
@@ -41,7 +41,7 @@ impl ContractCallsMapBuilder {
             next_call_id: 1,
             deepest_failed_contract_call_id: None,
             deepest_failed_nesting_level: 0,
-            //cheatnet_state_detected_events: cheatnet_state.detected_events.clone(),
+            cheatnet_state_detected_events: cheatnet_state.detected_events.clone(),
         };
 
         let call_trace_ref = cheatnet_state
