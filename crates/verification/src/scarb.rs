@@ -1,12 +1,14 @@
 use crate::artifacts::{read_new_cairo_version_artifacts, read_old_cairo_version_artifacts};
 use crate::manifest::Manifest;
 use crate::sozo::run_sozo_build_for_profile;
+use crate::utils::set_limits;
 
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
-use scarb_api::ScarbCommand;
 use semver::Version;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::{env, fs};
 use tracing::error;
 use walnut_shared::tuple_to_version_string;
@@ -35,26 +37,67 @@ fn minimum_supported_new_dojo_version() -> Version {
 }
 
 fn run_scarb_build_for_profile(tmp_dir: &PathBuf, scarb_path: &str, profile: &str) -> Result<()> {
-    let mut cmd = ScarbCommand::new();
-    cmd.current_dir(tmp_dir);
-    let absolute_path = fs::canonicalize(scarb_path)?;
-    cmd.scarb_path(absolute_path);
-    cmd.arg("--profile").arg(profile).arg("build");
-    let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
-    cmd.env("SCARB_CACHE", scarb_cache_dir.to_str().unwrap());
-    let mut process_cmd = cmd.command();
+    let memory_limit: u64 = std::env::var("BUILD_MEMORY_LIMIT")
+        .unwrap_or("8589934592".to_string())
+        .parse::<u64>()?;
 
-    if process_cmd.status()?.success() {
-        Ok(())
-    } else {
-        let output = process_cmd.output()?;
-        let error_message = format!(
-            "Failed to compile contract class with profile '{}'. Error: {:?}",
-            profile, output
-        );
-        error!("{}", error_message);
-        Err(anyhow::anyhow!(error_message))
+    let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
+        .unwrap_or("120".to_string())
+        .parse::<u64>()?;
+
+    let absolute_path = fs::canonicalize(scarb_path)?;
+
+    let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
+    let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
+        error!("Error converting cache directory to string");
+        anyhow::anyhow!("Failed to convert cache dir to string")
+    })?;
+    let child_result = unsafe {
+        Command::new(absolute_path)
+            .current_dir(tmp_dir)
+            .env("SCARB_CACHE", scarb_cache_dir_str)
+            .arg("--profile")
+            .arg(profile)
+            .arg("build")
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .pre_exec(move || {
+                if let Err(e) = set_limits(memory_limit, cpu_limit) {
+                    error!("Failed to set memory limit: {:?}", e);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Failed to set memory limit",
+                    ));
+                }
+                Ok(())
+            })
+            .spawn()
+    };
+
+    let child = match child_result {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to spawn process: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to spawn process: {:?}", e));
+        }
+    };
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => {
+            error!("Failed to wait for child process: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to wait for process: {:?}", e));
+        }
+    };
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Build failed with status: {}",
+            output.status
+        ));
     }
+
+    Ok(())
 }
 
 /// Builds a project at a given path and with given profile using Scarb for Cairo version pre 2.8.0.
