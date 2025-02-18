@@ -1,5 +1,13 @@
 # Changelog
 
+### [0.0.35] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.35)
+
+- Sequential project build per profile
+
+### [0.0.34] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.34)
+
+- Fix for non showing verified classes
+
 ### [0.0.33] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.33)
 
 - Inline strategy debug support

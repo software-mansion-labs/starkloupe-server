@@ -278,8 +278,13 @@ pub async fn verify_by_class_hashes(
     {
         Ok(class_verification_data) => {
             fs::remove_dir_all(&tmp_dir)?;
+            info!(
+                verification_id = verification_id.to_string(),
+                tags.verification_status = "success",
+                "Verification request succeeded; we successfully finished the project build",
+            );
             if let Err(e) = update_verification_request(
-                &db_pool,
+                db_pool,
                 verification_id,
                 EVerificationStatus::Success.as_str(),
                 &None,
@@ -357,6 +362,12 @@ pub async fn verify_by_class_hashes(
             Ok(class_status_map)
         }
         Err(e) => {
+            error!(
+                verification_id = verification_id.to_string(),
+                tags.verification_status = "failed",
+                error = e.to_string(),
+                "Verification request failed; Project build failed",
+            );
             if let Err(err) = update_verification_request(
                 db_pool,
                 verification_id,
@@ -433,6 +444,14 @@ async fn verify(
     })?;
 
     let manifest = Manifest::new(source_code, Some(cairo_version))?;
+    let package_name = manifest.package_name.clone();
+    info!(
+        verification_id = verification_id.to_string(),
+        project = package_name,
+        tags.verification_status = "pending",
+        "Verification request is pending; we are starting the project build",
+    );
+
     insert_verification_request(
         db_pool,
         verification_id,

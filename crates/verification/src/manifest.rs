@@ -67,7 +67,6 @@ impl Manifest {
                     insert_cairo_debug_info(cairo_table);
                     if is_cairo_inline_strategy_on(cairo_table) {
                         profile_with_inline_strategy.insert(profile_name.to_string(), true);
-                    } else {
                     }
                 } else if let Some(profile_table) = profile_value.as_table_mut() {
                     let mut cairo_table = toml::map::Map::new();
