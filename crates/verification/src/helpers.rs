@@ -9,7 +9,6 @@ use crate::SierraToCairoDebugInfo;
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
-use futures::stream::{FuturesUnordered, StreamExt};
 use sqlx::{Pool, Postgres};
 use starknet::core::types::{ContractClass as CoreContractClass, Felt};
 use starknet_old::core::types::{self as starknet_old_types};
@@ -19,8 +18,8 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::HashMap, fs::File};
-use tokio::sync::broadcast::Sender;
 use tracing::error;
+use tracing::info;
 use uuid::Uuid;
 use walnut_shared::felt_to_field_element;
 
@@ -138,7 +137,7 @@ pub async fn process_new_cairo_version_verification(
     class_verification_data: &mut ClassVerificationData,
 ) -> Result<()> {
     let mut classes_to_verify_map: HashMap<String, (ContractClass, String)> = HashMap::new();
-    if let Err(encountered_error) = spawn_new_cairo_version_verification_tasks(
+    if let Err(encountered_error) = handle_new_cairo_verision_class_verification_profiles(
         manifest,
         tmp_dir,
         db_pool,
@@ -163,20 +162,23 @@ pub async fn process_new_cairo_version_verification(
     Ok(())
 }
 
-async fn spawn_new_cairo_version_verification_tasks(
+async fn handle_new_cairo_verision_class_verification_profiles(
     manifest: &Manifest,
     tmp_dir: &PathBuf,
     db_pool: &Pool<Postgres>,
     verification_id: Uuid,
     classes_to_verify_map: &mut HashMap<String, (ContractClass, String)>,
 ) -> Result<(), anyhow::Error> {
-    // Broadcast channel for error signalization
-    let (tx, _) = tokio::sync::broadcast::channel(1);
     let mut encountered_error: Option<anyhow::Error> = None;
-    let mut inline_class_hashes: Vec<(String, ContractClass)> = Vec::new();
+    let mut inline_class_hashes = Vec::new();
 
-    // First build profil with inline strategy, if it exists
-    if let Some(inline_strategy_profile) = manifest.profile_with_inline_strategy.keys().next() {
+    for inline_strategy_profile in manifest.profile_with_inline_strategy.keys() {
+        info!(
+            verification_id = verification_id.to_string(),
+            profile = inline_strategy_profile,
+            "Processing inline strategy profile:",
+        );
+
         match build_with_scarb_for_profile(manifest, tmp_dir, inline_strategy_profile) {
             Ok(classes) => {
                 for (class_hash, contract_class) in classes {
@@ -207,54 +209,27 @@ async fn spawn_new_cairo_version_verification_tasks(
         }
     }
 
-    // Buld other profiles, skip inline profile
-    let mut futures: FuturesUnordered<_> = manifest
+    for profile in manifest
         .profiles
         .iter()
-        .filter(|&profile| !manifest.profile_with_inline_strategy.contains_key(profile))
-        .cloned()
-        .map(|profile| {
-            let tmp_dir_clone = tmp_dir.clone();
-            let manifest_clone = manifest.clone();
-            let tx = tx.clone();
-            // Each thread has its own copy of receiver
-            let mut rx = tx.subscribe();
-
-            tokio::spawn(async move {
-                tokio::select! {
-                    //First check if signal for termination is received
-                    biased;
-                    _ = rx.recv() => {
-                        error!("Skipping profile build due to earlier failure." );
-                        Err(anyhow::anyhow!("Build project failed."))
-                    }
-                result = async {
-                    match build_with_scarb_for_profile(&manifest_clone, &tmp_dir_clone, &profile) {
-                        Ok(classes) => Ok::<_, anyhow::Error>((classes, profile.clone())),
-                        Err(e) => {
-                            // Send signal to other thread to terminate
-                            let _ = tx.send(());
-                            Err(e)
-                        }
-                    }
-                        } => result
-                }
-            })
-        })
-        .collect();
-
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(Ok((classes, profile))) => {
+        .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
+    {
+        info!(
+            verification_id = verification_id.to_string(),
+            profile = profile,
+            "Processing profile",
+        );
+        match build_with_scarb_for_profile(manifest, tmp_dir, profile) {
+            Ok(classes) => {
                 if classes.len() == inline_class_hashes.len() {
-                    for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
+                    for (idx, (class_hash, _)) in classes.into_iter().enumerate() {
                         if let Some((inline_class_hash, inline_contract_class)) =
                             inline_class_hashes.get(idx).cloned()
                         {
                             if let Err(err) = insert_class_hash_profiles(
                                 db_pool,
                                 &class_hash,
-                                &profile,
+                                profile,
                                 verification_id,
                                 &false,
                                 Some(&inline_class_hash),
@@ -263,7 +238,6 @@ async fn spawn_new_cairo_version_verification_tasks(
                             {
                                 error!("Failed to insert class hash with profile: {:?}", err);
                             }
-
                             classes_to_verify_map
                                 .entry(class_hash)
                                 .or_insert((inline_contract_class, inline_class_hash));
@@ -271,12 +245,10 @@ async fn spawn_new_cairo_version_verification_tasks(
                     }
                 }
             }
-            Ok(Err(e)) => {
-                encountered_error = Some(e);
-            }
             Err(e) => {
-                error!("Tokio task failed: {:?}", e);
-                encountered_error = Some(e.into());
+                error!("Failed to build project profile: {:?}", e);
+                encountered_error = Some(e);
+                break;
             }
         }
     }
@@ -324,7 +296,7 @@ pub async fn process_old_cairo_version_verification(
 ) -> Result<()> {
     let mut classes_to_verify_map: HashMap<String, (ContractClass, PathBuf)> = HashMap::new();
 
-    if let Err(encountered_error) = spawn_old_cairo_version_verification_tasks(
+    if let Err(encountered_error) = handle_old_cairo_verision_class_verification_profiles(
         manifest,
         cairo_version,
         tmp_dir,
@@ -350,7 +322,7 @@ pub async fn process_old_cairo_version_verification(
     Ok(())
 }
 
-async fn spawn_old_cairo_version_verification_tasks(
+async fn handle_old_cairo_verision_class_verification_profiles(
     manifest: &Manifest,
     cairo_version: (u32, u32, u32),
     tmp_dir: &PathBuf,
@@ -358,57 +330,21 @@ async fn spawn_old_cairo_version_verification_tasks(
     verification_id: Uuid,
     classes_to_verify_map: &mut HashMap<String, (ContractClass, PathBuf)>,
 ) -> Result<(), anyhow::Error> {
-    // Broadcast channel for error signalization
-    let (tx, _) = tokio::sync::broadcast::channel(1);
     let mut encountered_error: Option<anyhow::Error> = None;
 
-    // Buld profiles, skip inline profile
-    let mut futures: FuturesUnordered<_> = manifest
-        .profiles
-        .iter()
-        .cloned()
-        .map(|profile| {
-            let tmp_dir_clone = tmp_dir.clone();
-            let manifest_clone = manifest.clone();
-            let tx: Sender<()> = tx.clone();
-            // Each thread has its own copy of receiver
-            let mut rx = tx.subscribe();
-
-            tokio::spawn(async move {
-                tokio::select! {
-                biased;
-                    _ = rx.recv() => {
-                        error!("Skipping profile build due to earlier failure.");
-                        Err(anyhow::anyhow!("Scarb build failed"))
-                    }
-                // Compile with Scarb for the given profile
-                result = async {
-                    match compile_with_scarb_for_profile(
-                        &manifest_clone,
-                        cairo_version,
-                        &tmp_dir_clone,
-                        &profile,
-                        ) {
-                            Ok(classes) => Ok((classes, profile)),
-                            Err(e) => {
-                                let _ = tx.send(());
-                                Err(e)
-                            }
-                        }
-                    } => result
-                }
-            })
-        })
-        .collect();
-
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(Ok((classes, profile))) => {
+    for profile in &manifest.profiles {
+        info!(
+            verification_id = verification_id.to_string(),
+            profile = profile,
+            "Processing profile",
+        );
+        match compile_with_scarb_for_profile(manifest, cairo_version, tmp_dir, profile) {
+            Ok(classes) => {
                 for (class_hash, contract_class, cairo_debug_info_path) in classes {
                     if let Err(err) = insert_class_hash_profiles(
                         db_pool,
                         &class_hash,
-                        &profile,
+                        profile,
                         verification_id,
                         &false,
                         None,
@@ -423,10 +359,9 @@ async fn spawn_old_cairo_version_verification_tasks(
                         .or_insert((contract_class, cairo_debug_info_path));
                 }
             }
-            Ok(Err(e)) => encountered_error = Some(e),
             Err(e) => {
-                error!("Tokio task failed: {:?}", e);
-                encountered_error = Some(e.into())
+                encountered_error = Some(e);
+                break;
             }
         }
     }

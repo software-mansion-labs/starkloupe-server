@@ -111,7 +111,7 @@ pub fn build_with_scarb_for_profile(
     }
 
     if let Some(dojo_version) = &manifest.dojo_version {
-        if !is_dojo_version_supported(&dojo_version.as_str()) {
+        if !is_dojo_version_supported(dojo_version) {
             return Err(anyhow::anyhow!(
                 "Unsupported Dojo version {}.",
                 dojo_version
@@ -170,11 +170,11 @@ pub fn is_new_dojo_version_supported(version: &str) -> bool {
 
 fn is_old_version_supported(
     version: &str,
-    supported_old_versions: &Vec<Version>,
+    supported_old_versions: &[Version],
     tool_name: &str,
 ) -> bool {
     let version_stripped = version.strip_prefix('v').unwrap_or(version);
-    let old_version_supported = match Version::parse(&version_stripped) {
+    match Version::parse(version_stripped) {
         Ok(ver) => supported_old_versions.contains(&ver),
         Err(_) => {
             error!(
@@ -183,8 +183,7 @@ fn is_old_version_supported(
             );
             false
         }
-    };
-    old_version_supported
+    }
 }
 
 fn is_new_version_supported(

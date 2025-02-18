@@ -1,12 +1,3 @@
-use anyhow::{Context, Result};
-use cairo_lang_starknet_classes::contract_class::ContractClass;
-use sqlx::{Pool, Postgres};
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use tracing::error;
-use uuid::Uuid;
-use walnut_shared::tuple_to_version_string;
-
 use crate::db::{
     fetch_verified_classes, insert_class_hash_profiles, insert_contract_class,
     insert_verification_request, insert_verification_status, update_verification_request,
@@ -19,7 +10,15 @@ use crate::utils::{
     remove_walnut_debug_from_scarb,
 };
 use crate::EVerificationStatus;
-use futures::stream::{FuturesUnordered, StreamExt};
+use anyhow::Result;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
+use sqlx::{Pool, Postgres};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use tracing::error;
+use tracing::info;
+use uuid::Uuid;
+use walnut_shared::tuple_to_version_string;
 
 pub async fn initiate_minimal_verification(
     db_pool: &Pool<Postgres>,
@@ -28,16 +27,26 @@ pub async fn initiate_minimal_verification(
     manifest: Manifest,
 ) -> Result<Uuid> {
     let verification_request_id = Uuid::new_v4();
+    let package_name = manifest.package_name.clone();
 
-    insert_verification_request(
+    info!(
+        verification_id = verification_request_id.to_string(),
+        project = package_name,
+        tags.verification_status = "pending",
+        "Verification request is pending; we are starting the project build",
+    );
+
+    if let Err(e) = insert_verification_request(
         db_pool,
         verification_request_id,
-        "pending",
+        EVerificationStatus::Pending.as_str(),
         tuple_to_version_string(manifest.cairo_version).as_str(),
         &manifest.package_name,
     )
     .await
-    .context("Failed to insert verification request status entry")?;
+    {
+        error!("Failed to insert verification request status entry {}", e);
+    }
 
     let db_pool_clone = db_pool.clone();
     let s3_client_clone = s3_client.clone();
@@ -53,6 +62,13 @@ pub async fn initiate_minimal_verification(
         .await
         {
             Ok((verified_now_hashes, verified_before_hashes)) => {
+                info!(
+                    verification_id = verification_request_id.to_string(),
+                    project = package_name,
+                    tags.verification_status = "success",
+                    "Verification request succeeded; we successfully finished the project build",
+                );
+
                 if let Err(e) = update_verification_request(
                     &db_pool_clone,
                     verification_request_id,
@@ -64,6 +80,10 @@ pub async fn initiate_minimal_verification(
                     error!("Failed to update verification request status: {:?}", e);
                 }
 
+                info!(
+                    verification_id = verification_request_id.to_string(),
+                    "Processing verification statuses for classes. Inserting statuses for newly verified and updating status for already verified classes."
+                );
                 for class_hash in &verified_now_hashes {
                     if let Err(e) = insert_verification_status(
                         &db_pool_clone,
@@ -95,7 +115,13 @@ pub async fn initiate_minimal_verification(
                 }
             }
             Err(e) => {
-                error!("Verification failed: {:?}", e);
+                error!(
+                    verification_id = verification_request_id.to_string(),
+                    project = package_name,
+                    tags.verification_status = "failed",
+                    error = e.to_string(),
+                    "Verification request failed; Project build failed",
+                );
                 if let Err(err) = update_verification_request(
                     &db_pool_clone,
                     verification_request_id,
@@ -125,10 +151,16 @@ async fn verify(
 
     let mut verified_contract_classes: HashSet<String> = HashSet::new();
     let mut classes_to_verify_map: HashMap<String, (ContractClass, String)> = HashMap::new();
-    let mut inline_class_hashes: Vec<(String, ContractClass)> = Vec::new();
+    let mut encountered_error: Option<anyhow::Error> = None;
+    let mut inline_class_hashes = Vec::new();
 
-    // First build profil with inline strategy, if it exists
-    if let Some(inline_strategy_profile) = manifest.profile_with_inline_strategy.keys().next() {
+    for inline_strategy_profile in manifest.profile_with_inline_strategy.keys() {
+        info!(
+            verification_id = verification_id.to_string(),
+            profile = inline_strategy_profile,
+            "Processing inline strategy profile:",
+        );
+
         match build_with_scarb_for_profile(&manifest, &tmp_dir, inline_strategy_profile) {
             Ok(classes) => {
                 for (class_hash, contract_class) in classes {
@@ -154,66 +186,38 @@ async fn verify(
             }
             Err(e) => {
                 error!("Failed to build inline strategy profile: {:?}", e);
+                encountered_error = Some(e);
             }
         }
     }
 
-    // Broadcast channel for error signalization
-    let (tx, rx) = tokio::sync::broadcast::channel(1);
-    let mut futures: FuturesUnordered<_> = manifest
+    for profile in manifest
         .profiles
         .iter()
-        .filter(|&profile| !manifest.profile_with_inline_strategy.contains_key(profile))
-        .cloned()
-        .map(|profile| {
-            let db_pool = db_pool.clone();
-            let tmp_dir = tmp_dir.clone();
-            let manifest = manifest.clone();
-            let tx = tx.clone();
-            // Each thread has its own copy of receiver
-            let mut rx = rx.resubscribe();
+        .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
+    {
+        info!(
+            verification_id = verification_id.to_string(),
+            profile = profile,
+            "Processing profile",
+        );
+        let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile);
+        match class_result {
+            Ok(classes) => {
+                let class_hashes: Vec<String> = classes
+                    .iter()
+                    .map(|(class_hash, _)| class_hash.clone())
+                    .collect();
 
-            tokio::spawn(async move {
-                tokio::select! {
-                    //First check if signal for termination is received
-                    biased;
-                    _ = rx.recv() => {
-                        error!("Skipping profile build due to earlier failure." );
-                        Err(anyhow::anyhow!("Build project failed."))
+                let verified_hashes = match fetch_verified_classes(db_pool, &class_hashes).await {
+                    Ok(rows) => rows.into_iter().map(|row| row.hash),
+                    Err(e) => {
+                        error!("Failed to fetch verified classes: {:?}", e);
+                        encountered_error = Some(e);
+                        continue;
                     }
-                    result = async {
-                        match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile) {
-                            Ok(classes) => {
-                                let class_hashes: Vec<String> = classes
-                                    .iter()
-                                    .map(|(class_hash, _)| class_hash.clone())
-                                    .collect();
+                };
 
-                                let verified_hashes: Vec<String> =
-                                    fetch_verified_classes(&db_pool, &class_hashes)
-                                        .await?
-                                        .into_iter()
-                                        .map(|row| row.hash)
-                                        .collect();
-                                Ok::<_, anyhow::Error>((verified_hashes, classes, profile))
-                            }
-                            Err(e) => {
-                                // Send signal to other thread to terminate
-                                let _ = tx.send(());
-                                Err(e)
-                            }
-                        }
-                    } => result
-                }
-            })
-        })
-        .collect();
-
-    let mut encountered_error: Option<anyhow::Error> = None;
-
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(Ok((verified_hashes, classes, profile))) => {
                 verified_contract_classes.extend(verified_hashes);
                 for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
                     if let Some((inline_class_hash, inline_contract_class)) =
@@ -222,7 +226,7 @@ async fn verify(
                         if let Err(err) = insert_class_hash_profiles(
                             db_pool,
                             &class_hash,
-                            &profile,
+                            profile,
                             verification_id,
                             &false,
                             Some(&inline_class_hash),
@@ -239,11 +243,10 @@ async fn verify(
                     }
                 }
             }
-            Ok(Err(e)) => {
-                encountered_error = Some(e);
-            }
             Err(e) => {
-                encountered_error = Some(e.into());
+                error!("Failed to build project profile: {:?}", e);
+                encountered_error = Some(e);
+                break;
             }
         }
     }
