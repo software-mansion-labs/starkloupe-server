@@ -98,25 +98,11 @@ pub fn remove_walnut_debug_from_scarb(source_code: &mut HashMap<String, String>)
 }
 
 #[cfg(target_os = "linux")]
-fn set_memory_limit_linux(memory_limit: u64, cpu_limit: u64) -> std::io::Result<()> {
-    let memory_limit_struct = rlimit {
-        rlim_cur: memory_limit,
-        rlim_max: memory_limit,
-    };
-
+fn set_limit_linux(cpu_limit: u64) -> std::io::Result<()> {
     let cpu_limit_struct = rlimit {
         rlim_cur: cpu_limit,
         rlim_max: cpu_limit,
     };
-
-    // Set RLIMIT_AS to limit total address space (virtual memory) on Linux
-    let result = unsafe { setrlimit(RLIMIT_AS, &memory_limit_struct) };
-    if result != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Linux setrlimit (RLIMIT_AS) failed".to_string(),
-        ));
-    }
 
     // Set RLIMIT_CPU to limit CPU time (seconds) the process can use
     let cpu_result = unsafe { setrlimit(RLIMIT_CPU, &cpu_limit_struct) };
@@ -131,15 +117,15 @@ fn set_memory_limit_linux(memory_limit: u64, cpu_limit: u64) -> std::io::Result<
 }
 
 #[cfg(target_os = "macos")]
-fn set_memory_limit_macos(_memory_limit: u64, _cpu_limit: u64) -> std::io::Result<()> {
+fn set_limit_macos(_cpu_limit: u64) -> std::io::Result<()> {
     // No memory or CPU limits set on macOS
     Ok(())
 }
 
-pub fn set_limits(memory_limit: u64, cpu_limit: u64) -> std::io::Result<()> {
+pub fn set_limits(cpu_limit: u64) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
-    return set_memory_limit_linux(memory_limit, cpu_limit);
+    return set_limit_linux(cpu_limit);
 
     #[cfg(target_os = "macos")]
-    return set_memory_limit_macos(memory_limit, cpu_limit);
+    return set_limit_macos(cpu_limit);
 }

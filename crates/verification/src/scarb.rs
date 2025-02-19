@@ -1,6 +1,5 @@
 use crate::artifacts::{read_new_cairo_version_artifacts, read_old_cairo_version_artifacts};
 use crate::manifest::Manifest;
-use crate::sozo::run_sozo_build_for_profile;
 use crate::utils::set_limits;
 
 use anyhow::Result;
@@ -36,16 +35,13 @@ fn minimum_supported_new_dojo_version() -> Version {
     Version::parse("1.1.0").unwrap()
 }
 
-fn run_scarb_build_for_profile(tmp_dir: &PathBuf, scarb_path: &str, profile: &str) -> Result<()> {
-    let memory_limit: u64 = std::env::var("BUILD_MEMORY_LIMIT")
-        .unwrap_or("8589934592".to_string())
-        .parse::<u64>()?;
-
+fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
+    // Default limit is 300s = 5min
     let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
-        .unwrap_or("120".to_string())
+        .unwrap_or("300".to_string())
         .parse::<u64>()?;
 
-    let absolute_path = fs::canonicalize(scarb_path)?;
+    let absolute_path = fs::canonicalize(path)?;
 
     let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
     let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
@@ -62,11 +58,11 @@ fn run_scarb_build_for_profile(tmp_dir: &PathBuf, scarb_path: &str, profile: &st
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .pre_exec(move || {
-                if let Err(e) = set_limits(memory_limit, cpu_limit) {
-                    error!("Failed to set memory limit: {:?}", e);
+                if let Err(e) = set_limits(cpu_limit) {
+                    error!("Failed to set cpu imit: {:?}", e);
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        "Failed to set memory limit",
+                        "Failed to set cpu limit",
                     ));
                 }
                 Ok(())
@@ -126,7 +122,7 @@ pub fn compile_with_scarb_for_profile(
         binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
     );
 
-    run_scarb_build_for_profile(tmp_dir, &scarb_path, profile)?;
+    run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
 
     read_old_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -163,7 +159,7 @@ pub fn build_with_scarb_for_profile(
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
-        run_sozo_build_for_profile(tmp_dir, &sozo_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile)?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -174,7 +170,7 @@ pub fn build_with_scarb_for_profile(
             manifest.cairo_version.1,
             manifest.cairo_version.2
         );
-        run_scarb_build_for_profile(tmp_dir, &scarb_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -235,7 +231,7 @@ fn is_new_version_supported(
     tool_name: &str,
 ) -> bool {
     let version_stripped = version.strip_prefix('v').unwrap_or(version);
-    let version_supported = match Version::parse(&version_stripped) {
+    match Version::parse(version_stripped) {
         Ok(ver) => ver >= minimum_supported_version,
         Err(_) => {
             error!(
@@ -244,6 +240,5 @@ fn is_new_version_supported(
             );
             false
         }
-    };
-    version_supported
+    }
 }
