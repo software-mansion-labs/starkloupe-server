@@ -1,5 +1,9 @@
 # Changelog
-### [0.0.36] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.36)
+### [0.0.37] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.37)
+
+- compilation error fix (no changes)
+
+- ### [0.0.36] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.36)
 
 - CPU limit for scarb/sozo - processes are killed if they run longer than allowed time (300 secs)
 - verification folders tmp name fix - now verification tmp folders have the name of verification id (easier to identify)
