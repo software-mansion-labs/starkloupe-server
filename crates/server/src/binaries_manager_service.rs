@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 use aws_sdk_s3::Client;
+use chrono::Utc;
 use clokwerk::{AsyncScheduler, TimeUnits};
 use tokio::spawn;
 use tracing::{error, info};
@@ -94,44 +95,79 @@ pub async fn start_github_dojo_binaries_downloader_scheduler() {
     ).await;
 }
 
-async fn start_downloader_scheduler(
+// 1. Runs immidiately after app startup
+// 2. Then runs every X minutes (60 by default)
+pub async fn start_downloader_scheduler(
     tool_name: String,
     repo_env_var: String,
     versioning_file_name_env_var: String,
-    interval_env_var: String) {
-    let interval: u32 = std::env::var(interval_env_var)
+    interval_env_var: String,
+) {
+    let interval: u32 = std::env::var(&interval_env_var)
         .unwrap_or_else(|_| "60".to_string())
         .parse::<u32>()
         .unwrap();
-    let mut scheduler = AsyncScheduler::with_tz(chrono::Utc);
-    info!("Starting {} binaries downloader scheduler. Checking every: {} minutes", &tool_name, &interval);
-    scheduler
-        .every(interval.minutes())
-        .run( move || {
-            let name = tool_name.clone();
-            let repo_env_var = repo_env_var.clone();
-            let versioning_file_name_env_var = versioning_file_name_env_var.clone();
-            async move {
-                info!("Starting {} update check", name);
-                let repo = std::env::var(&repo_env_var)
-                    .expect(&format!("Environment variable {} is not set", repo_env_var));
-                let versioning_file_name = std::env::var(&versioning_file_name_env_var)
-                    .expect(&format!("Environment variable {} is not set", versioning_file_name_env_var));
-                let res = match name.as_str() {
-                    "scarb" => check_periodically_scarb_updates(repo.as_str(), versioning_file_name.as_str()).await,
-                    "sozo" => check_periodically_sozo_updates(repo.as_str(), versioning_file_name.as_str()).await,
-                    _ => panic!("Unknown tool name: {}", &name),
-                };
-                match res {
-                    Ok(_) => info!("Finished {} update check", name),
-                    Err(err) => error!("Error in {} update check: {:?}", name, err),
-                }
-            }
-        });
+
+    let mut scheduler = AsyncScheduler::with_tz(Utc);
+    info!(
+        "Starting {} binaries downloader scheduler. Checking every: {} minutes",
+        &tool_name, &interval
+    );
+
+    run_task(
+        tool_name.as_ref(),
+        repo_env_var.as_ref(),
+        versioning_file_name_env_var.as_ref(),
+    )
+        .await;
+
+    scheduler.every(interval.minutes()).run(move || {
+        let name = tool_name.clone();
+        let repo_env_var = repo_env_var.clone();
+        let versioning_file_name_env_var = versioning_file_name_env_var.clone();
+        async move {
+            run_task(name.as_ref(), repo_env_var.as_ref(), versioning_file_name_env_var.as_ref()).await;
+        }
+    });
+
     spawn(async move {
         loop {
             scheduler.run_pending().await;
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
+}
+
+async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_var: &str) {
+    info!("Starting {} update check", tool_name);
+
+    let repo = match std::env::var(&repo_env_var) {
+        Ok(value) => value,
+        Err(_) => {
+            error!("Environment variable {} is not set", repo_env_var);
+            return;
+        }
+    };
+
+    let versioning_file_name = match std::env::var(&versioning_file_name_env_var) {
+        Ok(value) => value,
+        Err(_) => {
+            error!("Environment variable {} is not set", versioning_file_name_env_var);
+            return;
+        }
+    };
+
+    let res = match tool_name {
+        "scarb" => check_periodically_scarb_updates(repo.as_ref(), versioning_file_name.as_ref()).await,
+        "sozo" => check_periodically_sozo_updates(repo.as_ref(), versioning_file_name.as_ref()).await,
+        _ => {
+            error!("Unknown tool name: {}", &tool_name);
+            return;
+        }
+    };
+
+    match res {
+        Ok(_) => info!("Finished {} update check", tool_name),
+        Err(err) => error!("Error in {} update check: {:?}", tool_name, err),
+    }
 }
