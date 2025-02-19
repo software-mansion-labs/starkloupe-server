@@ -51,10 +51,7 @@ pub fn create_temp_directory(verification_id: String) -> Result<PathBuf> {
 
 // Failed verifications data for further investigation.
 // There is no auto removal from this location.
-pub fn move_failed_verification_to_failed_tmp(
-    tmp_dir: &PathBuf,
-    verification_id: &Uuid,
-) -> Result<()> {
+pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
     let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
 
     error!(
