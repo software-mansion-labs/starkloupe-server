@@ -264,7 +264,7 @@ pub async fn verify_by_class_hashes(
     mut source_code: HashMap<String, String>,
     chain_id: Option<String>,
 ) -> Result<HashMap<String, (EVerificationStatus, Option<String>)>> {
-    let tmp_dir = create_temp_directory()?;
+    let tmp_dir = create_temp_directory(verification_id.to_string())?;
 
     match verify(
         &tmp_dir,

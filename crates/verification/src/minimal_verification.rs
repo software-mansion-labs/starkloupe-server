@@ -146,7 +146,7 @@ async fn verify(
     mut source_code: HashMap<String, String>,
     manifest: Manifest,
 ) -> Result<(HashSet<String>, HashSet<String>)> {
-    let tmp_dir = create_temp_directory()?;
+    let tmp_dir = create_temp_directory(verification_id.to_string())?;
     create_files_from_map(&source_code, &tmp_dir)?;
 
     let mut verified_contract_classes: HashSet<String> = HashSet::new();
@@ -255,7 +255,7 @@ async fn verify(
     }
 
     if let Some(error) = encountered_error {
-        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir, &verification_id) {
+        if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
             let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));

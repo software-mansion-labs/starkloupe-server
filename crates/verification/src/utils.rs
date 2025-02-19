@@ -43,8 +43,8 @@ pub fn deserialize_json<T: serde::de::DeserializeOwned>(
     })
 }
 
-pub fn create_temp_directory() -> Result<PathBuf> {
-    let tmp_dir = PathBuf::from("tmp/verification").join(Uuid::new_v4().to_string());
+pub fn create_temp_directory(verification_id: String) -> Result<PathBuf> {
+    let tmp_dir = PathBuf::from("tmp/verification").join(&verification_id);
     fs::create_dir_all(&tmp_dir)?;
     Ok(tmp_dir)
 }
@@ -55,7 +55,7 @@ pub fn move_failed_verification_to_failed_tmp(
     tmp_dir: &PathBuf,
     verification_id: &Uuid,
 ) -> Result<()> {
-    let failed_tmp_dir = PathBuf::from(format!("tmp/failed-verification/{}", verification_id));
+    let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
 
     error!(
         "Failed to verify classes - moving {} to {} for further investigation.",
