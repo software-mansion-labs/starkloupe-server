@@ -191,62 +191,65 @@ async fn verify(
         }
     }
 
-    for profile in manifest
-        .profiles
-        .iter()
-        .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
-    {
-        info!(
-            verification_id = verification_id.to_string(),
-            profile = profile,
-            "Processing profile",
-        );
-        let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile);
-        match class_result {
-            Ok(classes) => {
-                let class_hashes: Vec<String> = classes
-                    .iter()
-                    .map(|(class_hash, _)| class_hash.clone())
-                    .collect();
+    if encountered_error.is_none() {
+        for profile in manifest
+            .profiles
+            .iter()
+            .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
+        {
+            info!(
+                verification_id = verification_id.to_string(),
+                profile = profile,
+                "Processing profile",
+            );
+            let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile);
+            match class_result {
+                Ok(classes) => {
+                    let class_hashes: Vec<String> = classes
+                        .iter()
+                        .map(|(class_hash, _)| class_hash.clone())
+                        .collect();
 
-                let verified_hashes = match fetch_verified_classes(db_pool, &class_hashes).await {
-                    Ok(rows) => rows.into_iter().map(|row| row.hash),
-                    Err(e) => {
-                        error!("Failed to fetch verified classes: {:?}", e);
-                        encountered_error = Some(e);
-                        continue;
-                    }
-                };
-
-                verified_contract_classes.extend(verified_hashes);
-                for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
-                    if let Some((inline_class_hash, inline_contract_class)) =
-                        inline_class_hashes.get(idx).cloned()
+                    let verified_hashes = match fetch_verified_classes(db_pool, &class_hashes).await
                     {
-                        if let Err(err) = insert_class_hash_profiles(
-                            db_pool,
-                            &class_hash,
-                            profile,
-                            verification_id,
-                            &false,
-                            Some(&inline_class_hash),
-                        )
-                        .await
-                        {
-                            error!("Failed to insert class hash with profile: {:?}", err);
+                        Ok(rows) => rows.into_iter().map(|row| row.hash),
+                        Err(e) => {
+                            error!("Failed to fetch verified classes: {:?}", e);
+                            encountered_error = Some(e);
+                            continue;
                         }
-                        if !verified_contract_classes.contains(&class_hash) {
-                            classes_to_verify_map
-                                .entry(class_hash)
-                                .or_insert((inline_contract_class, inline_class_hash));
+                    };
+
+                    verified_contract_classes.extend(verified_hashes);
+                    for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
+                        if let Some((inline_class_hash, inline_contract_class)) =
+                            inline_class_hashes.get(idx).cloned()
+                        {
+                            if let Err(err) = insert_class_hash_profiles(
+                                db_pool,
+                                &class_hash,
+                                profile,
+                                verification_id,
+                                &false,
+                                Some(&inline_class_hash),
+                            )
+                            .await
+                            {
+                                error!("Failed to insert class hash with profile: {:?}", err);
+                            }
+                            if !verified_contract_classes.contains(&class_hash) {
+                                classes_to_verify_map
+                                    .entry(class_hash)
+                                    .or_insert((inline_contract_class, inline_class_hash));
+                            }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                error!("Failed to build project profile: {:?}", e);
-                encountered_error = Some(e);
-                break;
+                Err(e) => {
+                    error!("Failed to build project profile: {:?}", e);
+                    encountered_error = Some(e);
+                    break;
+                }
             }
         }
     }

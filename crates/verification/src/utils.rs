@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fs_extra::dir::{copy, CopyOptions};
+use libc::{rlimit, setrlimit, RLIMIT_AS, RLIMIT_CPU};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -50,7 +51,10 @@ pub fn create_temp_directory() -> Result<PathBuf> {
 
 // Failed verifications data for further investigation.
 // There is no auto removal from this location.
-pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf, verification_id: &Uuid) -> Result<()> {
+pub fn move_failed_verification_to_failed_tmp(
+    tmp_dir: &PathBuf,
+    verification_id: &Uuid,
+) -> Result<()> {
     let failed_tmp_dir = PathBuf::from(format!("tmp/failed-verification/{}", verification_id));
 
     error!(
@@ -91,4 +95,37 @@ pub fn remove_walnut_debug_from_scarb(source_code: &mut HashMap<String, String>)
             }
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn set_limit_linux(cpu_limit: u64) -> std::io::Result<()> {
+    let cpu_limit_struct = rlimit {
+        rlim_cur: cpu_limit,
+        rlim_max: cpu_limit,
+    };
+
+    // Set RLIMIT_CPU to limit CPU time (seconds) the process can use
+    let cpu_result = unsafe { setrlimit(RLIMIT_CPU, &cpu_limit_struct) };
+    if cpu_result != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Linux setrlimit (RLIMIT_CPU) failed".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn set_limit_macos(_cpu_limit: u64) -> std::io::Result<()> {
+    // No memory or CPU limits set on macOS
+    Ok(())
+}
+
+pub fn set_limits(cpu_limit: u64) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    return set_limit_linux(cpu_limit);
+
+    #[cfg(target_os = "macos")]
+    return set_limit_macos(cpu_limit);
 }
