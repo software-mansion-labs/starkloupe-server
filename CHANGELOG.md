@@ -1,5 +1,10 @@
 # Changelog
+### [0.0.36] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.36)
 
+- CPU limit for scarb/sozo - processes are killed if they run longer than allowed time (300 secs)
+- verification folders tmp name fix - now verification tmp folders have the name of verification id (easier to identify)
+- added running sozo/scarb Github downloader after server startup
+- 
 ### [0.0.35] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.35)
 
 - Sequential project build per profile
