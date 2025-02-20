@@ -8,7 +8,7 @@ pub struct EventCall {
     pub contract_call_id: u32,
     pub function_call_id: u32,
 
-    pub name: Option<String>,
+    pub name: String,
     pub selector: Option<String>,
     pub members: Vec<EventField>,
     //pub datas: Option<Vec<DecodedValue>>,

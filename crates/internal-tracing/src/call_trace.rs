@@ -365,25 +365,30 @@ pub fn get_internal_call_trace(
                 let (event_name, event_members) =
                     find_event_by_selector(&mappings.events, event.event_selector);
 
-                // Get mutable reference to the current function call
-                if let Some(current_function_call) = function_calls_map.0.get_mut(&current_call_id)
-                {
-                    current_function_call.event_call_ids.push(new_event_call_id);
+                // Ensure both event_name is Some and event_members is not empty before proceeding
+                if let (Some(event_name), false) = (event_name, event_members.is_empty()) {
+                    // Get a the current function call
+                    if let Some(current_function_call) =
+                        function_calls_map.0.get_mut(&current_call_id)
+                    {
+                        current_function_call.event_call_ids.push(new_event_call_id);
 
-                    let event_call = EventCall {
-                        call_id: new_event_call_id,
-                        contract_call_id: current_function_call.contract_call_id,
-                        function_call_id: current_function_call.call_id,
-                        name: event_name,
-                        selector: Some(event.event_selector.to_fixed_hex_string()),
-                        members: event_members,
-                        is_hidden: false,
-                    };
-                    current_function_call
-                        .children_call_ids
-                        .push(new_event_call_id);
-                    *next_call_id += 1;
-                    event_calls_map.0.insert(new_event_call_id, event_call);
+                        let event_call = EventCall {
+                            call_id: new_event_call_id,
+                            contract_call_id: current_function_call.contract_call_id,
+                            function_call_id: current_function_call.call_id,
+                            name: event_name,
+                            selector: Some(event.event_selector.to_fixed_hex_string()),
+                            members: event_members,
+                            is_hidden: false,
+                        };
+
+                        current_function_call
+                            .children_call_ids
+                            .push(new_event_call_id);
+                        *next_call_id += 1;
+                        event_calls_map.0.insert(new_event_call_id, event_call);
+                    }
                 }
             }
             None => {}
