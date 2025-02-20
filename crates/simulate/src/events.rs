@@ -1,5 +1,4 @@
 use crate::contract_names::ContractName;
-use crate::events;
 use crate::ContractCall;
 use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
@@ -177,7 +176,8 @@ impl EmittedEvent {
                 if let Some(contract_name) = &contract_name.name {
                     // Only process the event if the contract name is "StarkGate" and event is "Transfer"
                     if event_name == "Transfer"
-                        && contract_name == "StarkGate: ETH Token"
+                        && (contract_name == "StarkGate: ETH Token"
+                            || contract_name == "StarkGate: STRK Token")
                         && event.data.len() == 4
                     {
                         let datas = decode_event_data(event);

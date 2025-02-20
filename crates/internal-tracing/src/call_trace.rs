@@ -1,8 +1,10 @@
 use crate::{
+    event_call::EventCall,
+    event_calls_map::EventCallsMap,
     function_call::FunctionCall,
     function_calls_map::FunctionCallsMap,
     mappings::Mappings,
-    utils::{get_raw_function_name, is_loop, is_panic_result},
+    utils::{find_event_by_selector, get_raw_function_name, is_loop, is_panic_result},
 };
 use anyhow::Result;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
@@ -19,8 +21,15 @@ pub struct ContractCall {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct EventSysCall {
+    pub event_selector: Felt,
+    pub event_key: Felt,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub enum ESysCall {
     ContractCall(ContractCall),
+    EventCall(EventSysCall),
 }
 
 #[derive(Debug, Serialize)]
@@ -50,10 +59,11 @@ pub struct DebuggerTraceEntryWithLocation {
 
 pub fn get_internal_call_trace(
     mappings: &Mappings,
-    relocated_memory: &Vec<Option<Felt>>,
+    relocated_memory: &[Option<Felt>],
     vm_trace: &Vec<RelocatedTraceEntry>,
     sierra_statements_to_cairo_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
     function_calls_map: &mut FunctionCallsMap,
+    event_calls_map: &mut EventCallsMap,
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
@@ -87,6 +97,7 @@ pub fn get_internal_call_trace(
         parent_call_id: 0,
         children_call_ids: Vec::new(),
         contract_call_id,
+        event_call_ids: Vec::new(),
         fn_name: entrypoint_function
             .and_then(|f| f.id.debug_name.clone())
             .and_then(|n| get_raw_function_name(n.as_str())),
@@ -178,6 +189,7 @@ pub fn get_internal_call_trace(
                             parent_call_id: current_call_id,
                             children_call_ids: Vec::new(),
                             contract_call_id,
+                            event_call_ids: Vec::new(),
                             fn_name: Some(fn_name),
                             fp: trace_entry.fp,
                             is_deepest_panic_result: false,
@@ -231,14 +243,13 @@ pub fn get_internal_call_trace(
 
                 if parent_call.fp == trace_entry.fp {
                     for result in results.iter() {
-                        if nesting_level > deepest_panic_result_level {
-                            if is_panic_result(result.type_name.as_deref())
-                                && result.value[0] == "1"
-                            {
-                                deepest_panic_result_level = nesting_level;
-                                deepest_panic_result_call_id = Some(current_call_id);
-                                break;
-                            }
+                        if nesting_level > deepest_panic_result_level
+                            && is_panic_result(result.type_name.as_deref())
+                            && result.value[0] == "1"
+                        {
+                            deepest_panic_result_level = nesting_level;
+                            deepest_panic_result_call_id = Some(current_call_id);
+                            break;
                         }
                     }
 
@@ -293,7 +304,7 @@ pub fn get_internal_call_trace(
                         || cairo_locations == prev_cairo_locations
                     {
                         // If there are arguments or results
-                        if results.len() > 0 || arguments.len() > 0 {
+                        if !results.is_empty() || !arguments.is_empty() {
                             // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
                             if let Some(DebuggerTraceEntry::WithLocation(last_with_location)) =
                                 debugger_execution_trace.iter_mut().rev().find(|entry| {
@@ -346,6 +357,39 @@ pub fn get_internal_call_trace(
                     },
                 ));
                 contract_call_index += 1;
+            }
+            Some(ESysCall::EventCall(event)) => {
+                let new_event_call_id = *next_call_id;
+
+                // Find event name and members
+                let (event_name, event_members) =
+                    find_event_by_selector(&mappings.events, event.event_selector);
+
+                // Ensure both event_name is Some and event_members is not empty before proceeding
+                if let (Some(event_name), false) = (event_name, event_members.is_empty()) {
+                    // Get a the current function call
+                    if let Some(current_function_call) =
+                        function_calls_map.0.get_mut(&current_call_id)
+                    {
+                        current_function_call.event_call_ids.push(new_event_call_id);
+
+                        let event_call = EventCall {
+                            call_id: new_event_call_id,
+                            contract_call_id: current_function_call.contract_call_id,
+                            function_call_id: current_function_call.call_id,
+                            name: event_name,
+                            selector: Some(event.event_selector.to_fixed_hex_string()),
+                            members: event_members,
+                            is_hidden: false,
+                        };
+
+                        current_function_call
+                            .children_call_ids
+                            .push(new_event_call_id);
+                        *next_call_id += 1;
+                        event_calls_map.0.insert(new_event_call_id, event_call);
+                    }
+                }
             }
             None => {}
         }

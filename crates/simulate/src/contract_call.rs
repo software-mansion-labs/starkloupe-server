@@ -17,7 +17,6 @@ pub struct ContractCall {
     pub parent_call_id: u32,
     pub children_call_ids: Vec<u32>,
     pub function_call_id: Option<u32>,
-    pub event_call_ids: Vec<u32>,
 
     pub entry_point: CallEntryPoint,
     pub result: CallResult,
@@ -69,7 +68,6 @@ impl ContractCall {
             parent_call_id,
             children_call_ids: Vec::new(),
             function_call_id: None,
-            event_call_ids: Vec::new(),
 
             entry_point: call_trace_ref.entry_point.clone(),
             result: call_trace_ref.result.clone(),

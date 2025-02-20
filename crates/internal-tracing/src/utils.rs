@@ -1,4 +1,5 @@
 use anyhow::Result;
+use blockifier::abi::abi_utils::selector_from_name;
 use cairo_lang_casm::{
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
@@ -9,12 +10,17 @@ use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
     metadata::{calc_metadata, MetadataComputationConfig},
 };
+use cairo_lang_starknet_classes::abi::EventKind;
+use cairo_lang_starknet_classes::abi::{Event, EventField};
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
+use data_decoder::utils::simplify_type_name;
 use itertools::chain;
 use serde::Serialize;
+use starknet::core::types::Felt;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
 
 pub fn compile_sierra_contract_class(
@@ -229,4 +235,42 @@ pub fn is_loop(function_name: &str) -> bool {
     }
 
     false
+}
+
+pub fn find_event_by_selector(
+    events: &HashSet<Event>,
+    selector: Felt,
+) -> (Option<String>, Vec<EventField>) {
+    for event in events {
+        if let EventKind::Enum { variants } = &event.kind {
+            for variant in variants {
+                if selector_from_name(&variant.name).0 == selector {
+                    return find_struct_event_members(events, &variant.ty)
+                        .map(|members| (Some(variant.name.clone()), members))
+                        .unwrap_or_default();
+                }
+            }
+        }
+    }
+    (None, Vec::new())
+}
+
+fn find_struct_event_members(events: &HashSet<Event>, type_name: &str) -> Option<Vec<EventField>> {
+    events.iter().find_map(|struct_ev| {
+        if struct_ev.name == type_name {
+            if let EventKind::Struct { members } = &struct_ev.kind {
+                return Some(
+                    members
+                        .iter()
+                        .map(|field| EventField {
+                            name: field.name.clone(),
+                            ty: simplify_type_name(&field.ty),
+                            kind: field.kind,
+                        })
+                        .collect(),
+                );
+            }
+        }
+        None
+    })
 }

@@ -22,6 +22,7 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::Cal
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
+use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
@@ -45,6 +46,7 @@ use walnut_shared::felt_to_field_element;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::EnumAbi;
+use walnut_shared::EventAbi;
 use walnut_shared::StructAbi;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
@@ -68,7 +70,6 @@ use crate::utils::calldata_to_hex;
 use crate::utils::parse_transaction_hash;
 use crate::utils::transaction_type_to_string;
 use crate::ContractCall;
-use crate::EventAbi;
 use crate::FunctionCallsMap;
 use crate::SimulationArgs;
 use crate::SimulationInfo;
@@ -122,7 +123,7 @@ pub async fn simulate(
     let classes_debugger_data =
         fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
 
-    let mut function_calls_map = create_function_calls_map(
+    let (mut function_calls_map, event_calls_map) = create_function_calls_map(
         &mut contract_calls_map,
         &mut next_call_id,
         &classes_debugger_data,
@@ -215,6 +216,7 @@ pub async fn simulate(
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
+        event_calls_map,
         events,
         execution_result,
         simulation_debugger_data: Some(SimulationDebuggerData {
@@ -402,6 +404,7 @@ pub async fn simulate_transaction_by_hash(
                             let simulation_info = SimulationInfo {
                                 contract_calls_map: ContractCallsMap::new(),
                                 function_calls_map: FunctionCallsMap::new(),
+                                event_calls_map: EventCallsMap::default(),
                                 events: Vec::new(),
                                 execution_result: ExecutionResult::Reverted { reason },
                                 simulation_debugger_data: Some(SimulationDebuggerData {

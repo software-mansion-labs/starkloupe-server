@@ -17,6 +17,7 @@ use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
 use events::EmittedEvent;
+use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
@@ -42,7 +43,6 @@ use utils::{
     parse_block_number, parse_calldata, parse_chain_id_and_rpc_url, parse_contract_address,
     parse_nonce, parse_transaction_version,
 };
-use walnut_shared::EventAbi;
 use walnut_shared::Parameter;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -178,6 +178,7 @@ where
 pub struct SimulationInfo {
     pub contract_calls_map: ContractCallsMap,
     pub function_calls_map: FunctionCallsMap,
+    pub event_calls_map: EventCallsMap,
     pub events: Vec<EmittedEvent>,
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,

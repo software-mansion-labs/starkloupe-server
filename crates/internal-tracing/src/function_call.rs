@@ -10,6 +10,7 @@ pub struct FunctionCall {
     pub parent_call_id: u32,
     pub children_call_ids: Vec<u32>,
     pub contract_call_id: u32,
+    pub event_call_ids: Vec<u32>,
 
     pub fn_name: Option<String>,
     pub fp: usize,
