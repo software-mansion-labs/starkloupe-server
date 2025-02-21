@@ -209,46 +209,48 @@ async fn handle_new_cairo_verision_class_verification_profiles(
         }
     }
 
-    for profile in manifest
-        .profiles
-        .iter()
-        .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
-    {
-        info!(
-            verification_id = verification_id.to_string(),
-            profile = profile,
-            "Processing profile",
-        );
-        match build_with_scarb_for_profile(manifest, tmp_dir, profile) {
-            Ok(classes) => {
-                if classes.len() == inline_class_hashes.len() {
-                    for (idx, (class_hash, _)) in classes.into_iter().enumerate() {
-                        if let Some((inline_class_hash, inline_contract_class)) =
-                            inline_class_hashes.get(idx).cloned()
-                        {
-                            if let Err(err) = insert_class_hash_profiles(
-                                db_pool,
-                                &class_hash,
-                                profile,
-                                verification_id,
-                                &false,
-                                Some(&inline_class_hash),
-                            )
-                            .await
+    if encountered_error.is_none() {
+        for profile in manifest
+            .profiles
+            .iter()
+            .filter(|&p| !manifest.profile_with_inline_strategy.contains_key(p))
+        {
+            info!(
+                verification_id = verification_id.to_string(),
+                profile = profile,
+                "Processing profile",
+            );
+            match build_with_scarb_for_profile(manifest, tmp_dir, profile) {
+                Ok(classes) => {
+                    if classes.len() == inline_class_hashes.len() {
+                        for (idx, (class_hash, _)) in classes.into_iter().enumerate() {
+                            if let Some((inline_class_hash, inline_contract_class)) =
+                                inline_class_hashes.get(idx).cloned()
                             {
-                                error!("Failed to insert class hash with profile: {:?}", err);
+                                if let Err(err) = insert_class_hash_profiles(
+                                    db_pool,
+                                    &class_hash,
+                                    profile,
+                                    verification_id,
+                                    &false,
+                                    Some(&inline_class_hash),
+                                )
+                                .await
+                                {
+                                    error!("Failed to insert class hash with profile: {:?}", err);
+                                }
+                                classes_to_verify_map
+                                    .entry(class_hash)
+                                    .or_insert((inline_contract_class, inline_class_hash));
                             }
-                            classes_to_verify_map
-                                .entry(class_hash)
-                                .or_insert((inline_contract_class, inline_class_hash));
                         }
                     }
                 }
-            }
-            Err(e) => {
-                error!("Failed to build project profile: {:?}", e);
-                encountered_error = Some(e);
-                break;
+                Err(e) => {
+                    error!("Failed to build project profile: {:?}", e);
+                    encountered_error = Some(e);
+                    break;
+                }
             }
         }
     }
