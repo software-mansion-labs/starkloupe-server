@@ -341,57 +341,63 @@ pub fn get_internal_call_trace(
             }
         }
 
-        let system_call = mappings.get_system_call_at_trace_step(relocated_memory, trace_entry);
-        match system_call {
-            Some(ESysCall::ContractCall(_contract)) => {
-                function_calls_map
-                    .0
-                    .get_mut(&current_call_id)
-                    .unwrap()
-                    .children_call_ids
-                    .push(contract_call_children_ids[contract_call_index]);
-                debugger_execution_trace.push(DebuggerTraceEntry::WithContractCall(
-                    DebuggerTraceEntryWithContractCall {
-                        contract_call_id: contract_call_children_ids[contract_call_index],
-                        reason: None,
-                    },
-                ));
-                contract_call_index += 1;
-            }
-            Some(ESysCall::EventCall(event)) => {
-                let new_event_call_id = *next_call_id;
+        if let Some(system_call) =
+            mappings.get_system_call_at_trace_step(relocated_memory, trace_entry)
+        {
+            match system_call {
+                ESysCall::ContractCall(_contract) => {
+                    function_calls_map
+                        .0
+                        .get_mut(&current_call_id)
+                        .unwrap()
+                        .children_call_ids
+                        .push(contract_call_children_ids[contract_call_index]);
+                    debugger_execution_trace.push(DebuggerTraceEntry::WithContractCall(
+                        DebuggerTraceEntryWithContractCall {
+                            contract_call_id: contract_call_children_ids[contract_call_index],
+                            reason: None,
+                        },
+                    ));
+                    contract_call_index += 1;
+                }
+                ESysCall::EventCall(event) => {
+                    let new_event_call_id = *next_call_id;
 
-                // Find event name and members
-                let (event_name, event_members) =
-                    find_event_by_selector(&mappings.events, event.event_selector);
-
-                // Ensure both event_name is Some and event_members is not empty before proceeding
-                if let (Some(event_name), false) = (event_name, event_members.is_empty()) {
-                    // Get a the current function call
+                    // Get the current function call
                     if let Some(current_function_call) =
                         function_calls_map.0.get_mut(&current_call_id)
                     {
-                        current_function_call.event_call_ids.push(new_event_call_id);
+                        // Find event name and members
+                        let (event_name, event_members) =
+                            find_event_by_selector(&mappings.events, event.event_selector);
+                        // Ensure both event_name is Some and event_members is not empty before proceeding
+                        if let (Some(event_name), false) = (event_name, event_members.is_empty()) {
+                            let mut keys = Vec::new();
+                            let mut datas = Vec::new();
+                            // TODO: In this case events are enum in worst case, so we need to
+                            // decode enums
+                            current_function_call.event_call_ids.push(new_event_call_id);
 
-                        let event_call = EventCall {
-                            call_id: new_event_call_id,
-                            contract_call_id: current_function_call.contract_call_id,
-                            function_call_id: current_function_call.call_id,
-                            name: event_name,
-                            selector: Some(event.event_selector.to_fixed_hex_string()),
-                            members: event_members,
-                            is_hidden: false,
-                        };
-
-                        current_function_call
-                            .children_call_ids
-                            .push(new_event_call_id);
-                        *next_call_id += 1;
-                        event_calls_map.0.insert(new_event_call_id, event_call);
+                            let event_call = EventCall {
+                                call_id: new_event_call_id,
+                                contract_call_id: current_function_call.contract_call_id,
+                                function_call_id: current_function_call.call_id,
+                                name: event_name,
+                                selector: Some(event.event_selector.to_fixed_hex_string()),
+                                members: event_members,
+                                keys,
+                                datas,
+                                is_hidden: false,
+                            };
+                            current_function_call
+                                .children_call_ids
+                                .push(new_event_call_id);
+                            *next_call_id += 1;
+                            event_calls_map.0.insert(new_event_call_id, event_call);
+                        }
                     }
                 }
             }
-            None => {}
         }
 
         prev_fp = trace_entry.fp;

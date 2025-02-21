@@ -1,4 +1,13 @@
 # Changelog
+
+### [0.0.39] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.39)
+
+- Events additional information
+
+### [0.0.38] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.38)
+
+- Place events inside the function call trace
+
 ### [0.0.37] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.37)
 
 - compilation error fix (no changes)
@@ -8,7 +17,8 @@
 - CPU limit for scarb/sozo - processes are killed if they run longer than allowed time (300 secs)
 - verification folders tmp name fix - now verification tmp folders have the name of verification id (easier to identify)
 - added running sozo/scarb Github downloader after server startup
-- 
+-
+
 ### [0.0.35] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.35)
 
 - Sequential project build per profile
