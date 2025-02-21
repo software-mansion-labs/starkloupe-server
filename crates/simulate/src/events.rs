@@ -2,15 +2,16 @@ use crate::contract_names::ContractName;
 use crate::ContractCall;
 use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use data_decoder::calldata_decoder::decode_calldata;
 use data_decoder::create_decoded_value;
 use data_decoder::{DecodedValue, DecodedValueType};
 use serde::Serialize;
-
-use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
+use starknet_api::core::ContractAddress;
 use starknet_selector_decoder::get_selector;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use tracing::error;
 use walnut_shared::field_element_to_felt;
 use walnut_shared::EnumAbi;
 use walnut_shared::EventAbi;
@@ -19,6 +20,7 @@ use walnut_shared::StructAbi;
 #[derive(Debug, Serialize, Clone)]
 pub struct EmittedEvent {
     pub contract_call_id: u32,
+    pub contract_address: Option<ContractAddress>,
     pub contract_name: String,
     pub name: String,
     pub selector: String,
@@ -69,7 +71,7 @@ impl EmittedEvent {
 
         for cheatnet_state_event in cheatnet_state_detected_events.iter().rev() {
             let event_selector = cheatnet_state_event.keys[0];
-
+            let contract_address = cheatnet_state_event.from;
             if let Some(contract_call_id) =
                 storage_address_to_call_id.get(&cheatnet_state_event.from)
             {
@@ -108,6 +110,7 @@ impl EmittedEvent {
 
                         let event = EmittedEvent {
                             contract_call_id: *contract_call_id,
+                            contract_address: Some(contract_address),
                             contract_name: get_contract_name(contract_call),
                             name: event_abi.name.clone(),
                             selector: event_selector.to_fixed_hex_string(),
@@ -180,9 +183,21 @@ impl EmittedEvent {
                             || contract_name == "StarkGate: STRK Token")
                         && event.data.len() == 4
                     {
+                        let contract_address: Option<ContractAddress> =
+                            match ContractAddress::try_from(field_element_to_felt(
+                                event.from_address,
+                            )) {
+                                Ok(addr) => Some(addr),
+                                Err(e) => {
+                                    error!("Failed to convert contract address: {}", e);
+                                    None
+                                }
+                            };
+
                         let datas = decode_event_data(event);
                         Some(EmittedEvent {
                             contract_call_id: 0,
+                            contract_address,
                             contract_name: contract_name.to_string(),
                             name: event_name.to_string(),
                             selector: selector_str,
