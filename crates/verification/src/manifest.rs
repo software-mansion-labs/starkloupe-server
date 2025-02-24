@@ -81,7 +81,7 @@ impl Manifest {
             .and_then(toml::Value::as_table_mut)
         {
             insert_cairo_debug_info(cairo_table);
-            if is_cairo_inline_strategy_on(cairo_table) {
+            if is_cairo_inline_strategy_on(cairo_table) && !profiles.contains("dev") {
                 profile_with_inline_strategy.insert("dev".to_string(), true);
             }
         } else {
