@@ -12,3 +12,4 @@ tracing.workspace = true
 starknet-types-core.workspace = true
 cairo-lang-sierra.workspace = true
 num-traits.workspace = true
+cairo-lang-sierra-type-size.workspace = true
