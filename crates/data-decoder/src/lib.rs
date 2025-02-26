@@ -1,5 +1,6 @@
 pub mod calldata_decoder;
 mod constants;
+pub mod event_decoder;
 pub mod internal_function_decoder;
 mod starknet_types;
 pub mod utils;
@@ -8,14 +9,14 @@ use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DecodedValue {
     pub name: Option<String>,
     pub type_name: String,
     pub value: DecodedValueType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DecodedValueType {
     String(String),
     Single(Felt),
@@ -23,6 +24,7 @@ pub enum DecodedValueType {
     Array(Vec<DecodedValueType>),
     Struct(HashMap<usize, DecodedValue>),
     Enum(String, Box<DecodedValueType>),
+    #[default]
     None,
 }
 

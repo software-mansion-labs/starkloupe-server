@@ -20,6 +20,7 @@ use cairo_lang_starknet_classes::{
     contract_class::ContractClass,
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use data_decoder::event_decoder::decode_event_datas;
 use data_decoder::internal_function_decoder::decode_internal_datas;
 use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
 use data_decoder::{create_decoded_value, DecodedValue, DecodedValueType};
@@ -36,8 +37,8 @@ use walnut_shared::felts_to_string;
 use crate::{
     call_trace::{ContractCall, ESysCall, EventSysCall, InternalFnCallIO},
     utils::{
-        compile_sierra_contract_class, get_pc_mappings, get_pc_to_ptr_sys_call_mappings,
-        is_panic_result, make_casm_to_sierra_map,
+        compile_sierra_contract_class, find_event_by_selector, get_pc_mappings,
+        get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
     },
 };
 use starknet_types_core::felt::{Felt, NonZeroFelt};
@@ -417,51 +418,61 @@ impl Mappings {
                                 let felt_value: Felt =
                                     (*relocated_memory.get(ptr).unwrap()).unwrap();
 
-                                let id = felt_value.to_string().parse::<usize>();
-
-                                let (event_selector, event_key) = match id {
-                                    Ok(id) => {
-                                        let event_selector = relocated_memory
-                                            .get(id)
-                                            .and_then(|v| v.as_ref().copied())
-                                            .or_else(|| {
-                                                error!("Error: event_selector not found at index");
-                                                None
-                                            });
-
-                                        let event_key = relocated_memory
-                                            .get(id + 1)
-                                            .and_then(|v| v.as_ref().copied())
-                                            .or_else(|| {
-                                                error!("Error: event_key not found at index");
-                                                None
-                                            });
-
-                                        (event_selector, event_key)
-                                    }
-                                    Err(_e) => {
+                                let id = match felt_value.to_string().parse::<usize>() {
+                                    Ok(parsed_id) => parsed_id,
+                                    Err(_) => {
                                         error!("Error: id is None, skipping event processing.");
                                         return None;
                                     }
                                 };
+                                let event_selector = relocated_memory
+                                    .get(id)
+                                    .and_then(|v| v.as_ref().copied())
+                                    .or_else(|| {
+                                        error!("Error: event_selector not found at index");
+                                        None
+                                    });
+                                if let Some(event_selector) = event_selector {
+                                    let (event_name, event_members) =
+                                        find_event_by_selector(&self.events, event_selector);
+                                    let conrete_type_id =
+                                        self.type_declaration_map.keys().find_map(|concrete_id| {
+                                            if let Some(name) = concrete_id.debug_name.as_ref() {
+                                                if let Some(event_name) = event_name.as_ref() {
+                                                    if &simplify_type_name(name.as_str())
+                                                        == event_name
+                                                    {
+                                                        return Some(concrete_id.clone());
+                                                    }
+                                                }
+                                            }
+                                            None
+                                        });
+                                    if let Some(conrete_type_id) = conrete_type_id {
+                                        let values: Vec<Felt> = relocated_memory
+                                            .iter()
+                                            .skip(id + 1)
+                                            .filter_map(|x| *x)
+                                            .collect();
 
-                                let (event_selector, event_key) = match (event_selector, event_key)
-                                {
-                                    (Some(selector), Some(key)) => (selector, key),
-                                    _ => {
-                                        error!(
-                                            "Error: Either event_selector or event_key is missing."
-                                        );
-                                        return None;
+                                        if let Some(decoded_event) = decode_event_datas(
+                                            &conrete_type_id,
+                                            &self.type_declaration_map,
+                                            &values,
+                                            &mut 0,
+                                        ) {
+                                            let event_sys_call = EventSysCall {
+                                                event_selector,
+                                                event_name,
+                                                event_members,
+                                                event_datas: vec![decoded_event],
+                                            };
+
+                                            return Some(ESysCall::EventCall(event_sys_call));
+                                        }
                                     }
-                                };
-
-                                let event_sys_call = EventSysCall {
-                                    event_selector,
-                                    event_key,
-                                };
-
-                                Some(ESysCall::EventCall(event_sys_call))
+                                }
+                                None
                             }
                             _ => None,
                         }
