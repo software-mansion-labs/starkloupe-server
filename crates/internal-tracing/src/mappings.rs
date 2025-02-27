@@ -236,7 +236,6 @@ impl Mappings {
                         .get(&invoke_ref.ty)
                         .map(|n| n.to_string())
                         .unwrap_or_default();
-
                     let simplified_type_name = simplify_type_name(type_names.as_str());
                     if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
                         arguments.push(InternalFnCallIO {
@@ -250,6 +249,7 @@ impl Mappings {
                         &values,
                         type_id,
                         &self.type_declaration_map,
+                        &self.type_sizes,
                         relocated_memory,
                         &mut data_index,
                     ) {
@@ -349,6 +349,7 @@ impl Mappings {
                             &values,
                             type_id,
                             &self.type_declaration_map,
+                            &self.type_sizes,
                             relocated_memory,
                             &mut data_index,
                         ) {

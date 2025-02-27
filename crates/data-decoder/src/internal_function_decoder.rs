@@ -1,7 +1,8 @@
-use crate::utils::{remove_contract_state, simplify_type_name, skip_builtin_type_declaration};
+use crate::utils::{simplify_type_name, skip_builtin_type_declaration};
 use crate::{create_decoded_value, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
+use cairo_lang_sierra_type_size::TypeSizeMap;
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
@@ -10,13 +11,16 @@ pub fn decode_internal_datas(
     values: &[Felt],
     type_id: &ConcreteTypeId,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
     data_index: &mut usize,
 ) -> Option<DecodedValue> {
     let type_declaration = type_declaration_map.get(type_id)?;
+    let type_size = type_sizes.get(type_id)?;
     let generic_type_id = &type_declaration.long_id.generic_id;
     let generic_args = &type_declaration.long_id.generic_args;
     let debug_name = simplify_type_name(type_declaration.id.debug_name.as_deref().unwrap_or(""));
+
     if skip_builtin_type_declaration(debug_name.as_str()) {
         return None;
     }
@@ -34,6 +38,8 @@ pub fn decode_internal_datas(
             generic_args,
             data_index,
             type_declaration_map,
+            type_sizes,
+            type_size,
             relocated_memory,
         ),
         "Struct" => decode_struct(
@@ -42,6 +48,7 @@ pub fn decode_internal_datas(
             generic_args,
             data_index,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
         ),
         "Array" => decode_array(
@@ -51,6 +58,7 @@ pub fn decode_internal_datas(
             values,
             data_index,
             type_declaration_map,
+            type_sizes,
         ),
         "Snapshot" => decode_snapshot(
             generic_args,
@@ -58,7 +66,23 @@ pub fn decode_internal_datas(
             data_index,
             relocated_memory,
             type_declaration_map,
+            type_sizes,
         ),
+        // https://docs.swmansion.com/scarb/corelib/core-zeroable-NonZero.html
+        "NonZero" => {
+            if let Some(GenericArg::Type(inner_type_id)) = generic_args.first() {
+                decode_internal_datas(
+                    values,
+                    inner_type_id,
+                    type_declaration_map,
+                    type_sizes,
+                    relocated_memory,
+                    data_index,
+                )
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -69,145 +93,56 @@ fn decode_enum(
     generic_args: &[GenericArg],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
+    type_size: &i16,
     relocated_memory: &[Option<Felt>],
 ) -> Option<DecodedValue> {
-    if debug_name.starts_with("PanicResult<") {
-        decode_panic_result_enum(
+    let total_variants = generic_args.len().saturating_sub(1);
+    if let Some(value) = values.get(*data_index) {
+        let variant_selector = value.to_usize()?;
+        let variant_index = if total_variants > 2 {
+            total_variants.saturating_sub((variant_selector + 1) / 2)
+        } else {
+            variant_selector
+        };
+
+        let concrete_type_id = match generic_args.get(variant_index + 1) {
+            Some(GenericArg::Type(concrete_type_id)) => concrete_type_id,
+            _ => return None,
+        };
+
+        let variant_type_size = type_sizes.get(concrete_type_id)?;
+
+        let starting_values_index = type_size.saturating_sub(*variant_type_size);
+        *data_index += starting_values_index.to_usize()?;
+
+        if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
+            return Some(create_decoded_value(
+                None,
+                debug_name,
+                DecodedValueType::Single(Felt::from(variant_index)),
+            ));
+        }
+        decode_internal_datas(
             values,
-            debug_name,
-            generic_args,
-            data_index,
+            concrete_type_id,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
+            data_index,
         )
     } else {
-        decode_standard_enum(
-            values,
-            debug_name,
-            generic_args,
-            data_index,
-            type_declaration_map,
-            relocated_memory,
-        )
+        None
     }
 }
 
-fn decode_panic_result_enum(
-    values: &[Felt],
-    debug_name: &str,
-    generic_args: &[GenericArg],
-    data_index: &mut usize,
-    type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-    relocated_memory: &[Option<Felt>],
-) -> Option<DecodedValue> {
-    // Special handling for PanicResult
-    if let Some(value) = values.get(*data_index) {
-        *data_index += 1;
-        if let Some(index) = value.to_usize() {
-            if let Some(GenericArg::Type(concrete_type_id)) = generic_args.get(index + 1) {
-                let inner_debug_name = simplify_type_name(
-                    type_declaration_map
-                        .get(concrete_type_id)
-                        .and_then(|t| t.id.debug_name.as_deref())
-                        .unwrap_or(""),
-                );
-
-                // Only skip the second "0" for specific cases, [0, 0, value]
-                if matches!(
-                    inner_debug_name.as_str(),
-                    "bool" | "felt252" | "(ContractState, bool)" | "(ContractState,  felt252)"
-                ) {
-                    *data_index += 1;
-                    if let Some(value) = values.get(*data_index) {
-                        *data_index += 1; // Increment for the actual value
-                        let adjusted_debug_name = remove_contract_state(&inner_debug_name);
-                        return Some(create_decoded_value(
-                            None,
-                            &adjusted_debug_name,
-                            DecodedValueType::Single(*value),
-                        ));
-                    }
-                } else {
-                    if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
-                        return Some(create_decoded_value(
-                            None,
-                            debug_name,
-                            DecodedValueType::None,
-                        ));
-                    }
-
-                    return decode_internal_datas(
-                        values,
-                        concrete_type_id,
-                        type_declaration_map,
-                        relocated_memory,
-                        data_index,
-                    );
-                }
-            }
-            return Some(create_decoded_value(
-                None,
-                debug_name,
-                DecodedValueType::Single(index.into()),
-            ));
-        }
-    }
-    None
-}
-
-fn decode_standard_enum(
-    values: &[Felt],
-    debug_name: &str,
-    generic_args: &[GenericArg],
-    data_index: &mut usize,
-    type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
-    relocated_memory: &[Option<Felt>],
-) -> Option<DecodedValue> {
-    // Bool is an enum with two Unit type, so we need to skip the second "0" [0, 0, value]
-    if debug_name == "bool" {
-        if let Some(bool_value) = values.get(*data_index) {
-            *data_index += 1; // Increment for the actual value
-            return Some(create_decoded_value(
-                None,
-                "bool",
-                DecodedValueType::Single(*bool_value),
-            ));
-        }
-    } else if let Some(value) = values.get(*data_index) {
-        if let Some(index) = value.to_usize() {
-            *data_index += 1;
-            if let Some(GenericArg::Type(concrete_type_id)) = generic_args.get(index + 1) {
-                if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
-                    return Some(create_decoded_value(
-                        None,
-                        debug_name,
-                        DecodedValueType::None,
-                    ));
-                }
-                let decoded_enum_value = decode_internal_datas(
-                    values,
-                    concrete_type_id,
-                    type_declaration_map,
-                    relocated_memory,
-                    data_index,
-                );
-                return decoded_enum_value;
-            }
-            return Some(create_decoded_value(
-                None,
-                debug_name,
-                DecodedValueType::Single(index.into()),
-            ));
-        }
-    }
-    None
-}
 fn decode_struct(
     values: &[Felt],
     debug_name: &str,
     generic_args: &[GenericArg],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
 ) -> Option<DecodedValue> {
     let simplified_debug_name = simplify_type_name(debug_name);
@@ -218,6 +153,7 @@ fn decode_struct(
             generic_args,
             data_index,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
         )
     } else {
@@ -227,6 +163,7 @@ fn decode_struct(
             generic_args,
             data_index,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
         )
     }
@@ -238,6 +175,7 @@ fn decode_span(
     generic_args: &[GenericArg],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
 ) -> Option<DecodedValue> {
     // Span is a struct with one field, which is the inner array
@@ -247,6 +185,7 @@ fn decode_span(
             values,
             inner_type_id,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
             data_index,
         )
@@ -261,6 +200,7 @@ fn decode_standard_struct(
     generic_args: &[GenericArg],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
 ) -> Option<DecodedValue> {
     // This is to avoid decoding the ContractState struct, because there is 17 members
@@ -281,6 +221,7 @@ fn decode_standard_struct(
                 values,
                 concrete_type_id,
                 type_declaration_map,
+                type_sizes,
                 relocated_memory,
                 data_index,
             ) {
@@ -305,6 +246,7 @@ fn decode_array(
     values: &[Felt],
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
 ) -> Option<DecodedValue> {
     if is_valid_relocated_memory_range(values, *data_index, relocated_memory.len()) {
         let current_index: usize = *data_index;
@@ -322,6 +264,7 @@ fn decode_array(
             &memory_values,
             relocated_memory,
             type_declaration_map,
+            type_sizes,
         );
 
         let decoded_value = create_decoded_value(
@@ -342,12 +285,14 @@ fn decode_snapshot(
     data_index: &mut usize,
     relocated_memory: &[Option<Felt>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
 ) -> Option<DecodedValue> {
     if let Some(GenericArg::Type(inner_type_id)) = generic_args.first() {
         decode_internal_datas(
             values,
             inner_type_id,
             type_declaration_map,
+            type_sizes,
             relocated_memory,
             data_index,
         )
@@ -362,6 +307,7 @@ fn decode_array_elements_from_memory(
     memory_values: &[Felt],
     relocated_memory: &[Option<Felt>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
+    type_sizes: &TypeSizeMap,
 ) -> Vec<DecodedValueType> {
     let mut decoded_array_values = Vec::with_capacity(array_length);
     if let Some(GenericArg::Type(concrete_type_id)) = generic_args.first() {
@@ -374,6 +320,7 @@ fn decode_array_elements_from_memory(
                 values_slice,
                 concrete_type_id,
                 type_declaration_map,
+                type_sizes,
                 relocated_memory,
                 &mut local_data_index,
             ) {
