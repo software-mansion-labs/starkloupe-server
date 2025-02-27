@@ -81,8 +81,8 @@ impl Manifest {
             .and_then(toml::Value::as_table_mut)
         {
             insert_cairo_debug_info(cairo_table);
-            if is_cairo_inline_strategy_on(cairo_table) {
-                profile_with_inline_strategy.insert("default_profile".to_string(), true);
+            if is_cairo_inline_strategy_on(cairo_table) && !profiles.contains("dev") {
+                profile_with_inline_strategy.insert("dev".to_string(), true);
             }
         } else {
             let mut cairo_table = toml::map::Map::new();
