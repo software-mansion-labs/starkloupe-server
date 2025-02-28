@@ -4,9 +4,10 @@ use crate::{
     function_call::FunctionCall,
     function_calls_map::FunctionCallsMap,
     mappings::Mappings,
-    utils::{find_event_by_selector, get_raw_function_name, is_loop, is_panic_result},
+    utils::{flatten_event_data_struct, get_raw_function_name, is_loop, is_panic_result},
 };
 use anyhow::Result;
+use cairo_lang_starknet_classes::abi::EventField;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::DecodedValue;
 use serde::Serialize;
@@ -23,7 +24,9 @@ pub struct ContractCall {
 #[derive(Debug, Serialize, Clone)]
 pub struct EventSysCall {
     pub event_selector: Felt,
-    pub event_key: Felt,
+    pub event_name: Option<String>,
+    pub event_members: Vec<EventField>,
+    pub event_datas: Vec<DecodedValue>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -364,37 +367,27 @@ pub fn get_internal_call_trace(
                     let new_event_call_id = *next_call_id;
 
                     // Get the current function call
-                    if let Some(current_function_call) =
-                        function_calls_map.0.get_mut(&current_call_id)
-                    {
-                        // Find event name and members
-                        let (event_name, event_members) =
-                            find_event_by_selector(&mappings.events, event.event_selector);
-                        // Ensure both event_name is Some and event_members is not empty before proceeding
-                        if let (Some(event_name), false) = (event_name, event_members.is_empty()) {
-                            let mut keys = Vec::new();
-                            let mut datas = Vec::new();
-                            // TODO: In this case events are enum in worst case, so we need to
-                            // decode enums
-                            current_function_call.event_call_ids.push(new_event_call_id);
-
-                            let event_call = EventCall {
-                                call_id: new_event_call_id,
-                                contract_call_id: current_function_call.contract_call_id,
-                                function_call_id: current_function_call.call_id,
-                                name: event_name,
-                                selector: Some(event.event_selector.to_fixed_hex_string()),
-                                members: event_members,
-                                keys,
-                                datas,
-                                is_hidden: false,
-                            };
-                            current_function_call
-                                .children_call_ids
-                                .push(new_event_call_id);
-                            *next_call_id += 1;
-                            event_calls_map.0.insert(new_event_call_id, event_call);
-                        }
+                    if let (Some(current_function_call), Some(event_name)) = (
+                        function_calls_map.0.get_mut(&current_call_id),
+                        event.event_name,
+                    ) {
+                        current_function_call.event_call_ids.push(new_event_call_id);
+                        let datas = flatten_event_data_struct(event.event_datas);
+                        let event_call = EventCall {
+                            call_id: new_event_call_id,
+                            contract_call_id: current_function_call.contract_call_id,
+                            function_call_id: current_function_call.call_id,
+                            name: event_name,
+                            selector: Some(event.event_selector.to_fixed_hex_string()),
+                            members: event.event_members,
+                            datas: Some(datas),
+                            is_hidden: false,
+                        };
+                        current_function_call
+                            .children_call_ids
+                            .push(new_event_call_id);
+                        *next_call_id += 1;
+                        event_calls_map.0.insert(new_event_call_id, event_call);
                     }
                 }
             }

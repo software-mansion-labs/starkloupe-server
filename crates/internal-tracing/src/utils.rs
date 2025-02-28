@@ -16,7 +16,9 @@ use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
 use data_decoder::utils::simplify_type_name;
+use data_decoder::{DecodedValue, DecodedValueType};
 use itertools::chain;
+use itertools::Itertools;
 use serde::Serialize;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
@@ -273,4 +275,22 @@ fn find_struct_event_members(events: &HashSet<Event>, type_name: &str) -> Option
         }
         None
     })
+}
+
+pub fn flatten_event_data_struct(decoded_values: Vec<DecodedValue>) -> Vec<DecodedValue> {
+    decoded_values
+        .into_iter()
+        .flat_map(|decoded_value| {
+            if let DecodedValueType::Struct(fields) = decoded_value.value {
+                let flattened_values: Vec<DecodedValue> = fields
+                    .into_iter()
+                    .sorted_by_key(|(key, _)| *key)
+                    .map(|(_, value)| value)
+                    .collect();
+                flattened_values
+            } else {
+                vec![decoded_value]
+            }
+        })
+        .collect()
 }

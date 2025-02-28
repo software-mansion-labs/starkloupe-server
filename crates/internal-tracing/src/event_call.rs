@@ -11,7 +11,6 @@ pub struct EventCall {
     pub name: String,
     pub selector: Option<String>,
     pub members: Vec<EventField>,
-    pub keys: Vec<DecodedValue>,
-    pub datas: Vec<DecodedValue>,
+    pub datas: Option<Vec<DecodedValue>>,
     pub is_hidden: bool,
 }
