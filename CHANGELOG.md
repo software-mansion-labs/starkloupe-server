@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.41] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.41)
+
+- Internal function enum decoded
+
 ### [0.0.40] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.40)
 
 - Dev profile is default, it is not possible to define custom dev profile
