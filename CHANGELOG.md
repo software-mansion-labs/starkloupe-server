@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.42] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.42)
+
+- Decode event in internal function
+
 ### [0.0.41] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.41)
 
 - Internal function enum decoded
