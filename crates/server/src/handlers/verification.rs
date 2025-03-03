@@ -131,11 +131,18 @@ pub async fn get_verification_status_handler(
     }
 }
 
-#[derive(Deserialize, Debug, Serialize, ToSchema)]
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(untagged)]
+pub enum ContractIdentifier {
+    ClassHash { class_hash: String },
+    Address { contract_address: String },
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct VerificationPayload {
     pub contract_name: String,
-    pub contract_address: Option<String>,
-    pub class_hash: Option<String>,
+    #[serde(flatten)]
+    pub identifier: ContractIdentifier,
     #[schema(
         example = "{ \"src/lib.cairo\": \"// lib.cairo source code\", \"src/utils/util1.cairo\": \"// util1.cairo source code\" }"
     )]
@@ -173,85 +180,89 @@ pub async fn verify_handler(
                 "Verification failed: {}",
                 e.to_string(),
             );
-            return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+            return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
         }
     };
     let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
     let provider_client = create_rpc_client(&chain_id);
-    if let Some(class_hash) = payload.class_hash {
-        let class_hash_fixed = match felt_str_to_fixed(&class_hash) {
-            Ok(fixed) => fixed,
-            Err(e) => {
-                let error_message = format!("Failed to convert class hash: {}", e);
-                error!(error_message);
-                return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
-            }
-        };
-        let class_hash_fixed_clone = class_hash_fixed.clone();
-        match verify_by_class_hash(
-            &state.db_pool,
-            &state.s3_client,
-            provider_client,
-            class_hash_fixed,
-            payload.contract_name,
-            payload.source_code,
-            Some(chain_id_readable_string),
-        )
-        .await
-        {
-            Ok(verification_status_id) => {
-                let response_message = format!(
+    match payload.identifier {
+        ContractIdentifier::ClassHash { class_hash } => {
+            let class_hash_fixed = match felt_str_to_fixed(&class_hash) {
+                Ok(fixed) => fixed,
+                Err(e) => {
+                    let error_message = format!("Failed to convert class hash: {}", e);
+                    error!(error_message);
+                    return (StatusCode::BAD_REQUEST, error_message).into_response();
+                }
+            };
+            let class_hash_fixed_clone = class_hash_fixed.clone();
+            match verify_by_class_hash(
+                &state.db_pool,
+                &state.s3_client,
+                provider_client,
+                class_hash_fixed,
+                payload.contract_name,
+                payload.source_code,
+                Some(chain_id_readable_string),
+            )
+            .await
+            {
+                Ok(verification_status_id) => {
+                    let response_message = format!(
                 "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                 verification_status_id
             );
-                (StatusCode::OK, Json(response_message)).into_response()
-            }
-            Err(e) => {
-                error!(
-                    class_hash = class_hash_fixed_clone,
-                    tags.verification_status = "failed",
-                    "Verification failed: {}",
-                    e.to_string(),
-                );
-                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+                    (StatusCode::OK, response_message).into_response()
+                }
+                Err(e) => {
+                    error!(
+                        class_hash = class_hash_fixed_clone,
+                        tags.verification_status = "failed",
+                        "Verification failed: {}",
+                        e.to_string(),
+                    );
+                    (StatusCode::BAD_REQUEST, e.to_string()).into_response()
+                }
             }
         }
-    } else if let Some(contract_address) = payload.contract_address {
-        let contract_address_clone = contract_address.clone();
-        match verify_by_contract_address(
-            &state.db_pool,
-            &state.s3_client,
-            provider_client,
-            contract_address,
-            payload.contract_name,
-            payload.source_code,
-            Some(chain_id_readable_string),
-        )
-        .await
-        {
-            Ok(verification_status_id) => {
-                let response_message = format!(
+        ContractIdentifier::Address { contract_address } => {
+            let contract_address_clone = contract_address.clone();
+            match verify_by_contract_address(
+                &state.db_pool,
+                &state.s3_client,
+                provider_client,
+                contract_address,
+                payload.contract_name,
+                payload.source_code,
+                Some(chain_id_readable_string),
+            )
+            .await
+            {
+                Ok(verification_status_id) => {
+                    let response_message = format!(
                 "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                 verification_status_id
             );
-                (StatusCode::OK, Json(response_message)).into_response()
+                    (StatusCode::OK, response_message).into_response()
+                }
+                Err(e) => {
+                    error!(
+                        contract_address = contract_address_clone,
+                        tags.verification_status = "failed",
+                        "Verification failed: {}",
+                        e.to_string(),
+                    );
+                    (StatusCode::BAD_REQUEST, e.to_string()).into_response()
+                }
             }
-            Err(e) => {
-                error!(
-                    contract_address = contract_address_clone,
-                    tags.verification_status = "failed",
-                    "Verification failed: {}",
-                    e.to_string(),
-                );
-                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
-            }
-        }
-    } else {
-        (
+        },
+        _ => {
+            (
             StatusCode::BAD_REQUEST,
-            Json("The required parameter is missing - please provide a valid class hash or contract address".to_string()),
+            "The required parameter is missing - please provide a valid class hash or contract address",
         )
             .into_response()
+        }
     }
 }
 
@@ -297,7 +308,7 @@ pub async fn verify_handler_with_rpc(
                     "Verification failed: Failed to parse RPC URL: {}",
                     e.to_string(),
                 );
-                return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+                return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
             }
         };
 
@@ -308,11 +319,7 @@ pub async fn verify_handler_with_rpc(
         } else if let Some(hash) = payload.class_hash.clone() {
             vec![hash]
         } else {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json("Class hash is required".to_string()),
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, "Class hash is required").into_response();
         };
 
         let class_hashes = match class_hashes
@@ -324,7 +331,7 @@ pub async fn verify_handler_with_rpc(
             Err(e) => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(format!("Failed to convert class hash: {}", e.to_string())),
+                    format!("Failed to convert class hash: {}", e.to_string()),
                 )
                     .into_response();
             }
@@ -337,7 +344,7 @@ pub async fn verify_handler_with_rpc(
         } else {
             return (
                 StatusCode::BAD_REQUEST,
-                Json("Class name is required".to_string()),
+                "Class name is required".to_string(),
             )
                 .into_response();
         };
@@ -358,7 +365,7 @@ pub async fn verify_handler_with_rpc(
                     "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                     verification_status_id
                 );
-                (StatusCode::OK, Json(response_message)).into_response()
+                (StatusCode::OK, response_message).into_response()
             }
             Err(e) => {
                 error!(
@@ -366,7 +373,7 @@ pub async fn verify_handler_with_rpc(
                     "Verification failed: {}",
                     e.to_string(),
                 );
-                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+                (StatusCode::BAD_REQUEST, e.to_string()).into_response()
             }
         }
     } else {
@@ -379,7 +386,7 @@ pub async fn verify_handler_with_rpc(
                         "Failed to parse Cairo version: {}",
                         e.to_string()
                     );
-                    return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+                    return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
                 }
             }
         } else {
@@ -394,7 +401,7 @@ pub async fn verify_handler_with_rpc(
                     "Failed to create manifest: {}",
                     e.to_string(),
                 );
-                return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response();
+                return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
             }
         };
 
@@ -411,7 +418,7 @@ pub async fn verify_handler_with_rpc(
                     "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
                     verification_status_id
                 );
-                (StatusCode::OK, Json(response_message)).into_response()
+                (StatusCode::OK, response_message).into_response()
             }
             Err(e) => {
                 error!(
@@ -419,7 +426,7 @@ pub async fn verify_handler_with_rpc(
                     "Verification failed: {}",
                     e.to_string(),
                 );
-                (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response()
+                (StatusCode::BAD_REQUEST, e.to_string()).into_response()
             }
         }
     }
