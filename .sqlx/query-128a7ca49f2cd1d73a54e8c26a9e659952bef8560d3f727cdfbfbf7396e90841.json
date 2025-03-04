@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            date_trunc('day', created_at) AS date,\n                status,\n                COUNT(*) AS status_count\n            FROM\n                public.verification_status\n            WHERE\n                created_at >= NOW() - INTERVAL '30 days'\n            GROUP BY\n                date, status\n            ORDER BY\n                date ASC, status;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "status_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      false,
+      null
+    ]
+  },
+  "hash": "128a7ca49f2cd1d73a54e8c26a9e659952bef8560d3f727cdfbfbf7396e90841"
+}

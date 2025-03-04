@@ -4,6 +4,7 @@ mod handlers;
 mod services;
 mod telegram_bot_service;
 mod binaries_manager_service;
+mod appsmith_api;
 
 use app_state::AppState;
 use aws_config::meta::region::RegionProviderChain;
@@ -40,10 +41,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
+use chrono::NaiveDate;
 use clokwerk::{Job, AsyncScheduler, TimeUnits};
+use sqlx::{Pool, Postgres};
 use tokio::spawn;
 use tokio::time::{interval, timeout, Duration};
 use tracing::{error, info};
+use crate::appsmith_api::get_verification_data;
 use crate::binaries_manager_service::{download_scarb_and_sozo_binaries_from_s3, start_github_dojo_binaries_downloader_scheduler, start_github_scarb_binaries_downloader_scheduler};
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -107,6 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
             let app = Router::new()
+                .route("/dashboard/data", get(get_verification_data))
                 .route("/health", get(health_check))
                 .route("/v1/simulate-transaction", post(simulate_transaction))
                 .route(
