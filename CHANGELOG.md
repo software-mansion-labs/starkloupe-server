@@ -1,4 +1,7 @@
 # Changelog
+### [0.0.43] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.43)
+
+- API for verification dashboard
 
 ### [0.0.42] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.42)
 
