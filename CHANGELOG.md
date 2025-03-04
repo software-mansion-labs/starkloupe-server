@@ -1,4 +1,12 @@
 # Changelog
+### [0.0.46] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.46)
+
+- installing rust 1.80.0 in Dockerfile
+
+### [0.0.45] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.45)
+
+- no changes version
+
 ### [0.0.44] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.44)
 
 - API for verification dashboard
