@@ -1,4 +1,3 @@
-pub const NONE_VALUE_MSG: &str = "NONE";
 pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "Const",
     "Step",

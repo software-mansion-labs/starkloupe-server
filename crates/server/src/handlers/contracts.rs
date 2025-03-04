@@ -1,4 +1,6 @@
 use crate::app_state::AppState;
+use crate::services::search::sources_from_rpc_urls;
+use crate::services::search::{ESource, ESourceType};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -6,20 +8,133 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use starknet::core::types::ContractClass;
 use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
+use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use verification::{db::fetch_verified_class, s3::fetch_verified_class_hash_with_source_code_data};
+use walnut_shared::abi::get_functions;
+use walnut_shared::abi::Item;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
     field_element_to_felt,
 };
 use walnut_shared::{extract_chain_id, felt_to_field_element};
+
+#[derive(Serialize, ToSchema)]
+pub struct ContractAbiResponse {
+    pub functions: HashMap<String, Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Serialize, ToSchema)]
+pub struct ContractAddressQuery {
+    pub rpc_urls: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/contracts/{contract_address}/functions",
+    responses(
+        (status = 200, description = "Returns the list of functions of the contract", body = ContractFunctionResponse),
+        (status = 404, description = "Contract not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    params(
+        ("contract_address" = String, Path, description = "Contract address"),
+        ("rpc_urls" = Option<String>, Query, description = "Comma-separated list of additional RPC URLs to check")
+    ),
+    tag = "Contract functions"
+)]
+pub async fn get_contract_function_handler(
+    State(_state): State<Arc<AppState>>,
+    Path(contract_address): Path<String>,
+    Query(query): Query<ContractAddressQuery>,
+) -> Response {
+    let contract_address_field = match Felt::from_hex(&contract_address) {
+        Ok(felt) => felt_to_field_element(felt),
+        Err(_) => {
+            let error_message = "Invalid  contract address format";
+            error!(error_message);
+            return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
+        }
+    };
+
+    let sources = match sources_from_rpc_urls(query.rpc_urls.as_deref()) {
+        Ok(sources) => sources,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Error parsing URLs: {}", err),
+            )
+                .into_response()
+        }
+    };
+
+    let mut functions_map: HashMap<String, Vec<String>> = HashMap::new();
+
+    for source in &sources {
+        let (network, provider) = match source {
+            ESourceType::ChainId(chain_id) => (
+                chain_id_to_readable_string(&chain_id),
+                create_rpc_client(&chain_id),
+            ),
+            ESourceType::RpcUrl(url) => (url.to_string(), create_rpc_client_from_url(url.clone())),
+        };
+
+        match provider
+            .get_class_at(
+                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                contract_address_field,
+            )
+            .await
+        {
+            Ok(contract_class) => {
+                if let Some(abi) = match contract_class {
+                    starknet_old_types::ContractClass::Sierra(sierra_class) => {
+                        Some(sierra_class.abi)
+                    }
+                    starknet_old_types::ContractClass::Legacy(_) => None,
+                } {
+                    match serde_json::from_str::<Vec<Item>>(&abi) {
+                        Ok(parsed_abi) => {
+                            let functions = get_functions(&parsed_abi)
+                                .iter()
+                                .map(|func| func.name.clone())
+                                .collect();
+                            functions_map.insert(network, functions);
+                        }
+                        Err(err) => {
+                            error!("Failed to parse ABI for network {}: {}", network, err);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    "Failed to fetch class for address {} from source {:?}: {}",
+                    contract_address, source, err
+                );
+                functions_map.insert(network, vec![]);
+            }
+        }
+    }
+
+    if functions_map.is_empty() {
+        return (StatusCode::NOT_FOUND, "ABI not found for contract address").into_response();
+    }
+
+    let response = ContractAbiResponse {
+        functions: functions_map,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
+}
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct ContractResponseWithSourceCode {

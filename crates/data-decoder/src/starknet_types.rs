@@ -1,5 +1,5 @@
 use std::fmt;
-use walnut_shared::EnumAbi;
+use walnut_shared::abi::Enum;
 
 #[derive(Debug)]
 pub enum EDataType {
@@ -97,7 +97,7 @@ impl EEnumType {
     }
 }
 impl EDataType {
-    pub fn from_str(s: &str, enum_abis: Option<&[EnumAbi]>) -> Self {
+    pub fn from_str(s: &str, enum_abis: Option<&[Enum]>) -> Self {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
             return Self::Primitive(primitive);
         }

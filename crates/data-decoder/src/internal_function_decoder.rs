@@ -1,4 +1,4 @@
-use crate::utils::{simplify_type_name, skip_builtin_type_declaration};
+use crate::utils::skip_builtin_type_declaration;
 use crate::{create_decoded_value, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
@@ -6,6 +6,7 @@ use cairo_lang_sierra_type_size::TypeSizeMap;
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
+use walnut_shared::utils::simplify_type_name;
 
 pub fn decode_internal_datas(
     values: &[Felt],

@@ -2,7 +2,7 @@ use crate::contract_names::ContractName;
 use crate::ContractCall;
 use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
-use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
+use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event as CheatnetEvent;
 use data_decoder::calldata_decoder::decode_calldata;
 use data_decoder::create_decoded_value;
 use data_decoder::{DecodedValue, DecodedValueType};
@@ -11,11 +11,10 @@ use starknet_api::core::ContractAddress;
 use starknet_selector_decoder::get_selector;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use tracing::error;
+use walnut_shared::abi::{Enum, Event, EventKind, Struct};
 use walnut_shared::field_element_to_felt;
-use walnut_shared::EnumAbi;
-use walnut_shared::EventAbi;
-use walnut_shared::StructAbi;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct EmittedEvent {
@@ -30,10 +29,10 @@ pub struct EmittedEvent {
 impl EmittedEvent {
     pub fn create_emitted_events_list(
         contract_calls_map: &mut ContractCallsMap,
-        event_abis: &[EventAbi],
-        struct_abis: &[StructAbi],
-        enum_abis: &[EnumAbi],
-        cheatnet_state_detected_events: &[Event],
+        event_abis: &Vec<Event>,
+        struct_abis: &Vec<Struct>,
+        enum_abis: &Vec<Enum>,
+        cheatnet_state_detected_events: &[CheatnetEvent],
         strkgate_emitted_event: Option<EmittedEvent>,
     ) -> Vec<EmittedEvent> {
         fn get_contract_name(contract_call: &ContractCall) -> String {
@@ -88,16 +87,18 @@ impl EmittedEvent {
                             keys.remove(0);
                         }
 
-                        let (names, types): (Vec<Cow<str>>, Vec<Cow<str>>) = event_abi
-                            .parameters
-                            .iter()
-                            .map(|param| {
-                                (
-                                    Cow::Owned(param.name.clone()),
-                                    Cow::Owned(param.type_name.clone()),
-                                )
-                            })
-                            .unzip();
+                        let (names, types): (Vec<Cow<str>>, Vec<Cow<str>>) = match &event_abi.kind {
+                            EventKind::Struct { members }
+                            | EventKind::Enum { variants: members } => members
+                                .iter()
+                                .map(|param| {
+                                    (
+                                        Cow::Borrowed(param.name.as_str()),
+                                        Cow::Borrowed(param.ty.as_str()),
+                                    )
+                                })
+                                .unzip(),
+                        };
 
                         let decoded_event_data = decode_calldata(
                             &keys.to_vec(),
