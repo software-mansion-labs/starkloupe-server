@@ -3,7 +3,7 @@ use blockifier::bouncer::BouncerConfig;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::transaction::objects::{
-    CommonAccountFields, CurrentTransactionInfo, TransactionInfo,
+    CommonAccountFields, CurrentTransactionInfo, DeprecatedTransactionInfo, TransactionInfo,
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
@@ -221,9 +221,9 @@ pub async fn extract_block_txs_info(
         gas_prices: SerializableGasPrices::default().into(),
         use_kzg_da: true,
     };
-    let tx_number_in_block = block_txs.transactions.len();
+    let total_txs_in_block = block_txs.transactions.len();
     let transaction_index = extract_transaction_index(&block_txs, simulation_args);
-    Ok((block_info, transaction_index, tx_number_in_block))
+    Ok((block_info, transaction_index, total_txs_in_block))
 }
 
 pub fn extract_transaction_index(
