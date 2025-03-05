@@ -92,11 +92,9 @@ fn decode_array(
     data_type: &str,
     inner_type: &str,
 ) -> Option<DecodedValue> {
-    let array_length = if data_type.ends_with("]") {
-        let length = data_type
-            .rfind(']')
-            .and_then(|idx| data_type[..idx].chars().rev().find(|c| c.is_ascii_digit()))
-            .and_then(|c| c.to_digit(10).map(|d| d as usize))?;
+    let array_length = if data_type.starts_with("[") && data_type.ends_with("]") {
+        let number_str = data_type[..data_type.len() - 1].rsplit(';').next()?;
+        let length = number_str.parse::<usize>().ok()?;
         length
     } else {
         let length = datas.get(*data_index)?.to_usize()?;
@@ -119,7 +117,6 @@ fn decode_array(
                 *data_index += 1;
                 vec![DecodedValueType::Single(*data)]
             } else {
-                dbg!("prazan");
                 vec![]
             }
         })

@@ -110,9 +110,9 @@ impl EDataType {
             let inner_type = &s[inner_start_index..s.len() - 1];
             return Self::Array(Box::new(Self::from_str(inner_type, enum_abis)));
         }
-        if s.ends_with("]") {
+        if s.starts_with("[") && s.ends_with("]") {
             if let Some(delimiter_index) = s.find(';') {
-                let inner_type = s[..delimiter_index].trim();
+                let inner_type = s[1..delimiter_index].trim();
                 return Self::Array(Box::new(Self::from_str(inner_type, enum_abis)));
             }
         }
