@@ -1,4 +1,9 @@
 # Changelog
+
+### [0.0.47] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.47)
+
+- fix decoding bug for byte array
+
 ### [0.0.46] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.46)
 
 - installing rust 1.80.0 in Dockerfile
