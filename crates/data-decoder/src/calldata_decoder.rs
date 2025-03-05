@@ -92,30 +92,35 @@ fn decode_array(
     data_type: &str,
     inner_type: &str,
 ) -> Option<DecodedValue> {
-    let array_length = datas.get(*data_index)?.to_usize()?;
-    *data_index += 1;
+    let array_length = if data_type.starts_with("[") && data_type.ends_with("]") {
+        let number_str = data_type[..data_type.len() - 1].rsplit(';').next()?;
+        let length = number_str.parse::<usize>().ok()?;
+        length
+    } else {
+        let length = datas.get(*data_index)?.to_usize()?;
+        *data_index += 1;
+        length
+    };
 
-    let mut decoded_elements = Vec::with_capacity(array_length);
-
-    for _ in 0..array_length {
-        match decode_calldata(
-            datas,
-            &[Cow::Borrowed(inner_type)],
-            &[],
-            structs,
-            enums,
-            data_index,
-        ) {
-            Some(decoded) => decoded_elements.extend(decoded.into_iter().map(|v| v.value)),
-            None => {
-                if let Some(data) = datas.get(*data_index) {
-                    *data_index += 1;
-                    decoded_elements.push(DecodedValueType::Single(*data));
-                }
+    let decoded_elements: Vec<DecodedValueType> = (0..array_length)
+        .flat_map(|_| {
+            if let Some(decoded) = decode_calldata(
+                datas,
+                &[Cow::Borrowed(inner_type)],
+                &[],
+                structs,
+                enums,
+                data_index,
+            ) {
+                decoded.into_iter().map(|v| v.value).collect::<Vec<_>>()
+            } else if let Some(data) = datas.get(*data_index) {
+                *data_index += 1;
+                vec![DecodedValueType::Single(*data)]
+            } else {
+                vec![]
             }
-        }
-    }
-
+        })
+        .collect();
     Some(create_decoded_value(
         name,
         data_type,
@@ -183,25 +188,31 @@ fn decode_tuple(
     structs: Option<&[StructAbi]>,
     enums: Option<&[EnumAbi]>,
 ) -> Option<DecodedValue> {
-    let mut decoded_values: Vec<DecodedValueType> = Vec::new();
+    let mut tuple_fields: Vec<DecodedValue> = Vec::new();
+
     for inner_type in inner_types {
-        if let Some(values) = decode_calldata(
+        let decoded_field = decode_calldata(
             datas,
             &[Cow::Borrowed(inner_type)],
             &[],
             structs,
             enums,
             data_index,
-        ) {
-            decoded_values.extend(values.into_iter().map(|dv| dv.value));
-        } else {
-            return None;
-        }
+        )?
+        .into_iter()
+        .next()?;
+
+        tuple_fields.push(decoded_field);
     }
+    let mut tuple_map = HashMap::new();
+    for (i, field) in tuple_fields.into_iter().enumerate() {
+        tuple_map.insert(i, field);
+    }
+
     Some(create_decoded_value(
         None,
-        inner_types.join(", ").as_str(),
-        DecodedValueType::Array(decoded_values),
+        &inner_types.join(", "),
+        DecodedValueType::Struct(tuple_map),
     ))
 }
 

@@ -1,7 +1,18 @@
 use crate::constants::SKIP_BUILTIN_TYPES;
 
-#[inline(always)]
 pub fn simplify_type_name(type_str: &str) -> String {
+    if let (Some(inner), Some(_)) = (type_str.strip_prefix('['), type_str.strip_suffix(']')) {
+        if let Some(delim_index) = inner.find(';') {
+            let element_type = inner[..delim_index].trim();
+            let length_end = inner.len();
+            let length = &inner[delim_index + 1..length_end - 1].trim();
+            let simplified_element = element_type
+                .rfind("::")
+                .map(|pos| &element_type[pos + 2..])
+                .unwrap_or(element_type);
+            return format!("[{};{}]", simplified_element, length);
+        }
+    }
     let inner_content = type_str
         .strip_prefix("Tuple<")
         .and_then(|s| s.strip_suffix('>'))
