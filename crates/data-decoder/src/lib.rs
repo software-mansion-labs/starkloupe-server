@@ -4,10 +4,10 @@ pub mod event_decoder;
 pub mod internal_function_decoder;
 mod starknet_types;
 pub mod utils;
-
+use num_traits::ToPrimitive;
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::{collections::HashMap, u128};
 
 #[derive(Debug, Clone, Default)]
 pub struct DecodedValue {
@@ -20,6 +20,7 @@ pub struct DecodedValue {
 pub enum DecodedValueType {
     String(String),
     Single(Felt),
+    Decimal(usize),
     Bool(bool),
     Array(Vec<DecodedValueType>),
     Struct(HashMap<usize, DecodedValue>),
@@ -40,6 +41,30 @@ pub fn create_decoded_value(
     }
 }
 
+pub fn create_decoded_value_by_type(
+    name: Option<&str>,
+    type_name: &str,
+    value: DecodedValueType,
+) -> DecodedValue {
+    let value = match (type_name, &value) {
+        ("bool", DecodedValueType::Single(felt)) => DecodedValueType::Bool(*felt != Felt::ZERO),
+        ("u128", DecodedValueType::Single(felt))
+        | ("u64", DecodedValueType::Single(felt))
+        | ("u32", DecodedValueType::Single(felt))
+        | ("u16", DecodedValueType::Single(felt))
+        | ("u8", DecodedValueType::Single(felt)) => match felt.to_usize() {
+            Some(num) => DecodedValueType::Decimal(num),
+            None => DecodedValueType::Single(*felt),
+        },
+        _ => value,
+    };
+    DecodedValue {
+        name: name.map(|s| s.to_string()),
+        type_name: type_name.to_string(),
+        value,
+    }
+}
+
 impl Serialize for DecodedValueType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -48,6 +73,7 @@ impl Serialize for DecodedValueType {
         match self {
             DecodedValueType::String(value) => serializer.serialize_str(value),
             DecodedValueType::Single(value) => value.serialize(serializer),
+            DecodedValueType::Decimal(value) => value.serialize(serializer),
             DecodedValueType::Bool(value) => serializer.serialize_bool(*value),
             DecodedValueType::Array(values) => values.serialize(serializer),
             DecodedValueType::Struct(fields) => {
