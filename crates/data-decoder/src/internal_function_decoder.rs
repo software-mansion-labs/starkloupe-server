@@ -123,14 +123,20 @@ fn decode_enum(
                 DecodedValueType::Single(Felt::from(variant_index)),
             ));
         }
-        decode_internal_datas(
+
+        let decoded_value = decode_internal_datas(
             values,
             concrete_type_id,
             type_declaration_map,
             type_sizes,
             relocated_memory,
             data_index,
-        )
+        )?;
+        return Some(create_decoded_value_by_type(
+            None,
+            debug_name,
+            DecodedValueType::Enum(debug_name.to_string(), Box::new(decoded_value)),
+        ));
     } else {
         None
     }
