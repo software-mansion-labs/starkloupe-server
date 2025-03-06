@@ -116,6 +116,7 @@ pub struct TransactionSimulationResult {
     pub transaction_version: usize,
     pub transaction_type: String,
     pub transaction_index_in_block: Option<usize>,
+    pub total_transactions_in_block: Option<usize>,
 }
 
 #[derive(Error, Debug)]
