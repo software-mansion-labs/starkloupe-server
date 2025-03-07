@@ -10,7 +10,10 @@ use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
 use std::{collections::HashMap, u128};
 
+//A negative value -x is serialized as P - x, where P is:
 //P = 2^251 + 17 * 2^192 + 1
+//https://docs.starknet.io/architecture-and-concepts/cryptography/#stark-field
+//https://docs.starknet.io/architecture-and-concepts/smart-contracts/serialization-of-cairo-types/#serialization_of_unsigned_integers
 lazy_static::lazy_static! {
     static ref P: BigInt = {
         let two = BigInt::from(2);
@@ -74,6 +77,9 @@ pub fn create_decoded_value_by_type(
             DecodedValueType::BigInt(value)
         }
         // u256 -> [low, high]
+        // - It expects a structure with exactly two parts: "low" (lower 128-bit part) and "high" (upper 128-bit part).
+        // - The upper part is shifted left by 128 bits (equivalent to multiplying by 2^128) to make room for the lower part.
+        // - The values are then combined using the bitwise OR operator to reconstruct the full 256-bit number: u256 = (high << 128) | low.
         ("u256", DecodedValueType::Struct(values)) if values.len() == 2 => {
             let low = values.get(&1).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(low) => Some(low.clone()),
@@ -92,6 +98,9 @@ pub fn create_decoded_value_by_type(
             }
         }
         // u512 -> [limb0, limb1, limb2, limb3]
+        // - It expects a structure with four parts: limb0, limb1, limb2, and limb3, each representing 128 bits.
+        // - Limb3 is shifted left by 384 bits, limb2 by 256 bits, limb1 by 128 bits, while limb0 remains in place.
+        // - Combining all parts using the OR operator reconstructs the full 512-bit number: u512 = (limb3 << 384) | (limb2 << 256) | (limb1 << 128) | limb0.
         ("u512", DecodedValueType::Struct(values)) if values.len() == 4 => {
             let limb0 = values.get(&1).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(limb0) => Some(limb0.clone()),
