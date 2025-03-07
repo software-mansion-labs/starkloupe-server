@@ -1,5 +1,5 @@
 use crate::utils::{simplify_type_name, skip_builtin_type_declaration};
-use crate::{create_decoded_value, DecodedValue, DecodedValueType};
+use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use cairo_lang_sierra_type_size::TypeSizeMap;
@@ -28,7 +28,7 @@ pub fn decode_internal_datas(
     if generic_args.is_empty() {
         return values.get(*data_index).map(|value| {
             *data_index += 1;
-            create_decoded_value(None, &debug_name, DecodedValueType::Single(*value))
+            create_decoded_value_by_type(None, &debug_name, DecodedValueType::Single(*value))
         });
     }
     match generic_type_id.0.as_str() {
@@ -117,20 +117,26 @@ fn decode_enum(
         *data_index += starting_values_index.to_usize()?;
 
         if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
-            return Some(create_decoded_value(
+            return Some(create_decoded_value_by_type(
                 None,
                 debug_name,
                 DecodedValueType::Single(Felt::from(variant_index)),
             ));
         }
-        decode_internal_datas(
+
+        let decoded_value = decode_internal_datas(
             values,
             concrete_type_id,
             type_declaration_map,
             type_sizes,
             relocated_memory,
             data_index,
-        )
+        )?;
+        return Some(create_decoded_value_by_type(
+            None,
+            debug_name,
+            DecodedValueType::Enum(debug_name.to_string(), Box::new(decoded_value)),
+        ));
     } else {
         None
     }
@@ -189,7 +195,7 @@ fn decode_span(
             relocated_memory,
             data_index,
         )
-        .map(|decoded_value| create_decoded_value(None, debug_name, decoded_value.value))
+        .map(|decoded_value| create_decoded_value_by_type(None, debug_name, decoded_value.value))
     } else {
         None
     }
@@ -206,7 +212,7 @@ fn decode_standard_struct(
     // This is to avoid decoding the ContractState struct, because there is 17 members
     //and values are empty, as the values array in the case of ContractState is empty
     if debug_name == "ContractState" || debug_name.contains("ComponentState") {
-        return Some(create_decoded_value(
+        return Some(create_decoded_value_by_type(
             None,
             debug_name,
             DecodedValueType::None,
@@ -231,7 +237,7 @@ fn decode_standard_struct(
     }
 
     (!decoded_struct_values.is_empty()).then(|| {
-        create_decoded_value(
+        create_decoded_value_by_type(
             None,
             debug_name,
             DecodedValueType::Struct(decoded_struct_values),
@@ -267,7 +273,7 @@ fn decode_array(
             type_sizes,
         );
 
-        let decoded_value = create_decoded_value(
+        let decoded_value = create_decoded_value_by_type(
             None,
             debug_name,
             DecodedValueType::Array(decoded_array_values),

@@ -2370,6 +2370,8 @@ version = "0.1.0"
 dependencies = [
  "cairo-lang-sierra",
  "cairo-lang-sierra-type-size",
+ "lazy_static",
+ "num-bigint",
  "num-traits 0.2.19",
  "serde",
  "serde_json",
