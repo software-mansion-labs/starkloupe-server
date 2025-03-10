@@ -490,7 +490,10 @@ impl Mappings {
     }
 }
 
-pub fn adjust_decoded_element(decoded_element: DecodedValue) -> Option<DecodedValue> {
+pub fn adjust_decoded_element(mut decoded_element: DecodedValue) -> Option<DecodedValue> {
+    while let DecodedValueType::Enum(_, inner) = decoded_element.value {
+        decoded_element = *inner;
+    }
     match &decoded_element.value {
         // Remove "Unit", "ContractState", or "ComponentState" elements
         DecodedValueType::Struct(fields) if decoded_element.type_name.starts_with('(') => {

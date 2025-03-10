@@ -4,10 +4,22 @@ pub mod event_decoder;
 pub mod internal_function_decoder;
 mod starknet_types;
 pub mod utils;
-
+use num_bigint::{BigInt, BigUint};
+use num_traits::{One, ToPrimitive};
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::{collections::HashMap, u128};
+
+//A negative value -x is serialized as P - x, where P is:
+//P = 2^251 + 17 * 2^192 + 1
+//https://docs.starknet.io/architecture-and-concepts/cryptography/#stark-field
+//https://docs.starknet.io/architecture-and-concepts/smart-contracts/serialization-of-cairo-types/#serialization_of_unsigned_integers
+lazy_static::lazy_static! {
+    static ref P: BigInt = {
+        let two = BigInt::from(2);
+        two.pow(251) + BigInt::from(17) * two.pow(192) + BigInt::one()
+    };
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct DecodedValue {
@@ -20,10 +32,12 @@ pub struct DecodedValue {
 pub enum DecodedValueType {
     String(String),
     Single(Felt),
+    BigUint(BigUint),
+    BigInt(BigInt),
     Bool(bool),
     Array(Vec<DecodedValueType>),
     Struct(HashMap<usize, DecodedValue>),
-    Enum(String, Box<DecodedValueType>),
+    Enum(String, Box<DecodedValue>),
     #[default]
     None,
 }
@@ -40,6 +54,89 @@ pub fn create_decoded_value(
     }
 }
 
+pub fn create_decoded_value_by_type(
+    name: Option<&str>,
+    type_name: &str,
+    value: DecodedValueType,
+) -> DecodedValue {
+    let value = match (type_name, &value) {
+        ("bool", DecodedValueType::Single(felt)) => DecodedValueType::Bool(*felt != Felt::ZERO),
+        // integer type cairo
+        ("u128", DecodedValueType::Single(felt))
+        | ("u64", DecodedValueType::Single(felt))
+        | ("u32", DecodedValueType::Single(felt))
+        | ("u16", DecodedValueType::Single(felt))
+        | ("u8", DecodedValueType::Single(felt)) => DecodedValueType::BigUint(felt.to_biguint()),
+        ("i128", DecodedValueType::Single(felt))
+        | ("i64", DecodedValueType::Single(felt))
+        | ("i32", DecodedValueType::Single(felt))
+        | ("i16", DecodedValueType::Single(felt))
+        | ("i8", DecodedValueType::Single(felt)) => {
+            let mut value = felt.to_bigint();
+            value -= &*P;
+            DecodedValueType::BigInt(value)
+        }
+        // u256 -> [low, high]
+        // - It expects a structure with exactly two parts: "low" (lower 128-bit part) and "high" (upper 128-bit part).
+        // - The upper part is shifted left by 128 bits (equivalent to multiplying by 2^128) to make room for the lower part.
+        // - The values are then combined using the bitwise OR operator to reconstruct the full 256-bit number: u256 = (high << 128) | low.
+        ("u256", DecodedValueType::Struct(values)) if values.len() == 2 => {
+            let low = values.get(&1).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(low) => Some(low.clone()),
+                _ => None,
+            });
+
+            let high = values.get(&2).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(high) => Some(high.clone()),
+                _ => None,
+            });
+            if let (Some(low), Some(high)) = (low, high) {
+                let u256_value = (high << 128) | low;
+                DecodedValueType::BigUint(u256_value)
+            } else {
+                DecodedValueType::Struct(values.clone())
+            }
+        }
+        // u512 -> [limb0, limb1, limb2, limb3]
+        // - It expects a structure with four parts: limb0, limb1, limb2, and limb3, each representing 128 bits.
+        // - Limb3 is shifted left by 384 bits, limb2 by 256 bits, limb1 by 128 bits, while limb0 remains in place.
+        // - Combining all parts using the OR operator reconstructs the full 512-bit number: u512 = (limb3 << 384) | (limb2 << 256) | (limb1 << 128) | limb0.
+        ("u512", DecodedValueType::Struct(values)) if values.len() == 4 => {
+            let limb0 = values.get(&1).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(limb0) => Some(limb0.clone()),
+                _ => None,
+            });
+            let limb1 = values.get(&2).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(limb1) => Some(limb1.clone()),
+                _ => None,
+            });
+            let limb2 = values.get(&3).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(limb2) => Some(limb2.clone()),
+                _ => None,
+            });
+            let limb3 = values.get(&4).and_then(|v| match &v.value {
+                DecodedValueType::BigUint(limb3) => Some(limb3.clone()),
+                _ => None,
+            });
+
+            if let (Some(limb0), Some(limb1), Some(limb2), Some(limb3)) =
+                (limb0, limb1, limb2, limb3)
+            {
+                let u512_value = (limb3 << 384) | (limb2 << 256) | (limb1 << 128) | limb0;
+                DecodedValueType::BigUint(u512_value)
+            } else {
+                DecodedValueType::Struct(values.clone())
+            }
+        }
+        _ => value,
+    };
+    DecodedValue {
+        name: name.map(|s| s.to_string()),
+        type_name: type_name.to_string(),
+        value,
+    }
+}
+
 impl Serialize for DecodedValueType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -48,6 +145,8 @@ impl Serialize for DecodedValueType {
         match self {
             DecodedValueType::String(value) => serializer.serialize_str(value),
             DecodedValueType::Single(value) => value.serialize(serializer),
+            DecodedValueType::BigUint(value) => serializer.serialize_str(&value.to_str_radix(10)),
+            DecodedValueType::BigInt(value) => serializer.serialize_str(&value.to_str_radix(10)),
             DecodedValueType::Bool(value) => serializer.serialize_bool(*value),
             DecodedValueType::Array(values) => values.serialize(serializer),
             DecodedValueType::Struct(fields) => {

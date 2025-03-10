@@ -1,4 +1,17 @@
 # Changelog
+
+### [0.0.49] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.49)
+
+- 1:1 showing values to types in internal functions
+
+### [0.0.48] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.48)
+
+- Return tx index and total number of tx in block
+
+### [0.0.47] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.47)
+
+- fix decoding bug for byte array
+
 ### [0.0.46] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.46)
 
 - installing rust 1.80.0 in Dockerfile

@@ -79,7 +79,7 @@ pub async fn simulate(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
-) -> Result<(SimulationInfo, BlockTimestamp, usize), TransactionSimulationError> {
+) -> Result<(SimulationInfo, BlockTimestamp, usize, usize), TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
     let block_number = if let Some(bn) = args.block_number {
@@ -88,7 +88,7 @@ pub async fn simulate(
         provider_client.block_number().await?
     };
 
-    let (block_info, transaction_index, tx_number_in_block) =
+    let (block_info, transaction_index, total_txs_in_block) =
         extract_block_txs_info(&provider_client, &args, block_number).await?;
 
     let block_timestamp = block_info.block_timestamp;
@@ -97,7 +97,7 @@ pub async fn simulate(
             args.rpc_url.clone(),
             block_number,
             transaction_index,
-            tx_number_in_block,
+            total_txs_in_block,
             db_pool,
             s3_client,
         )
@@ -224,7 +224,12 @@ pub async fn simulate(
         }),
     };
 
-    Ok((simulation_info, block_timestamp, transaction_index))
+    Ok((
+        simulation_info,
+        block_timestamp,
+        transaction_index,
+        total_txs_in_block,
+    ))
 }
 
 fn filter_and_hide_unlinked_function_calls(
@@ -329,20 +334,25 @@ pub async fn simulate_by_calldata(
         .map(|felt| felt.to_hex_string())
         .collect::<Vec<String>>();
     let transaction_version: usize = args.transaction_version.0.to_u64().unwrap() as usize;
-    let (simulation_result, block_timestamp, transaction_index_in_block) =
-        simulate(db_pool, s3_client, args).await?;
+    let (
+        simulation_result,
+        block_timestamp,
+        transaction_index_in_block,
+        total_transactions_in_block,
+    ) = simulate(db_pool, s3_client, args).await?;
 
     Ok(TransactionSimulationResult {
         simulation_result,
         chain_id: readable_chain_id,
         block_number,
         block_timestamp: block_timestamp.0,
-        transaction_index_in_block: Some(transaction_index_in_block),
         nonce,
         sender_address,
         calldata,
         transaction_version,
         transaction_type: transaction_type_to_string(TransactionType::InvokeFunction),
+        transaction_index_in_block: Some(transaction_index_in_block),
+        total_transactions_in_block: Some(total_transactions_in_block),
     })
 }
 
@@ -416,13 +426,14 @@ pub async fn simulate_transaction_by_hash(
                                 chain_id: chain_id_to_readable_string(&chain_id),
                                 block_number: starknet_old_types::BlockId::Number(block_number),
                                 block_timestamp: block_timestamp.0,
-                                transaction_index_in_block: None,
                                 nonce: nonce.0.to_u64(),
                                 sender_address: sender_address.0.to_string(),
                                 calldata: calldata_to_hex(&calldata),
                                 transaction_version: transaction_version.0.to_u64().unwrap()
                                     as usize,
                                 transaction_type: transaction_type_to_string(transaction_type),
+                                transaction_index_in_block: None,
+                                total_transactions_in_block: None,
                             });
                         }
                     }
@@ -430,27 +441,31 @@ pub async fn simulate_transaction_by_hash(
                     let strkgate_event =
                         extract_starkgate_event_transaction_receipt(&transaction_receipt);
                     // Perform transaction simulation
-                    let (simulation_result, block_timestamp, transaction_index_in_block) =
-                        simulate(
-                            db_pool,
-                            s3_client,
-                            SimulationArgs {
-                                rpc_url,
-                                chain_id: chain_id.clone(),
-                                block_number: Some(BlockNumber(block_number)),
-                                nonce: Some(nonce),
-                                sender_address,
-                                calldata: calldata.clone(),
-                                transaction_version,
-                                transaction_signature: Some(signature),
-                                transaction_hash: Some(TransactionHash(transaction_hash)),
-                                transaction_type: Some(transaction_type),
-                                resource_bounds: Some(resource_bounds),
-                                paymaster_data: Some(paymaster_data),
-                                strkgate_event,
-                            },
-                        )
-                        .await?;
+                    let (
+                        simulation_result,
+                        block_timestamp,
+                        transaction_index_in_block,
+                        total_transactions_in_block,
+                    ) = simulate(
+                        db_pool,
+                        s3_client,
+                        SimulationArgs {
+                            rpc_url,
+                            chain_id: chain_id.clone(),
+                            block_number: Some(BlockNumber(block_number)),
+                            nonce: Some(nonce),
+                            sender_address,
+                            calldata: calldata.clone(),
+                            transaction_version,
+                            transaction_signature: Some(signature),
+                            transaction_hash: Some(TransactionHash(transaction_hash)),
+                            transaction_type: Some(transaction_type),
+                            resource_bounds: Some(resource_bounds),
+                            paymaster_data: Some(paymaster_data),
+                            strkgate_event,
+                        },
+                    )
+                    .await?;
 
                     // Build and return simulation result
                     return Ok(TransactionSimulationResult {
@@ -458,12 +473,13 @@ pub async fn simulate_transaction_by_hash(
                         chain_id: chain_id_to_readable_string(&chain_id),
                         block_number: starknet_old_types::BlockId::Number(block_number),
                         block_timestamp: block_timestamp.0,
-                        transaction_index_in_block: Some(transaction_index_in_block),
                         nonce: nonce.0.to_u64(),
                         sender_address: sender_address.0.to_string(),
                         calldata: calldata_to_hex(&calldata),
                         transaction_version: transaction_version.0.to_u64().unwrap() as usize,
                         transaction_type: transaction_type_to_string(transaction_type),
+                        transaction_index_in_block: Some(transaction_index_in_block),
+                        total_transactions_in_block: Some(total_transactions_in_block),
                     });
                 }
             }
