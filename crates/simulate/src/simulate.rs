@@ -39,7 +39,6 @@ use starknet_api::transaction::{Calldata, TransactionHash};
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::warn;
 use url::Url;

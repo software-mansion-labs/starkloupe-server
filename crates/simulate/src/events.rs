@@ -11,7 +11,6 @@ use starknet_api::core::ContractAddress;
 use starknet_selector_decoder::get_selector;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use tracing::error;
 use walnut_shared::abi::{Enum, Event, EventKind, Struct};
 use walnut_shared::field_element_to_felt;

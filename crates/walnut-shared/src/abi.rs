@@ -2,7 +2,6 @@
 //https://github.com/starkware-libs/cairo/blob/v2.10.1/crates/cairo-lang-starknet-classes/src/abi.rs
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 /// Enum of contract item ABIs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]

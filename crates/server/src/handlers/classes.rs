@@ -15,10 +15,7 @@ use tracing::error;
 use utoipa::ToSchema;
 use verification::{
     db::fetch_verified_class,
-    s3::{
-        fetch_class_source_code, fetch_verified_class_hash_with_source_code_data,
-        fetch_verified_class_with_data,
-    },
+    s3::{fetch_verified_class_hash_with_source_code_data, fetch_verified_class_with_data},
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]

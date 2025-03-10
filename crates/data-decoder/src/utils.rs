@@ -6,3 +6,4 @@ pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
         .iter()
         .any(|&builtin| type_name.starts_with(builtin))
 }
+

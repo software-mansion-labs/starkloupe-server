@@ -1,14 +1,14 @@
 use crate::app_state::AppState;
 use crate::services::search::sources_from_rpc_urls;
-use crate::services::search::{ESource, ESourceType};
+use crate::services::search::ESourceType;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use blockifier::abi::abi_utils::selector_from_name;
 use serde::{Deserialize, Serialize};
-use starknet::core::types::ContractClass;
 use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
@@ -29,7 +29,7 @@ use walnut_shared::{extract_chain_id, felt_to_field_element};
 
 #[derive(Serialize, ToSchema)]
 pub struct ContractAbiResponse {
-    pub functions: HashMap<String, Vec<String>>,
+    pub functions: HashMap<String, Vec<(String, String)>>,
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -76,13 +76,13 @@ pub async fn get_contract_function_handler(
         }
     };
 
-    let mut functions_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut functions_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
     for source in &sources {
         let (network, provider) = match source {
             ESourceType::ChainId(chain_id) => (
-                chain_id_to_readable_string(&chain_id),
-                create_rpc_client(&chain_id),
+                chain_id_to_readable_string(chain_id),
+                create_rpc_client(chain_id),
             ),
             ESourceType::RpcUrl(url) => (url.to_string(), create_rpc_client_from_url(url.clone())),
         };
@@ -103,9 +103,14 @@ pub async fn get_contract_function_handler(
                 } {
                     match serde_json::from_str::<Vec<Item>>(&abi) {
                         Ok(parsed_abi) => {
-                            let functions = get_functions(&parsed_abi)
+                            let functions: Vec<(String, String)> = get_functions(&parsed_abi)
                                 .iter()
-                                .map(|func| func.name.clone())
+                                .map(|func| {
+                                    (
+                                        selector_from_name(&func.name).0.to_fixed_hex_string(),
+                                        func.name.clone(),
+                                    )
+                                })
                                 .collect();
                             functions_map.insert(network, functions);
                         }
