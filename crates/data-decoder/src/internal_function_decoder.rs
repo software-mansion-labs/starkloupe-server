@@ -220,8 +220,8 @@ fn decode_standard_struct(
     }
 
     let mut decoded_struct_values = HashMap::with_capacity(generic_args.len());
-
-    for (i, arg) in generic_args.iter().enumerate() {
+    let mut index = 0;
+    for arg in generic_args.iter() {
         if let GenericArg::Type(concrete_type_id) = arg {
             if let Some(decoded_value) = decode_internal_datas(
                 values,
@@ -231,7 +231,8 @@ fn decode_standard_struct(
                 relocated_memory,
                 data_index,
             ) {
-                decoded_struct_values.insert(i, decoded_value);
+                decoded_struct_values.insert(index, decoded_value);
+                index += 1;
             }
         }
     }

@@ -1,5 +1,5 @@
 use crate::starknet_types::EDataType;
-use crate::{create_decoded_value, DecodedValue, DecodedValueType};
+use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::borrow::Cow;
@@ -79,7 +79,7 @@ fn decode_primitive(
 ) -> Option<DecodedValue> {
     datas.get(*data_index).map(|value| {
         *data_index += 1;
-        create_decoded_value(name, data_type, DecodedValueType::Single(*value))
+        create_decoded_value_by_type(name, data_type, DecodedValueType::Single(*value))
     })
 }
 
@@ -121,7 +121,7 @@ fn decode_array(
             }
         })
         .collect();
-    Some(create_decoded_value(
+    Some(create_decoded_value_by_type(
         name,
         data_type,
         DecodedValueType::Array(decoded_elements),
@@ -146,7 +146,7 @@ fn decode_enum(
                     let variant_type = &enum_member.type_name;
 
                     if variant_type.trim().is_empty() {
-                        return Some(create_decoded_value(
+                        return Some(create_decoded_value_by_type(
                             name,
                             data_type,
                             DecodedValueType::String(variant_name.to_string()),
@@ -163,7 +163,7 @@ fn decode_enum(
                     )
                     .and_then(|mut decoded_variants| decoded_variants.pop())
                     .map(|decoded_variant| {
-                        create_decoded_value(
+                        create_decoded_value_by_type(
                             name,
                             format!("{}: {}", variant_name, variant_type).as_str(),
                             decoded_variant.value,
@@ -171,7 +171,7 @@ fn decode_enum(
                     });
                 }
             }
-            return Some(create_decoded_value(
+            return Some(create_decoded_value_by_type(
                 name,
                 data_type,
                 DecodedValueType::Single(*variant_index_felt),
@@ -209,7 +209,7 @@ fn decode_tuple(
         tuple_map.insert(i, field);
     }
 
-    Some(create_decoded_value(
+    Some(create_decoded_value_by_type(
         None,
         &inner_types.join(", "),
         DecodedValueType::Struct(tuple_map),
@@ -225,7 +225,8 @@ fn decode_struct(
     enums: Option<&[EnumAbi]>,
 ) -> Option<DecodedValue> {
     let struct_map = decode_struct_map(datas, data_index, data_type, structs, enums);
-    (struct_map.is_some()).then(|| create_decoded_value(name, data_type, struct_map.unwrap()))
+    (struct_map.is_some())
+        .then(|| create_decoded_value_by_type(name, data_type, struct_map.unwrap()))
 }
 
 fn decode_struct_map(

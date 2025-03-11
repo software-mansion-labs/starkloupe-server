@@ -81,15 +81,16 @@ pub fn create_decoded_value_by_type(
         // - The upper part is shifted left by 128 bits (equivalent to multiplying by 2^128) to make room for the lower part.
         // - The values are then combined using the bitwise OR operator to reconstruct the full 256-bit number: u256 = (high << 128) | low.
         ("u256", DecodedValueType::Struct(values)) if values.len() == 2 => {
-            let low = values.get(&1).and_then(|v| match &v.value {
+            let low = values.get(&0).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(low) => Some(low.clone()),
                 _ => None,
             });
 
-            let high = values.get(&2).and_then(|v| match &v.value {
+            let high = values.get(&1).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(high) => Some(high.clone()),
                 _ => None,
             });
+
             if let (Some(low), Some(high)) = (low, high) {
                 let u256_value = (high << 128) | low;
                 DecodedValueType::BigUint(u256_value)
@@ -102,19 +103,19 @@ pub fn create_decoded_value_by_type(
         // - Limb3 is shifted left by 384 bits, limb2 by 256 bits, limb1 by 128 bits, while limb0 remains in place.
         // - Combining all parts using the OR operator reconstructs the full 512-bit number: u512 = (limb3 << 384) | (limb2 << 256) | (limb1 << 128) | limb0.
         ("u512", DecodedValueType::Struct(values)) if values.len() == 4 => {
-            let limb0 = values.get(&1).and_then(|v| match &v.value {
+            let limb0 = values.get(&0).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(limb0) => Some(limb0.clone()),
                 _ => None,
             });
-            let limb1 = values.get(&2).and_then(|v| match &v.value {
+            let limb1 = values.get(&1).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(limb1) => Some(limb1.clone()),
                 _ => None,
             });
-            let limb2 = values.get(&3).and_then(|v| match &v.value {
+            let limb2 = values.get(&2).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(limb2) => Some(limb2.clone()),
                 _ => None,
             });
-            let limb3 = values.get(&4).and_then(|v| match &v.value {
+            let limb3 = values.get(&3).and_then(|v| match &v.value {
                 DecodedValueType::BigUint(limb3) => Some(limb3.clone()),
                 _ => None,
             });

@@ -4,7 +4,7 @@ use crate::ContractCallsMap;
 use blockifier::abi::abi_utils::selector_from_name;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use data_decoder::calldata_decoder::decode_calldata;
-use data_decoder::create_decoded_value;
+use data_decoder::create_decoded_value_by_type;
 use data_decoder::{DecodedValue, DecodedValueType};
 use serde::Serialize;
 use starknet_api::core::ContractAddress;
@@ -131,44 +131,27 @@ impl EmittedEvent {
         contract_name: &Option<ContractName>,
     ) -> Option<EmittedEvent> {
         fn decode_event_data(event: &starknet_old::core::types::Event) -> Vec<DecodedValue> {
+            let low = field_element_to_felt(event.data[2]).to_biguint();
+            let high = field_element_to_felt(event.data[3]).to_biguint();
+            let u256_value = (high << 128) | low;
+
             vec![
-                create_decoded_value(
+                create_decoded_value_by_type(
                     Some("from"),
                     "ContractAddress",
                     DecodedValueType::Single(field_element_to_felt(event.data[0])),
                 ),
-                create_decoded_value(
+                create_decoded_value_by_type(
                     Some("to"),
                     "ContractAddress",
                     DecodedValueType::Single(field_element_to_felt(event.data[1])),
                 ),
-                create_decoded_value(
+                create_decoded_value_by_type(
                     Some("amount"),
                     "u256",
-                    DecodedValueType::Struct(decode_amount(event)),
+                    DecodedValueType::BigUint(u256_value),
                 ),
             ]
-        }
-
-        fn decode_amount(event: &starknet_old::core::types::Event) -> HashMap<usize, DecodedValue> {
-            let mut amount_map = HashMap::new();
-            amount_map.insert(
-                0,
-                create_decoded_value(
-                    Some("low"),
-                    "u128",
-                    DecodedValueType::Single(field_element_to_felt(event.data[2])),
-                ),
-            );
-            amount_map.insert(
-                1,
-                create_decoded_value(
-                    Some("high"),
-                    "u128",
-                    DecodedValueType::Single(field_element_to_felt(event.data[3])),
-                ),
-            );
-            amount_map
         }
 
         let selector_str = field_element_to_felt(event.keys[0]).to_fixed_hex_string();

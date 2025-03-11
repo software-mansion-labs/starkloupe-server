@@ -20,10 +20,10 @@ use cairo_lang_starknet_classes::{
     contract_class::ContractClass,
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use data_decoder::event_decoder::decode_event_datas;
 use data_decoder::internal_function_decoder::decode_internal_datas;
 use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
-use data_decoder::{create_decoded_value, DecodedValue, DecodedValueType};
+use data_decoder::{create_decoded_value_by_type, event_decoder::decode_event_datas};
+use data_decoder::{DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
@@ -338,7 +338,7 @@ impl Mappings {
                             type_name: Some(simplified_type_name.clone()),
                             value: vec!["1".to_string(), panic_string.clone()],
                         });
-                        results_decoded.push(create_decoded_value(
+                        results_decoded.push(create_decoded_value_by_type(
                             None,
                             "Panic",
                             DecodedValueType::String(panic_string),
