@@ -1,6 +1,4 @@
 use crate::app_state::AppState;
-use crate::services::search::sources_from_rpc_urls;
-use crate::services::search::ESourceType;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -20,28 +18,32 @@ use url::Url;
 use utoipa::ToSchema;
 use verification::{db::fetch_verified_class, s3::fetch_verified_class_hash_with_source_code_data};
 use walnut_shared::abi::get_functions;
+use walnut_shared::abi::Function;
+use walnut_shared::abi::Input;
 use walnut_shared::abi::Item;
+use walnut_shared::abi::Output;
+use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
-    field_element_to_felt,
+    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
+    felt_to_field_element, field_element_to_felt,
 };
-use walnut_shared::{extract_chain_id, felt_to_field_element};
 
 #[derive(Serialize, ToSchema)]
 pub struct ContractAbiResponse {
-    pub functions: HashMap<String, Vec<(String, String)>>,
+    pub entry_point_datas: Vec<(String, Function)>,
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct ContractAddressQuery {
-    pub rpc_urls: Option<String>,
+    pub rpc_url: Option<String>,
+    pub chain_id: Option<String>,
 }
 
 #[utoipa::path(
     get,
-    path = "/v1/contracts/{contract_address}/functions",
+    path = "/v1/contracts/{contract_address}/entrypoints",
     responses(
-        (status = 200, description = "Returns the list of functions of the contract", body = ContractFunctionResponse),
+        (status = 200, description = "Returns the list of entry points of the contract", body = ContractFunctionResponse),
         (status = 404, description = "Contract not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -49,9 +51,9 @@ pub struct ContractAddressQuery {
         ("contract_address" = String, Path, description = "Contract address"),
         ("rpc_urls" = Option<String>, Query, description = "Comma-separated list of additional RPC URLs to check")
     ),
-    tag = "Contract functions"
+    tag = "Contract entrypoints"
 )]
-pub async fn get_contract_function_handler(
+pub async fn get_contract_entrypoints_handler(
     State(_state): State<Arc<AppState>>,
     Path(contract_address): Path<String>,
     Query(query): Query<ContractAddressQuery>,
@@ -65,78 +67,95 @@ pub async fn get_contract_function_handler(
         }
     };
 
-    let sources = match sources_from_rpc_urls(query.rpc_urls.as_deref()) {
-        Ok(sources) => sources,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Error parsing URLs: {}", err),
-            )
-                .into_response()
-        }
+    let provider = if let Some(chain_id) = query.chain_id {
+        let chain_id = match extract_chain_id(chain_id.as_str()) {
+            Ok(chain_id) => chain_id,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid chain ID").into_response(),
+        };
+        create_rpc_client(&chain_id)
+    } else if let Some(rpc_url) = query.rpc_url {
+        let rpc_url = match Url::parse(&rpc_url) {
+            Ok(url) => url,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid RPC URL").into_response(),
+        };
+        create_rpc_client_from_url(rpc_url)
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Either chain_id or rpc_url must be provided",
+        )
+            .into_response();
     };
 
-    let mut functions_map: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut entry_point_datas: Vec<(String, Function)> = Vec::new();
 
-    for source in &sources {
-        let (network, provider) = match source {
-            ESourceType::ChainId(chain_id) => (
-                chain_id_to_readable_string(chain_id),
-                create_rpc_client(chain_id),
-            ),
-            ESourceType::RpcUrl(url) => (url.to_string(), create_rpc_client_from_url(url.clone())),
-        };
+    match provider
+        .get_class_at(
+            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+            contract_address_field,
+        )
+        .await
+    {
+        Ok(contract_class) => {
+            if let Some(abi) = match contract_class {
+                starknet_old_types::ContractClass::Sierra(sierra_class) => Some(sierra_class.abi),
+                starknet_old_types::ContractClass::Legacy(_) => None,
+            } {
+                match serde_json::from_str::<Vec<Item>>(&abi) {
+                    Ok(parsed_abi) => {
+                        let functions: Vec<(String, Function)> = get_functions(&parsed_abi)
+                            .iter()
+                            .map(|func| {
+                                let simplified_inputs: Vec<Input> = func
+                                    .inputs
+                                    .iter()
+                                    .map(|input| Input {
+                                        name: input.name.clone(),
+                                        ty: simplify_type_name(&input.ty),
+                                    })
+                                    .collect();
 
-        match provider
-            .get_class_at(
-                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                contract_address_field,
-            )
-            .await
-        {
-            Ok(contract_class) => {
-                if let Some(abi) = match contract_class {
-                    starknet_old_types::ContractClass::Sierra(sierra_class) => {
-                        Some(sierra_class.abi)
+                                let simplified_outputs: Vec<Output> = func
+                                    .outputs
+                                    .iter()
+                                    .map(|output| Output {
+                                        ty: simplify_type_name(&output.ty),
+                                    })
+                                    .collect();
+
+                                (
+                                    selector_from_name(&func.name).0.to_fixed_hex_string(),
+                                    Function {
+                                        name: func.name.clone(),
+                                        inputs: simplified_inputs,
+                                        outputs: simplified_outputs,
+                                        state_mutability: func.state_mutability.clone(),
+                                    },
+                                )
+                            })
+                            .collect();
+
+                        entry_point_datas.extend(functions);
                     }
-                    starknet_old_types::ContractClass::Legacy(_) => None,
-                } {
-                    match serde_json::from_str::<Vec<Item>>(&abi) {
-                        Ok(parsed_abi) => {
-                            let functions: Vec<(String, String)> = get_functions(&parsed_abi)
-                                .iter()
-                                .map(|func| {
-                                    (
-                                        selector_from_name(&func.name).0.to_fixed_hex_string(),
-                                        func.name.clone(),
-                                    )
-                                })
-                                .collect();
-                            functions_map.insert(network, functions);
-                        }
-                        Err(err) => {
-                            error!("Failed to parse ABI for network {}: {}", network, err);
-                        }
+                    Err(err) => {
+                        error!("Failed to parse ABI for network: {}", err);
                     }
                 }
             }
-            Err(err) => {
-                error!(
-                    "Failed to fetch class for address {} from source {:?}: {}",
-                    contract_address, source, err
-                );
-                functions_map.insert(network, vec![]);
-            }
+        }
+        Err(err) => {
+            error!(
+                "Failed to fetch class for address {} from source: {}",
+                contract_address, err
+            );
         }
     }
 
-    if functions_map.is_empty() {
+    if entry_point_datas.is_empty() {
         return (StatusCode::NOT_FOUND, "ABI not found for contract address").into_response();
     }
 
-    let response = ContractAbiResponse {
-        functions: functions_map,
-    };
+    let response = ContractAbiResponse { entry_point_datas };
 
     (StatusCode::OK, Json(response)).into_response()
 }

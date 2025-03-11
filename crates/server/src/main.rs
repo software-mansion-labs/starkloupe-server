@@ -14,7 +14,7 @@ use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
     classes::get_class_handler,
-    contracts::{get_contract_function_handler, get_contract_handler},
+    contracts::{get_contract_entrypoints_handler, get_contract_handler},
     openapi::ApiDoc,
     simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
     verification::verify_handler,
@@ -116,8 +116,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .route("/v1/classes/:class_hash", get(get_class_handler))
                 .route("/v1/contracts/:contract_address", get(get_contract_handler))
                 .route(
-                    "/v1/contracts/:contract_address/functions",
-                    get(get_contract_function_handler),
+                    "/v1/contracts/:contract_address/entrypoints",
+                    get(get_contract_entrypoints_handler),
                 )
                 .route("/v1/search/:search_hash", get(get_search_handler))
                 .route(
@@ -162,4 +162,3 @@ async fn health_check(State(state): State<Arc<AppState>>) -> StatusCode {
     // If the database is down, we should return an error
     db_status
 }
-
