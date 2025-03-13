@@ -3,7 +3,7 @@ use blockifier::bouncer::BouncerConfig;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::transaction::objects::{
-    CommonAccountFields, CurrentTransactionInfo, DeprecatedTransactionInfo, TransactionInfo,
+    CommonAccountFields, CurrentTransactionInfo, TransactionInfo,
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;

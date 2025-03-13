@@ -15,7 +15,6 @@ use cairo_lang_starknet_classes::abi::{Event, EventField};
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
-use data_decoder::utils::simplify_type_name;
 use data_decoder::{DecodedValue, DecodedValueType};
 use itertools::chain;
 use itertools::Itertools;
@@ -24,6 +23,7 @@ use starknet::core::types::Felt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
+use walnut_shared::utils::simplify_type_name;
 
 pub fn compile_sierra_contract_class(
     contract_class: ContractClass,

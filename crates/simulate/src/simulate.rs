@@ -45,12 +45,8 @@ use url::Url;
 use walnut_shared::felt_to_field_element;
 use walnut_shared::felts_to_string;
 use walnut_shared::field_element_to_felt;
-use walnut_shared::EnumAbi;
-use walnut_shared::EventAbi;
-use walnut_shared::StructAbi;
 use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
 
-use crate::abi_processor::AbiProcessor;
 use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
@@ -75,6 +71,8 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
+use walnut_shared::abi::{Enum, Event, Struct};
+use walnut_shared::abi_processor::AbiProcessor;
 
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
@@ -131,9 +129,9 @@ pub async fn simulate(
 
     filter_and_hide_unlinked_function_calls(&mut contract_calls_map, &function_calls_map);
 
-    let mut event_abis: Vec<EventAbi> = Vec::new();
-    let mut struct_abis: Vec<StructAbi> = Vec::new();
-    let mut enum_abis: Vec<EnumAbi> = Vec::new();
+    let mut event_abis: Vec<Event> = Vec::new();
+    let mut struct_abis: Vec<Struct> = Vec::new();
+    let mut enum_abis: Vec<Enum> = Vec::new();
 
     for call in contract_calls_map.0.values_mut() {
         if let Some(class_hash) = call.entry_point.class_hash {
@@ -145,7 +143,7 @@ pub async fn simulate(
                 .ok();
             if let Some(ContractClass::Sierra(class)) = contract_class {
                 let mut abi_processor = AbiProcessor::new(call.entry_point.entry_point_selector);
-                abi_processor.process_abi(class.abi);
+                abi_processor.process_abi(&class.abi);
                 call.entry_point_name = abi_processor.entry_point_function_name;
                 call.entry_point_interface_name = abi_processor.entry_point_interface_name;
                 call.is_erc20_token = abi_processor.is_erc20_token;

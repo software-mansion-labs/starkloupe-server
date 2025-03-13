@@ -1,6 +1,8 @@
+pub mod abi;
+pub mod abi_processor;
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
-
+pub mod utils;
 use anyhow::{anyhow, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use serde::Serialize;
@@ -19,33 +21,9 @@ use std::collections::BTreeMap;
 use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
-pub struct Datas {
-    pub names: String,
-    pub types: String,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct EventAbi {
-    pub name: String,
-    pub parameters: Vec<Parameter>,
-}
-
-#[derive(Serialize, Debug, Clone)]
 pub struct Parameter {
     pub name: String,
     pub type_name: String,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct StructAbi {
-    pub name: String,
-    pub parameters: Vec<Parameter>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct EnumAbi {
-    pub name: String,
-    pub parameters: Vec<Parameter>,
 }
 
 pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
