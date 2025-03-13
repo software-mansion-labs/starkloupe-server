@@ -20,7 +20,7 @@ pub struct Data {
     pub hash: String,
 }
 
-#[derive(Deserialize, Debug, Serialize, ToSchema)]
+#[derive(Deserialize, Debug, Serialize, ToSchema, Eq, Hash, PartialEq)]
 pub enum ESource {
     ChainId(String),
     RpcUrl(String),

@@ -5,6 +5,7 @@ use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::collections::HashMap;
+use walnut_shared::utils::simplify_type_name;
 
 pub fn decode_event_datas(
     type_id: &ConcreteTypeId,

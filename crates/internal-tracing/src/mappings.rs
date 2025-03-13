@@ -21,7 +21,7 @@ use cairo_lang_starknet_classes::{
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::internal_function_decoder::decode_internal_datas;
-use data_decoder::utils::{simplify_type_name, skip_builtin_type_declaration};
+use data_decoder::utils::skip_builtin_type_declaration;
 use data_decoder::{create_decoded_value_by_type, event_decoder::decode_event_datas};
 use data_decoder::{DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
@@ -33,6 +33,7 @@ use tracing::error;
 use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 use walnut_shared::felts_to_string;
+use walnut_shared::utils::simplify_type_name;
 
 use crate::{
     call_trace::{ContractCall, ESysCall, EventSysCall, InternalFnCallIO},

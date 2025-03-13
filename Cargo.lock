@@ -7887,6 +7887,7 @@ name = "walnut-shared"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blockifier",
  "cairo-lang-sierra",
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
@@ -7898,6 +7899,7 @@ dependencies = [
  "num-integer",
  "num-traits 0.2.19",
  "serde",
+ "serde_json",
  "smol_str",
  "starknet 0.10.0",
  "starknet 0.11.0 (git+https://github.com/xJonathanLEI/starknet-rs?rev=db1fa598232f0698d942cc974f481b5d888ac080)",
