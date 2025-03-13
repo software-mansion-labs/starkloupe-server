@@ -1,4 +1,3 @@
-pub mod abi_processor;
 pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;

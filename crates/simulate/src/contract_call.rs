@@ -9,7 +9,8 @@ use starknet::core::types::Felt;
 use std::borrow::Cow;
 use std::cell::Ref;
 use verification::CodeLocation;
-use walnut_shared::{get_name_of_entry_point_selector, EnumAbi, StructAbi};
+use walnut_shared::abi::{Enum, Struct};
+use walnut_shared::get_name_of_entry_point_selector;
 
 #[derive(Debug, Serialize)]
 pub struct ContractCall {
@@ -109,7 +110,7 @@ impl ContractCall {
     /// Decodes the call arguments using the provided struct ABIs. The decoded arguments are then stored in the `calldata_decoded` field.
     ///
     /// Note: `arguments_types` and `arguments_names` should already be set before calling this function.
-    pub fn decode_call_arguments(&mut self, struct_abis: &[StructAbi], enum_abis: &[EnumAbi]) {
+    pub fn decode_call_arguments(&mut self, struct_abis: &[Struct], enum_abis: &[Enum]) {
         if let (Some(arguments_types), Some(arguments_names)) =
             (&self.arguments_types, &self.arguments_names)
         {
@@ -129,7 +130,7 @@ impl ContractCall {
     /// Decodes the call result using the provided struct ABIs. The decoded result is then stored in the `decoded_result` field.
     ///
     /// Note: `result_types` should already be set before calling this function.
-    pub fn decode_call_result(&mut self, struct_abis: &[StructAbi], enum_abis: &[EnumAbi]) {
+    pub fn decode_call_result(&mut self, struct_abis: &[Struct], enum_abis: &[Enum]) {
         if let CallResult::Success { ret_data } = &self.result {
             if let Some(call_result_types) = &self.result_types {
                 let decoded_result = decode_calldata(

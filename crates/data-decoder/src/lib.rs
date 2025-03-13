@@ -5,10 +5,10 @@ pub mod internal_function_decoder;
 mod starknet_types;
 pub mod utils;
 use num_bigint::{BigInt, BigUint};
-use num_traits::{One, ToPrimitive};
+use num_traits::One;
 use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
 use starknet_types_core::felt::Felt;
-use std::{collections::HashMap, u128};
+use std::collections::HashMap;
 
 //A negative value -x is serialized as P - x, where P is:
 //P = 2^251 + 17 * 2^192 + 1
