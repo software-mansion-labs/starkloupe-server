@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::services::search::{sources_from_rpc_urls, ESource, ESourceType};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -6,12 +7,12 @@ use axum::{
     Json,
 };
 use blockifier::abi::abi_utils::selector_from_name;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
-use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
-use starknet_providers::{jsonrpc::HttpTransport, JsonRpcClient, Provider};
-use std::str::FromStr;
+use starknet_providers::Provider;
 use std::{collections::HashMap, sync::Arc};
 use tracing::error;
 use url::Url;
@@ -24,8 +25,8 @@ use walnut_shared::abi::Item;
 use walnut_shared::abi::Output;
 use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{
-    chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
-    felt_to_field_element, field_element_to_felt,
+    create_rpc_client, create_rpc_client_from_url, extract_cairo_version_from_program,
+    extract_chain_id, felt_to_field_element, tuple_to_version_string,
 };
 
 #[derive(Serialize, ToSchema)]
@@ -161,17 +162,17 @@ pub async fn get_contract_entrypoints_handler(
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
-pub struct ContractResponseWithSourceCode {
-    pub chain_id: Option<String>,
+pub struct GetContractResponse {
     pub class_hash: String,
-    pub is_class_verified: bool,
+    pub verified: bool,
+    pub deployed_sources: Vec<ESource>,
+    pub cairo_version: String,
     pub source_code: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ContractQueryParams {
-    pub rpc_url: Option<String>,
-    pub chain_id: Option<String>,
+pub struct ContractQuery {
+    pub rpc_urls: Option<String>,
     pub include_source_code: Option<bool>,
 }
 
@@ -184,8 +185,7 @@ pub struct ContractQueryParams {
     ),
     params(
         ("contract_address" = String, Path, description = "Contract address"),
-        ("rpc_url" = Option<String>, Query, description = "RPC URL"),
-        ("chain_id" = Option<String>, Query, description = "Chain identifier"), 
+        ("rpc_urls" = Option<String>, Query, description = "Comma-separated list of additional RPC URLs to check"),
         ("include_source_code" = Option<bool>, Query, description = "Whether to include the source code in the response")
     ),
     tag = "Contract details"
@@ -193,76 +193,89 @@ pub struct ContractQueryParams {
 pub async fn get_contract_handler(
     State(state): State<Arc<AppState>>,
     Path(contract_address): Path<String>,
-    Query(query_params): Query<ContractQueryParams>,
+    Query(query): Query<ContractQuery>,
 ) -> Response {
-    let contract = if let Some(chain_id) = query_params.chain_id {
-        let chain_id = match extract_chain_id(chain_id.as_str()) {
-            Ok(chain_id) => chain_id,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid chain ID").into_response(),
-        };
-        let provider_client = create_rpc_client(&chain_id);
-        fetch_contract_data(
-            &state,
-            &contract_address,
-            query_params.include_source_code.unwrap_or(false),
-            provider_client,
-            Some(&chain_id),
-        )
-        .await
-    } else if let Some(rpc_url) = query_params.rpc_url {
-        let rpc_url = match Url::parse(&rpc_url) {
-            Ok(url) => url,
-            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid RPC URL").into_response(),
-        };
-        let provider_client = create_rpc_client_from_url(rpc_url);
-        fetch_contract_data(
-            &state,
-            &contract_address,
-            query_params.include_source_code.unwrap_or(false),
-            provider_client,
-            None,
-        )
-        .await
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Either chain_id or rpc_url must be provided",
-        )
-            .into_response();
+    let contract_address_field = match Felt::from_hex(&contract_address) {
+        Ok(felt) => felt_to_field_element(felt),
+        Err(_) => {
+            let error_message = "Invalid  contract address format";
+            error!(error_message);
+            return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
+        }
     };
 
-    if contract.is_none() {
-        (StatusCode::NOT_FOUND, "Contract not found").into_response()
-    } else {
-        (StatusCode::OK, Json(Some(contract))).into_response()
-    }
-}
+    let sources = match sources_from_rpc_urls(query.rpc_urls.as_deref()) {
+        Ok(sources) => sources,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Error parsing URLs: {}", err),
+            )
+                .into_response()
+        }
+    };
 
-async fn fetch_contract_data(
-    state: &Arc<AppState>,
-    contract_address: &str,
-    include_source_code: bool,
-    provider_client: JsonRpcClient<HttpTransport>,
-    chain_id: Option<&ChainId>,
-) -> Option<ContractResponseWithSourceCode> {
-    let class_hash = provider_client
-        .get_class_hash_at(
-            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-            felt_to_field_element(Felt::from_str(contract_address).ok()?),
+    let results: Vec<Option<(ESource, Felt, (u32, u32, u32))>> = sources
+        .iter()
+        .map(|source| async move {
+            let provider = match source {
+                ESourceType::ChainId(chain_id) => create_rpc_client(chain_id),
+                ESourceType::RpcUrl(url) => create_rpc_client_from_url(url.clone()),
+            };
+
+            if let Ok(class_from_blockchain) = provider
+                .get_class_at(
+                    starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                    contract_address_field,
+                )
+                .await
+            {
+                let class_json = serde_json::to_value(&class_from_blockchain).ok()?;
+                let contract_class: starknet::core::types::ContractClass =
+                    serde_json::from_value(class_json).ok()?;
+
+                if let starknet::core::types::ContractClass::Sierra(flattened_sierra_class) =
+                    contract_class
+                {
+                    let class_hash_felt = flattened_sierra_class.class_hash();
+                    let cairo_version =
+                        extract_cairo_version_from_program(&flattened_sierra_class.sierra_program)
+                            .ok()?;
+                    return Some((source.into(), class_hash_felt, cairo_version));
+                }
+            }
+            None
+        })
+        .collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .await;
+
+    let valid_results: Vec<(ESource, Felt, (u32, u32, u32))> =
+        results.into_iter().flatten().collect();
+
+    if valid_results.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("Contract not found on networks - {:?}", sources),
         )
-        .await
-        .ok()?;
-    let class_hash_str = field_element_to_felt(class_hash).to_fixed_hex_string();
+            .into_response();
+    }
 
-    let is_verified = fetch_verified_class(&state.db_pool, &class_hash_str)
+    let (_, class_hash_felt, cairo_version_tuple) = valid_results[0];
+    let cairo_version_str = tuple_to_version_string(cairo_version_tuple);
+
+    let valid_sources: Vec<ESource> = valid_results.into_iter().map(|(s, _, _)| s).collect();
+
+    let class_hash = class_hash_felt.to_fixed_hex_string();
+    let is_verified = fetch_verified_class(&state.db_pool, &class_hash)
         .await
         .is_ok();
 
-    let source_code = if is_verified && include_source_code {
+    let source_code = if is_verified && query.include_source_code.unwrap_or_default() {
         match fetch_verified_class_hash_with_source_code_data(
             &state.db_pool,
             &state.s3_client,
-            &class_hash_str,
+            &class_hash,
         )
         .await
         {
@@ -273,10 +286,13 @@ async fn fetch_contract_data(
         None
     };
 
-    Some(ContractResponseWithSourceCode {
-        chain_id: chain_id.map(chain_id_to_readable_string),
-        class_hash: class_hash_str,
-        is_class_verified: is_verified,
+    let response_body = GetContractResponse {
+        class_hash,
+        verified: is_verified,
+        deployed_sources: valid_sources,
+        cairo_version: cairo_version_str,
         source_code,
-    })
+    };
+
+    (StatusCode::OK, Json(response_body)).into_response()
 }
