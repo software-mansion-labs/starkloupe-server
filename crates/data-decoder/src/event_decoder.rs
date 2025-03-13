@@ -1,4 +1,4 @@
-use crate::utils::{simplify_type_name, skip_builtin_type_declaration};
+use crate::utils::skip_builtin_type_declaration;
 use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
