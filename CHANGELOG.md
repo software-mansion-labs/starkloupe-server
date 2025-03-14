@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.54] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.54)
+
+- Contract handler return networks and cairo version
+
 ### [0.0.53] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.53)
 
 - Decode calldata to native types

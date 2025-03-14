@@ -21,7 +21,7 @@ use std::{collections::HashMap, fs::File};
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
-use walnut_shared::felt_to_field_element;
+use walnut_shared::{extract_cairo_version_from_program, felt_to_field_element};
 
 pub fn initialize_status_map(
     class_hashes: &[String],
@@ -120,11 +120,7 @@ pub async fn fetch_class_from_blockchain(
         }
     }?;
 
-    let cairo_version: (u32, u32, u32) = (
-        program_from_blockchain[3].to_biguint().try_into()?,
-        program_from_blockchain[4].to_biguint().try_into()?,
-        program_from_blockchain[5].to_biguint().try_into()?,
-    );
+    let cairo_version = extract_cairo_version_from_program(&program_from_blockchain)?;
 
     Ok((program_from_blockchain, cairo_version))
 }

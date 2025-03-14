@@ -32,6 +32,17 @@ pub enum ESourceType {
     RpcUrl(Url),
 }
 
+impl From<&ESourceType> for ESource {
+    fn from(source: &ESourceType) -> Self {
+        match source {
+            ESourceType::ChainId(chain_id) => {
+                ESource::ChainId(chain_id_to_readable_string(chain_id))
+            }
+            ESourceType::RpcUrl(url) => ESource::RpcUrl(url.to_string()),
+        }
+    }
+}
+
 pub fn sources_from_rpc_urls(urls: Option<&str>) -> Result<Vec<ESourceType>> {
     let mut sources = vec![
         ESourceType::ChainId(ChainId::Mainnet),

@@ -3,7 +3,7 @@ pub mod abi_processor;
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 pub mod utils;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use serde::Serialize;
 use starknet::core::types::{
@@ -323,6 +323,30 @@ pub fn tuple_to_version_string(version_tuple: (u32, u32, u32)) -> String {
         "{}.{}.{}",
         version_tuple.0, version_tuple.1, version_tuple.2
     )
+}
+
+pub fn extract_cairo_version_from_program(program: &[Felt]) -> Result<(u32, u32, u32)> {
+    if program.len() < 6 {
+        return Err(anyhow::anyhow!(
+            "Program length is too short: expected at least 6, found {}",
+            program.len()
+        ));
+    }
+
+    Ok((
+        program[3]
+            .to_biguint()
+            .try_into()
+            .context("Failed to convert major version")?,
+        program[4]
+            .to_biguint()
+            .try_into()
+            .context("Failed to convert minor version")?,
+        program[5]
+            .to_biguint()
+            .try_into()
+            .context("Failed to convert patch version")?,
+    ))
 }
 
 pub fn felt_str_to_fixed(felt_str: &str) -> anyhow::Result<String> {
