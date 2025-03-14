@@ -16,4 +16,6 @@ pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "Gas",
     "System",
     "()",
+    "ContractState",
+    "ComponentState",
 ];
