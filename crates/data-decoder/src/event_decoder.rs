@@ -187,16 +187,6 @@ fn decode_standard_struct(
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
 ) -> Option<DecodedValue> {
-    // This is to avoid decoding the ContractState struct, because there is 17 members
-    //and values are empty, as the values array in the case of ContractState is empty
-    if debug_name == "ContractState" || debug_name.contains("ComponentState") {
-        return Some(create_decoded_value_by_type(
-            None,
-            debug_name,
-            DecodedValueType::None,
-        ));
-    }
-
     let mut decoded_struct_values = HashMap::with_capacity(generic_args.len());
 
     for (i, arg) in generic_args.iter().enumerate() {
