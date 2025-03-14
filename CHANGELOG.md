@@ -1,5 +1,21 @@
 # Changelog
 
+### [0.0.53] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.53)
+
+- Decode calldata to native types
+
+### [0.0.52] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.52)
+
+- Remove contract state
+
+### [0.0.51] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.51)
+
+- Same as tag 50, push mistake
+
+### [0.0.50] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.50)
+
+- Code cleanup, contract entrypoints endpoint
+
 ### [0.0.49] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.49)
 
 - 1:1 showing values to types in internal functions

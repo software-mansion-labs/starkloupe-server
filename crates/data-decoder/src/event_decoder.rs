@@ -1,5 +1,5 @@
 use crate::utils::skip_builtin_type_declaration;
-use crate::{create_decoded_value, DecodedValue, DecodedValueType};
+use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use num_traits::cast::ToPrimitive;
@@ -29,7 +29,7 @@ pub fn decode_event_datas(
     if generic_args.is_empty() {
         return values.get(*data_index).map(|value| {
             *data_index += 1;
-            create_decoded_value(None, &debug_name, DecodedValueType::Single(*value))
+            create_decoded_value_by_type(None, &debug_name, DecodedValueType::Single(*value))
         });
     }
     match generic_type_id.0.as_str() {
@@ -85,7 +85,7 @@ fn decode_enum(
         *data_index += 1;
 
         if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
-            return Some(create_decoded_value(
+            return Some(create_decoded_value_by_type(
                 None,
                 debug_name,
                 DecodedValueType::Single(Felt::from(variant_index)),
@@ -142,8 +142,9 @@ fn decode_span(
     // Span is a struct with one field, which is the inner array
     // The inner array type is the second generic argument
     if let Some(GenericArg::Type(inner_type_id)) = generic_args.get(1) {
-        decode_event_datas(inner_type_id, type_declaration_map, values, data_index)
-            .map(|decoded_value| create_decoded_value(None, debug_name, decoded_value.value))
+        decode_event_datas(inner_type_id, type_declaration_map, values, data_index).map(
+            |decoded_value| create_decoded_value_by_type(None, debug_name, decoded_value.value),
+        )
     } else {
         None
     }
@@ -169,7 +170,7 @@ fn decode_tuple(
     }
 
     if !tuple_elements.is_empty() {
-        Some(create_decoded_value(
+        Some(create_decoded_value_by_type(
             None,
             debug_name,
             DecodedValueType::Array(tuple_elements),
@@ -199,7 +200,7 @@ fn decode_standard_struct(
     }
 
     (!decoded_struct_values.is_empty()).then(|| {
-        create_decoded_value(
+        create_decoded_value_by_type(
             None,
             debug_name,
             DecodedValueType::Struct(decoded_struct_values),
@@ -231,7 +232,7 @@ fn decode_array(
         }
     }
 
-    Some(create_decoded_value(
+    Some(create_decoded_value_by_type(
         None,
         debug_name,
         DecodedValueType::Array(decoded_elements),
