@@ -12,7 +12,7 @@ use starknet_selector_decoder::get_selector;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use tracing::error;
-use walnut_shared::abi::{Enum, Event, EventKind, Struct};
+use walnut_shared::abi::{Enum, Event, EventData, EventKind, Struct};
 use walnut_shared::field_element_to_felt;
 
 #[derive(Debug, Serialize, Clone)]
@@ -86,9 +86,20 @@ impl EmittedEvent {
                             keys.remove(0);
                         }
 
-                        let (names, types): (Vec<Cow<str>>, Vec<Cow<str>>) = match &event_abi.kind {
-                            EventKind::Struct { members }
-                            | EventKind::Enum { variants: members } => members
+                        let (names, types): (Vec<Cow<str>>, Vec<Cow<str>>) = match &event_abi.data {
+                            EventData::Cairo2 { kind } => match kind {
+                                EventKind::Struct { members }
+                                | EventKind::Enum { variants: members } => members
+                                    .iter()
+                                    .map(|param| {
+                                        (
+                                            Cow::Borrowed(param.name.as_str()),
+                                            Cow::Borrowed(param.ty.as_str()),
+                                        )
+                                    })
+                                    .unzip(),
+                            },
+                            EventData::Cairo1 { inputs } => inputs
                                 .iter()
                                 .map(|param| {
                                     (

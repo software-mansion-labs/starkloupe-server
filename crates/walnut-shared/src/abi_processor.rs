@@ -1,6 +1,6 @@
 use crate::abi::{
-    get_enums, get_events, get_functions, get_structs, Enum, Event, EventKind, Input, Item, Output,
-    StateMutability, Struct,
+    get_enums, get_events, get_functions, get_structs, Enum, Event, EventData, EventKind, Input,
+    Item, Output, StateMutability, Struct,
 };
 use crate::utils::simplify_type_name;
 use blockifier::abi::abi_utils::selector_from_name;
@@ -39,7 +39,7 @@ impl AbiProcessor {
     }
 
     pub fn process_abi(&mut self, abi: &str) {
-        let items: Vec<Item> = serde_json::from_str(abi).unwrap();
+        let items: Vec<Item> = serde_json::from_str(abi).expect("Invalid ABI JSON format");
         self.process_abi_event(&items);
         self.process_abi_struct(&items);
         self.process_abi_enum(&items);
@@ -55,15 +55,22 @@ impl AbiProcessor {
                 .next()
                 .unwrap_or(&event.name)
                 .to_string();
-            match &mut event.kind {
-                EventKind::Struct { members } => {
-                    members.iter_mut().for_each(|member| {
-                        member.ty = simplify_type_name(&member.ty);
-                    });
-                }
-                EventKind::Enum { variants } => {
-                    variants.iter_mut().for_each(|member| {
-                        member.ty = simplify_type_name(&member.ty);
+            match &mut event.data {
+                EventData::Cairo2 { kind } => match kind {
+                    EventKind::Struct { members } => {
+                        members.iter_mut().for_each(|member| {
+                            member.ty = simplify_type_name(&member.ty);
+                        });
+                    }
+                    EventKind::Enum { variants } => {
+                        variants.iter_mut().for_each(|variant| {
+                            variant.ty = simplify_type_name(&variant.ty);
+                        });
+                    }
+                },
+                EventData::Cairo1 { inputs } => {
+                    inputs.iter_mut().for_each(|input| {
+                        input.ty = simplify_type_name(&input.ty);
                     });
                 }
             }
