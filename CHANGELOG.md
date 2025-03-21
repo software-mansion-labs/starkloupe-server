@@ -1,5 +1,13 @@
 # Changelog
 
+### [0.0.56] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.56)
+
+- CAIRO 1 ABI format support
+
+### [0.0.55] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.55)
+
+- L1<>L2 transaction support
+
 ### [0.0.54] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.54)
 
 - Contract handler return networks and cairo version

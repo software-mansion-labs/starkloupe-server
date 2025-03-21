@@ -77,7 +77,19 @@ pub struct L1Handler {
 pub struct Event {
     pub name: String,
     #[serde(flatten)]
-    pub kind: EventKind,
+    pub data: EventData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(untagged)]
+pub enum EventData {
+    Cairo2 {
+        #[serde(flatten)]
+        kind: EventKind,
+    },
+    Cairo1 {
+        inputs: Vec<EventFieldLegacy>,
+    },
 }
 
 /// Contract event kind.
@@ -110,6 +122,13 @@ pub enum EventFieldKind {
     Nested,
     #[serde(rename = "flat")]
     Flat,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct EventFieldLegacy {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
 }
 
 /// Function input ABI.
