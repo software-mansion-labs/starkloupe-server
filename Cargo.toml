@@ -100,7 +100,7 @@ cairo-lang-sierra = "2.8.2"
 cairo-lang-sierra-type-size = "2.8.2"
 cairo-lang-starknet-classes = "2.8.2"
 cairo-lang-sierra-to-casm = "2.8.2"
-
+ethers = "2.0.14"
 # Starknet Foundry
 cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "84fa298db89f8d24586f97e0a73f629ecb6d55aa" }
 runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "84fa298db89f8d24586f97e0a73f629ecb6d55aa" }

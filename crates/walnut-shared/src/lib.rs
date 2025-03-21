@@ -5,7 +5,12 @@ pub mod felt252_vec_compression;
 pub mod utils;
 use anyhow::{anyhow, Context, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use ethers::providers::{Http, Provider as EthProvider};
+use ethers::types::H256;
+use num_bigint::BigInt;
+use num_traits::Num;
 use serde::Serialize;
+use serde_json::Value;
 use starknet::core::types::{
     BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem,
     ExecutionResult, Felt, StorageEntry,
@@ -15,9 +20,14 @@ use starknet_api::{
     transaction::{Resource, ResourceBounds, ResourceBoundsMapping},
 };
 use starknet_old::core::types::{self as starknet_old_types};
-use starknet_providers::jsonrpc::{HttpTransport, JsonRpcClient};
+use starknet_providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use starknet_selector_decoder::get_selector;
+use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
@@ -54,6 +64,41 @@ pub fn rpc_url(chain_id: &ChainId) -> Url {
         }
         _ => panic!("Invalid chain id"),
     }
+}
+
+pub fn create_eth_provider_from_url(rpc_url: String) -> EthProvider<Http> {
+    EthProvider::<Http>::try_from(rpc_url).expect("Not valid Ethereum RPC URL")
+}
+
+pub fn eth_rpc_url(chain_id: &ChainId) -> String {
+    match chain_id {
+        ChainId::Mainnet => {
+            "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string()
+        }
+        ChainId::Sepolia => {
+            "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string()
+        }
+        _ => panic!("Invalid chain id"),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ETransactionHashType {
+    Starknet(Felt),
+    Ethereum(H256),
+}
+
+pub fn parse_transaction_hash_per_network(tx_hash: &str) -> Option<ETransactionHashType> {
+    let trimmed = tx_hash.strip_prefix("0x")?;
+
+    let bigint_value = BigInt::from_str_radix(trimmed, 16).ok()?;
+
+    if bigint_value < *CAIRO_PRIME_BIGINT {
+        return Some(ETransactionHashType::Starknet(Felt::from(bigint_value)));
+    }
+
+    let eth_hash = H256::from_str(&format!("0x{}", trimmed)).ok()?;
+    Some(ETransactionHashType::Ethereum(eth_hash))
 }
 
 pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
@@ -352,4 +397,90 @@ pub fn extract_cairo_version_from_program(program: &[Felt]) -> Result<(u32, u32,
 pub fn felt_str_to_fixed(felt_str: &str) -> anyhow::Result<String> {
     let felt = Felt::from_hex(felt_str)?;
     Ok(felt.to_fixed_hex_string())
+}
+
+pub async fn fetch_tx_block_number_from_voyager(
+    chain_id: &ChainId,
+    tx_hash: &str,
+) -> anyhow::Result<u64> {
+    let voyager_api_url = get_voyager_api_url(&chain_id)
+        .map(|url| url.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Invalid chain id"))?;
+    let client = reqwest::Client::new();
+    let url = format!("{}txns/{}", voyager_api_url, tx_hash);
+    let call_result = client
+        .get(&url)
+        .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")
+        .send()
+        .await;
+    match call_result {
+        Ok(response) => {
+            if response.status().is_success() {
+                let tx_details: Value = response.json().await.unwrap();
+
+                match tx_details["blockNumber"].as_u64() {
+                    Some(block_number) => Ok(block_number),
+                    None => {
+                        let timestamp = tx_details["timestamp"]
+                            .as_u64()
+                            .ok_or_else(|| anyhow::anyhow!("Block number not found"))?;
+                        let rpc_client = create_rpc_client(chain_id);
+                        let block_number = find_closest_block(&rpc_client, timestamp).await?;
+                        Ok(block_number)
+                    }
+                }
+            } else {
+                Err(anyhow::anyhow!(
+                    "Failed to fetch tx details from voyager api: {}",
+                    response.status()
+                ))
+            }
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "Failed to fetch tx details from voyager api: {}",
+            e
+        )),
+    }
+}
+
+async fn find_closest_block(
+    rpc_client: &JsonRpcClient<HttpTransport>,
+    target_timestamp: u64,
+) -> anyhow::Result<u64> {
+    let mut low = 30000;
+    let mut high = rpc_client.block_number().await?;
+
+    while low <= high {
+        let mid = (low + high) / 2;
+
+        if let Some(mid_timestamp) = get_block_timestamp(rpc_client, mid).await.ok() {
+            if mid_timestamp >= target_timestamp && mid_timestamp <= target_timestamp + 60 {
+                return Ok(mid);
+            } else if mid_timestamp < target_timestamp {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        } else {
+            // If block doesn't exist (out of range), adjust the bounds
+            high = mid - 1;
+        }
+    }
+
+    Err(anyhow::anyhow!("No block found"))
+}
+
+async fn get_block_timestamp(
+    rpc_client: &JsonRpcClient<HttpTransport>,
+    block_number: u64,
+) -> anyhow::Result<u64> {
+    let block = rpc_client
+        .get_block_with_tx_hashes(&starknet_old_types::BlockId::Number(block_number))
+        .await?;
+    match block {
+        starknet_old_types::MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),
+        starknet_old_types::MaybePendingBlockWithTxHashes::PendingBlock(pending_block) => {
+            Ok(pending_block.timestamp)
+        }
+    }
 }

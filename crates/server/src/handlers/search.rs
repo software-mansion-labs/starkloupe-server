@@ -48,17 +48,6 @@ pub async fn get_search_handler(
     Path(search_hash): Path<String>,
     Query(query): Query<SearchQuery>,
 ) -> Response {
-    let hash = match felt_str_to_fixed(search_hash.as_str()) {
-        Ok(hash) => hash,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Search hash is invalid: {}", err),
-            )
-                .into_response()
-        }
-    };
-
     let sources = match sources_from_rpc_urls(query.rpc_urls.as_deref()) {
         Ok(sources) => sources,
         Err(err) => {
@@ -70,7 +59,7 @@ pub async fn get_search_handler(
         }
     };
 
-    match check_hash(&hash, sources).await {
+    match check_hash(&search_hash, sources).await {
         ESearchResult::Transactions(transactions) => {
             let response = SearchResponse {
                 transactions,
@@ -111,11 +100,18 @@ async fn check_hash(hash: &str, sources: Vec<ESourceType>) -> ESearchResult {
         return ESearchResult::Transactions(transactions);
     }
 
-    if let Some(contracts) = check_contract(hash, &sources).await {
+    let fixed_hash = match felt_str_to_fixed(hash) {
+        Ok(hash) => hash,
+        Err(_err) => {
+            return ESearchResult::None;
+        }
+    };
+
+    if let Some(contracts) = check_contract(&fixed_hash, &sources).await {
         return ESearchResult::Contracts(contracts);
     }
 
-    if let Some(classes) = check_class(hash, &sources).await {
+    if let Some(classes) = check_class(&fixed_hash, &sources).await {
         return ESearchResult::Classes(classes);
     }
 

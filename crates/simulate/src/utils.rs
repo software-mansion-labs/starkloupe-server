@@ -2,6 +2,7 @@ use crate::transaction_extraction::extract_chain_id_from_felt;
 use crate::SimulationRawArgs;
 use crate::TransactionSimulationError;
 use blockifier::transaction::transaction_types::TransactionType;
+use ethers::types::{Address, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
 use starknet_api::block::BlockNumber;
@@ -93,16 +94,6 @@ pub fn parse_transaction_version(
     }
 }
 
-pub fn parse_transaction_hash(tx_hash: &str) -> Result<Felt, TransactionSimulationError> {
-    let hex_str = tx_hash.trim_start_matches("0x");
-    let bigint_value = BigInt::from_str_radix(hex_str, 16)
-        .map_err(|_| TransactionSimulationError::InvalidTransactionHash)?;
-    if bigint_value >= *CAIRO_PRIME_BIGINT {
-        return Err(TransactionSimulationError::InvalidTransactionHash);
-    }
-    Ok(Felt::from(bigint_value))
-}
-
 pub fn convert_to_hex(num_str: &str) -> String {
     let num = BigUint::from_str_radix(num_str, 10).unwrap();
     format!("{:x}", num)
@@ -113,7 +104,7 @@ pub fn transaction_type_to_string(tx_type: TransactionType) -> String {
         TransactionType::Declare => "DECLARE".to_string(),
         TransactionType::DeployAccount => "DEPLOY".to_string(),
         TransactionType::InvokeFunction => "INVOKE".to_string(),
-        TransactionType::L1Handler => "L1Handler".to_string(),
+        TransactionType::L1Handler => "L1HANDLER".to_string(),
     }
 }
 
@@ -123,4 +114,17 @@ pub fn calldata_to_hex(calldata: &Calldata) -> Vec<String> {
         .iter()
         .map(|felt| felt.to_hex_string())
         .collect::<Vec<String>>()
+}
+
+pub fn eth_address_to_felt(addr: Address) -> Felt {
+    let eth_address_as_bytes = addr.as_bytes();
+    let mut bytes: [u8; 32] = [0; 32];
+    bytes[12..32].copy_from_slice(eth_address_as_bytes);
+    Felt::from_bytes_be(&bytes)
+}
+
+pub fn eth_u256_to_felt(value: U256) -> Felt {
+    let mut bytes = [0u8; 32];
+    value.to_big_endian(&mut bytes);
+    Felt::from_bytes_be(&bytes)
 }

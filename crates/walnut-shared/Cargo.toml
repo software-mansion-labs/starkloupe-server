@@ -27,3 +27,5 @@ num-integer.workspace = true
 starknet-types-core.workspace = true
 starknet-old.workspace = true
 starknet-selector-decoder.workspace = true
+ethers.workspace = true
+reqwest.workspace = true

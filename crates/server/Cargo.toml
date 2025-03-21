@@ -47,3 +47,4 @@ sentry-tower.workspace = true
 clokwerk.workspace = true
 chrono.workspace = true
 time.workspace = true
+ethers.workspace = true

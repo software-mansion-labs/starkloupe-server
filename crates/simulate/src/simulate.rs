@@ -1,3 +1,27 @@
+use crate::contract_calls_map::ContractCallsMap;
+use crate::contract_calls_map::ContractCallsMapBuilder;
+use crate::contract_names::ContractNamesFetcher;
+use crate::debugger_trace::DebuggerTraceBuilder;
+use crate::events::EmittedEvent;
+use crate::function_calls::create_function_calls_map;
+use crate::state::ForkStateReader;
+use crate::transaction_extraction::extract_block_number_transaction_receipt;
+use crate::transaction_extraction::extract_block_timestamp;
+use crate::transaction_extraction::extract_block_txs_info;
+use crate::transaction_extraction::extract_chain_id_from_felt;
+use crate::transaction_extraction::extract_execution_status_transaction_receipt;
+use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
+use crate::transaction_extraction::extract_submitted_tx;
+use crate::transaction_extraction::extract_transaction_contex;
+use crate::utils::calldata_to_hex;
+use crate::utils::transaction_type_to_string;
+use crate::ContractCall;
+use crate::EStarknetEvent;
+use crate::FunctionCallsMap;
+use crate::SimulationArgs;
+use crate::SimulationInfo;
+use crate::TransactionSimulationError;
+use crate::TransactionSimulationResult;
 use blockifier::abi::abi_utils::selector_from_name;
 use blockifier::blockifier::block::BlockInfo;
 use blockifier::context::TransactionContext;
@@ -20,6 +44,14 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::executio
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
+use ethers::abi::AbiDecode;
+use ethers::abi::AbiEncode;
+use ethers::providers::Middleware;
+use ethers::types::Address;
+use ethers::types::Log;
+use ethers::types::H256;
+use ethers::types::U256;
+use ethers::utils::keccak256;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
 use internal_tracing::event_calls_map::EventCallsMap;
@@ -35,44 +67,27 @@ use starknet_api::block::BlockTimestamp;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress};
 use starknet_api::deprecated_contract_class::EntryPointType;
-use starknet_api::transaction::{Calldata, TransactionHash};
+use starknet_api::transaction::L1HandlerTransaction;
+use starknet_api::transaction::TransactionVersion;
+use starknet_api::transaction::{Calldata, TransactionHash, TransactionHasher};
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use tracing::warn;
 use url::Url;
-use walnut_shared::felt_to_field_element;
-use walnut_shared::felts_to_string;
-use walnut_shared::field_element_to_felt;
-use walnut_shared::{chain_id_to_readable_string, create_rpc_client_from_url};
-
-use crate::contract_calls_map::ContractCallsMap;
-use crate::contract_calls_map::ContractCallsMapBuilder;
-use crate::contract_names::ContractNamesFetcher;
-use crate::debugger_trace::DebuggerTraceBuilder;
-use crate::events::EmittedEvent;
-use crate::function_calls::create_function_calls_map;
-use crate::state::ForkStateReader;
-use crate::transaction_extraction::extract_block_number_transaction_receipt;
-use crate::transaction_extraction::extract_block_timestamp;
-use crate::transaction_extraction::extract_block_txs_info;
-use crate::transaction_extraction::extract_chain_id_from_felt;
-use crate::transaction_extraction::extract_execution_status_transaction_receipt;
-use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
-use crate::transaction_extraction::extract_submitted_tx;
-use crate::transaction_extraction::extract_transaction_contex;
-use crate::utils::calldata_to_hex;
-use crate::utils::parse_transaction_hash;
-use crate::utils::transaction_type_to_string;
-use crate::ContractCall;
-use crate::FunctionCallsMap;
-use crate::SimulationArgs;
-use crate::SimulationInfo;
-use crate::TransactionSimulationError;
-use crate::TransactionSimulationResult;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
+use walnut_shared::felt_to_field_element;
+use walnut_shared::felts_to_string;
+use walnut_shared::fetch_tx_block_number_from_voyager;
+use walnut_shared::field_element_to_felt;
+use walnut_shared::parse_transaction_hash_per_network;
+use walnut_shared::{
+    chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
+    eth_rpc_url, ETransactionHashType,
+};
 
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
@@ -261,6 +276,7 @@ fn run_simulation(
         &args.transaction_version,
         args.transaction_signature,
         &args.transaction_hash,
+        &args.transaction_type,
         &args.nonce,
         args.chain_id,
         &block_info,
@@ -275,7 +291,8 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
-    if let Some(_transaction_hash) = args.transaction_hash {
+    if args.transaction_hash.is_some() && args.transaction_type != Some(TransactionType::L1Handler)
+    {
         let validate_selector = match args.transaction_type {
             Some(TransactionType::Declare) => {
                 selector_from_name(constants::VALIDATE_DECLARE_ENTRY_POINT_NAME)
@@ -296,8 +313,10 @@ fn run_simulation(
 
     if args.transaction_type.is_none() || args.transaction_type != Some(TransactionType::Declare) {
         let _execution_result = execute_call(
+            args.entry_point_selector,
             args.calldata.clone(),
             args.sender_address,
+            args.transaction_type,
             cached_fork_state,
             &mut cheatnet_state,
             transaction_context.clone(),
@@ -352,6 +371,8 @@ pub async fn simulate_by_calldata(
         transaction_type: transaction_type_to_string(TransactionType::InvokeFunction),
         transaction_index_in_block: Some(transaction_index_in_block),
         total_transactions_in_block: Some(total_transactions_in_block),
+        l1_tx_hash: None,
+        l2_tx_hash: None,
     })
 }
 
@@ -362,8 +383,43 @@ pub async fn simulate_transaction_by_hash(
     tx_hash: &str,
     chain_id: Option<ChainId>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
+    if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash) {
+        let result = match transaction_hash {
+            ETransactionHashType::Starknet(starknet_hash) => {
+                simulate_starknet_transaction_by_hash(
+                    db_pool,
+                    s3_client,
+                    rpc_url,
+                    starknet_hash,
+                    chain_id,
+                )
+                .await?
+            }
+            ETransactionHashType::Ethereum(ethereum_hash) => {
+                simulate_ethereum_transaction_by_hash(
+                    db_pool,
+                    s3_client,
+                    rpc_url,
+                    ethereum_hash,
+                    chain_id,
+                )
+                .await?
+            }
+        };
+        Ok(result)
+    } else {
+        Err(TransactionSimulationError::TransactionHashNotFound)
+    }
+}
+
+async fn simulate_starknet_transaction_by_hash(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    rpc_url: Url,
+    transaction_hash: Felt,
+    chain_id: Option<ChainId>,
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(rpc_url.clone());
-    let transaction_hash = parse_transaction_hash(tx_hash)?;
     // Fetch transaction details
     let transaction = provider_client
         .get_transaction_by_hash(felt_to_field_element(transaction_hash))
@@ -372,6 +428,7 @@ pub async fn simulate_transaction_by_hash(
         if let Some((
             nonce,
             sender_address,
+            entry_point_selector,
             calldata,
             transaction_version,
             transaction_type,
@@ -433,6 +490,8 @@ pub async fn simulate_transaction_by_hash(
                                 transaction_type: transaction_type_to_string(transaction_type),
                                 transaction_index_in_block: None,
                                 total_transactions_in_block: None,
+                                l1_tx_hash: None,
+                                l2_tx_hash: Some(transaction_hash.to_hex_string()),
                             });
                         }
                     }
@@ -454,6 +513,7 @@ pub async fn simulate_transaction_by_hash(
                             block_number: Some(BlockNumber(block_number)),
                             nonce: Some(nonce),
                             sender_address,
+                            entry_point_selector: Some(entry_point_selector),
                             calldata: calldata.clone(),
                             transaction_version,
                             transaction_signature: Some(signature),
@@ -479,12 +539,165 @@ pub async fn simulate_transaction_by_hash(
                         transaction_type: transaction_type_to_string(transaction_type),
                         transaction_index_in_block: Some(transaction_index_in_block),
                         total_transactions_in_block: Some(total_transactions_in_block),
+                        l1_tx_hash: None,
+                        l2_tx_hash: Some(transaction_hash.to_hex_string()),
                     });
                 }
             }
         }
     }
     Err(TransactionSimulationError::TransactionHashNotFound)
+}
+
+pub async fn simulate_ethereum_transaction_by_hash(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    rpc_url: Url,
+    transaction_hash: H256,
+    chain_id: Option<ChainId>,
+) -> Result<TransactionSimulationResult, TransactionSimulationError> {
+    let chain_id = match chain_id {
+        Some(cid) => cid,
+        None => return Err(TransactionSimulationError::TransactionHashNotFound),
+    };
+    // Fetch the tx from L1
+    let eth_rpc_url = eth_rpc_url(&chain_id);
+    let provider_eth_client = create_eth_provider_from_url(eth_rpc_url);
+    let transaction_receipt = provider_eth_client
+        .get_transaction_receipt(transaction_hash)
+        .await;
+
+    match transaction_receipt {
+        Ok(Some(receipt)) => {
+            for log in receipt.logs {
+                if let Some(l1_event) = decode_l1_event(&log) {
+                    // Convert the event data to L1HandlerTransaction
+                    let l1_handler_tx = L1HandlerTransaction::try_from(l1_event)
+                        .expect("Can not convert L1 event to L1 Handler tx type");
+                    let l2_tx_hash: Option<TransactionHash> = l1_handler_tx
+                        .calculate_transaction_hash(
+                            &chain_id,
+                            &starknet_api::transaction::TransactionVersion::ZERO,
+                        )
+                        .ok();
+                    // Pozovi funkciju simulacije sa dobijenim argumentima
+                    let l2_tx_hash_hex = l2_tx_hash.map(|hash| hash.to_hex_string());
+                    let block_number = match &l2_tx_hash_hex {
+                        Some(l2_tx_hash_hex) => {
+                            fetch_tx_block_number_from_voyager(&chain_id, l2_tx_hash_hex)
+                                .await
+                                .ok()
+                        }
+                        None => None,
+                    };
+
+                    let (
+                        simulation_result,
+                        block_timestamp,
+                        transaction_index_in_block,
+                        total_transactions_in_block,
+                    ) = simulate(
+                        db_pool,
+                        s3_client,
+                        SimulationArgs {
+                            rpc_url: rpc_url.clone(),
+                            chain_id: chain_id.clone(),
+                            block_number: block_number.map(|bn| BlockNumber(bn)),
+                            nonce: Some(l1_handler_tx.nonce),
+                            sender_address: l1_handler_tx.contract_address,
+                            entry_point_selector: Some(l1_handler_tx.entry_point_selector),
+                            calldata: l1_handler_tx.calldata.clone(),
+                            transaction_version: TransactionVersion::ZERO,
+                            transaction_signature: None,
+                            transaction_hash: l2_tx_hash,
+                            transaction_type: Some(TransactionType::L1Handler),
+                            resource_bounds: None,
+                            paymaster_data: None,
+                            strkgate_event: None,
+                        },
+                    )
+                    .await?;
+                    return Ok(TransactionSimulationResult {
+                        simulation_result,
+                        chain_id: chain_id_to_readable_string(&chain_id),
+                        block_number: block_number
+                            .map(|bn| starknet_old_types::BlockId::Number(bn))
+                            .unwrap_or(starknet_old_types::BlockId::Tag(
+                                starknet_old_types::BlockTag::Latest,
+                            )),
+                        block_timestamp: block_timestamp.0,
+                        nonce: l1_handler_tx.nonce.0.to_u64(),
+                        sender_address: l1_handler_tx.contract_address.to_string(),
+                        calldata: calldata_to_hex(&l1_handler_tx.calldata),
+                        transaction_version: TransactionVersion::ZERO.0.to_u64().unwrap() as usize,
+                        transaction_type: transaction_type_to_string(TransactionType::L1Handler),
+                        transaction_index_in_block: Some(transaction_index_in_block),
+                        total_transactions_in_block: Some(total_transactions_in_block),
+                        l1_tx_hash: Some(transaction_hash.encode_hex()),
+                        l2_tx_hash: l2_tx_hash_hex,
+                    });
+                }
+            }
+            Err(TransactionSimulationError::TransactionHashNotFound)
+        }
+        Ok(None) => Err(TransactionSimulationError::TransactionHashNotFound),
+        Err(_) => Err(TransactionSimulationError::TransactionHashNotFound),
+    }
+}
+
+fn decode_l1_event(log: &Log) -> Option<EStarknetEvent> {
+    let topics = log.topics.clone();
+    if topics.is_empty() {
+        return None;
+    }
+
+    let event_signature = topics[0];
+    // TODO: Add other events
+    match event_signature {
+        sig if sig == H256::from(keccak256("LogMessageToL1(uint256,address,uint256[])")) => {
+            if topics.len() < 3 {
+                return None;
+            }
+
+            let from_address = format!("{:?}", Address::from(topics[1]));
+            let to_address = topics[2].to_string();
+
+            <Vec<U256>>::decode(&log.data)
+                .ok()
+                .map(|decoded| EStarknetEvent::LogMessageToL1 {
+                    from_address,
+                    to_address,
+                    payload: decoded.iter().map(U256::to_string).collect(),
+                })
+        }
+
+        sig if sig
+            == H256::from(keccak256(
+                "LogMessageToL2(address,uint256,uint256,uint256[],uint256,uint256)",
+            )) =>
+        {
+            if topics.len() < 4 {
+                return None;
+            }
+
+            let from_address = Address::from(topics[1]);
+            let to_address = U256::from_big_endian(topics[2].as_fixed_bytes());
+            let selector = U256::from_big_endian(topics[3].as_fixed_bytes());
+
+            <(Vec<U256>, U256, U256)>::decode(&log.data)
+                .ok()
+                .map(|(payload, nonce, fee)| EStarknetEvent::LogMessageToL2 {
+                    from_address,
+                    to_address,
+                    selector,
+                    payload,
+                    nonce,
+                    fee,
+                })
+        }
+
+        _ => None,
+    }
 }
 
 fn extract_sierra_and_cairo_versions(sierra_program: &[Felt]) -> (Option<String>, Option<String>) {
@@ -602,8 +815,10 @@ fn validate_call(
 }
 
 fn execute_call(
+    entry_point_selector: Option<EntryPointSelector>,
     calldata: Calldata,
     storage_address: ContractAddress,
+    transaction_type: Option<TransactionType>,
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,
     tx_context: Arc<TransactionContext>,
@@ -613,12 +828,12 @@ fn execute_call(
     let mut execution_context =
         EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Execute, false)?;
 
-    let entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
+    let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
     let mut execute_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
-        entry_point_selector,
-        calldata,
+        entry_point_selector: execute_entry_point_selector,
+        calldata: calldata.clone(),
         class_hash: None,
         code_address: None,
         storage_address,
@@ -626,6 +841,23 @@ fn execute_call(
         call_type: CallType::Call,
         initial_gas,
     };
+
+    if transaction_type.is_some()
+        && transaction_type == Some(TransactionType::L1Handler)
+        && entry_point_selector.is_some()
+    {
+        execute_call = CallEntryPoint {
+            entry_point_type: EntryPointType::L1Handler,
+            entry_point_selector: entry_point_selector.unwrap(),
+            calldata,
+            class_hash: None,
+            code_address: None,
+            storage_address,
+            caller_address: ContractAddress::default(),
+            call_type: CallType::Call,
+            initial_gas,
+        }
+    }
 
     let execution_result = execute_call_entry_point(
         &mut execute_call,

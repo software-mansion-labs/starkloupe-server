@@ -3,7 +3,7 @@ use blockifier::bouncer::BouncerConfig;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::transaction::objects::{
-    CommonAccountFields, CurrentTransactionInfo, TransactionInfo,
+    CommonAccountFields, CurrentTransactionInfo, DeprecatedTransactionInfo, TransactionInfo,
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
@@ -22,10 +22,10 @@ use walnut_shared::old_resource_bounds_mapping_to_resource_bounds_b_tree_map;
 use walnut_shared::vec_field_element_to_vec_felt;
 use walnut_shared::{felts_to_string, max_resource_bounds_map};
 
-use starknet_api::core::{ChainId, ContractAddress, Nonce, PatriciaKey};
+use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce, PatriciaKey};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::transaction::{
-    Calldata, ResourceBoundsMapping, TransactionHash, TransactionSignature, TransactionVersion,
+    Calldata, Fee, ResourceBoundsMapping, TransactionHash, TransactionSignature, TransactionVersion,
 };
 use starknet_api::{contract_address, felt, patricia_key};
 use walnut_shared::{ETH_FEE_TOKEN_ADDRESS, STRK_FEE_TOKEN_ADDRESS};
@@ -34,11 +34,13 @@ use crate::transaction_info::TransactionInformation;
 use crate::SimulationArgs;
 use crate::TransactionSimulationError;
 
+// TODO: Refactor this one
 pub fn extract_submitted_tx(
     transaction: starknet_old_types::Transaction,
 ) -> Option<(
     Nonce,
     ContractAddress,
+    EntryPointSelector,
     Calldata,
     TransactionVersion,
     TransactionType,
@@ -53,6 +55,7 @@ pub fn extract_submitted_tx(
                 field_element_to_felt(tx.contract_address)
                     .try_into()
                     .unwrap(),
+                EntryPointSelector::default(),
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::ZERO,
                 TransactionType::InvokeFunction,
@@ -63,6 +66,7 @@ pub fn extract_submitted_tx(
             starknet_old_types::InvokeTransaction::V1(tx) => Some((
                 Nonce(field_element_to_felt(tx.nonce)),
                 field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                EntryPointSelector::default(),
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::ONE,
                 TransactionType::InvokeFunction,
@@ -73,6 +77,7 @@ pub fn extract_submitted_tx(
             starknet_old_types::InvokeTransaction::V3(tx) => Some((
                 Nonce(field_element_to_felt(tx.nonce)),
                 field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                EntryPointSelector::default(),
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::THREE,
                 TransactionType::InvokeFunction,
@@ -86,6 +91,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V0(tx) => Some((
                     Nonce::default(),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                    EntryPointSelector::default(),
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ZERO,
                     TransactionType::Declare,
@@ -96,6 +102,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V1(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                    EntryPointSelector::default(),
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ONE,
                     TransactionType::Declare,
@@ -106,6 +113,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V2(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                    EntryPointSelector::default(),
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::TWO,
                     TransactionType::Declare,
@@ -116,6 +124,7 @@ pub fn extract_submitted_tx(
                 starknet_old_types::DeclareTransaction::V3(tx) => Some((
                     Nonce(field_element_to_felt(tx.nonce)),
                     field_element_to_felt(tx.sender_address).try_into().unwrap(),
+                    EntryPointSelector::default(),
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::THREE,
                     TransactionType::Declare,
@@ -125,6 +134,23 @@ pub fn extract_submitted_tx(
                 )),
             }
         }
+        starknet_old_types::Transaction::L1Handler(tx) => Some((
+            Nonce(Felt::from(tx.nonce)),
+            field_element_to_felt(tx.contract_address)
+                .try_into()
+                .unwrap(),
+            EntryPointSelector(
+                field_element_to_felt(tx.entry_point_selector)
+                    .try_into()
+                    .unwrap(),
+            ),
+            Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
+            TransactionVersion::ZERO,
+            TransactionType::L1Handler,
+            TransactionSignature::default(),
+            ResourceBoundsMapping::default(),
+            PaymasterData::default(),
+        )),
         _ => None,
     }
 }
@@ -139,6 +165,9 @@ pub fn extract_block_number_transaction_receipt(
             }
             starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
                 Some(declare_receipt.block_number)
+            }
+            starknet_old_types::TransactionReceipt::L1Handler(l1_handler_receipt) => {
+                Some(l1_handler_receipt.block_number)
             }
             _ => None,
         },
@@ -173,6 +202,10 @@ pub fn extract_starkgate_event_transaction_receipt(
             }
             starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
                 declare_receipt.events.last().cloned()
+            }
+            // TODO: Check this - maybe here we need all emited
+            starknet_old_types::TransactionReceipt::L1Handler(l1_handler_receipt) => {
+                l1_handler_receipt.events.last().cloned()
             }
             _ => None,
         },
@@ -281,6 +314,7 @@ pub fn extract_transaction_contex(
     transaction_version: &TransactionVersion,
     transaction_signature: Option<TransactionSignature>,
     transaction_hash: &Option<TransactionHash>,
+    transaction_type: &Option<TransactionType>,
     nonce: &Option<Nonce>,
     chain_id: ChainId,
     block_info: &BlockInfo,
@@ -296,14 +330,21 @@ pub fn extract_transaction_contex(
         },
     };
 
-    Arc::new(TransactionContext {
-        block_context: BlockContext::new(
-            block_info.clone(),
-            chain_info,
-            VersionedConstants::latest_constants().clone(),
-            BouncerConfig::default(),
-        ),
-        tx_info: TransactionInfo::Current(CurrentTransactionInfo {
+    let transaction_info = match transaction_type {
+        Some(TransactionType::L1Handler) => {
+            TransactionInfo::Deprecated(DeprecatedTransactionInfo {
+                common_fields: CommonAccountFields {
+                    transaction_hash: transaction_hash.unwrap_or_default(),
+                    version: *transaction_version,
+                    signature: TransactionSignature::default(),
+                    nonce: nonce.unwrap_or_default(),
+                    sender_address: *sender_address,
+                    only_query: false,
+                },
+                max_fee: Fee::default(),
+            })
+        }
+        Some(_) | None => TransactionInfo::Current(CurrentTransactionInfo {
             common_fields: CommonAccountFields {
                 transaction_hash: transaction_hash.unwrap_or_default(),
                 version: *transaction_version,
@@ -319,6 +360,16 @@ pub fn extract_transaction_contex(
             paymaster_data: paymaster_data.unwrap_or_default(),
             account_deployment_data: Default::default(),
         }),
+    };
+
+    Arc::new(TransactionContext {
+        block_context: BlockContext::new(
+            block_info.clone(),
+            chain_info,
+            VersionedConstants::latest_constants().clone(),
+            BouncerConfig::default(),
+        ),
+        tx_info: transaction_info,
     })
 }
 
