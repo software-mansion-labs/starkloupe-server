@@ -3,7 +3,7 @@ pub mod abi_processor;
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 pub mod utils;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Chain, Context, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use ethers::providers::{Http, Provider as EthProvider};
 use ethers::types::H256;
@@ -44,6 +44,45 @@ pub const STRK_FEE_TOKEN_ADDRESS: &str =
 pub const ETH_FEE_TOKEN_ADDRESS: &str =
     "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7";
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ENetwork {
+    Starknet,
+    Ethereum,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EChainId {
+    StarknetMainnet,
+    StarknetSepolia,
+    EthereumMainnet,
+    EthereumSepolia,
+}
+
+impl From<EChainId> for ChainId {
+    fn from(e_chain: EChainId) -> Self {
+        match e_chain {
+            EChainId::StarknetMainnet => ChainId::Mainnet,
+            EChainId::StarknetSepolia => ChainId::Sepolia,
+            EChainId::EthereumMainnet => ChainId::Other("eth_main".into()),
+            EChainId::EthereumSepolia => ChainId::Other("eth_sepolia".into()),
+        }
+    }
+}
+
+impl TryFrom<ChainId> for EChainId {
+    type Error = ();
+
+    fn try_from(chain: ChainId) -> Result<Self, Self::Error> {
+        match chain {
+            ChainId::Mainnet => Ok(EChainId::StarknetMainnet),
+            ChainId::Sepolia => Ok(EChainId::StarknetSepolia),
+            ChainId::Other(ref s) if s == "eth_main" => Ok(EChainId::EthereumMainnet),
+            ChainId::Other(ref s) if s == "eth_sepolia" => Ok(EChainId::EthereumSepolia),
+            _ => Err(()),
+        }
+    }
+}
+
 pub fn create_rpc_client(chain_id: &ChainId) -> JsonRpcClient<HttpTransport> {
     JsonRpcClient::new(HttpTransport::new(rpc_url(chain_id)))
 }
@@ -82,23 +121,76 @@ pub fn eth_rpc_url(chain_id: &ChainId) -> String {
     }
 }
 
+pub fn get_rpc_urls(chain_id: &EChainId) -> (Option<Url>, Option<String>) {
+    match chain_id {
+        EChainId::StarknetMainnet => (
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Some(
+                "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
+            ),
+
+        ),
+        EChainId::StarknetSepolia => (
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Some(
+                "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
+            ),
+        ),
+        EChainId::EthereumMainnet => (
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Some(
+                "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
+            ),
+        ),
+        EChainId::EthereumSepolia => (
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Some(
+                "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
+            ),
+        ),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum ETransactionHashType {
     Starknet(Felt),
     Ethereum(H256),
 }
 
-pub fn parse_transaction_hash_per_network(tx_hash: &str) -> Option<ETransactionHashType> {
-    let trimmed = tx_hash.strip_prefix("0x")?;
-
-    let bigint_value = BigInt::from_str_radix(trimmed, 16).ok()?;
-
-    if bigint_value < *CAIRO_PRIME_BIGINT {
-        return Some(ETransactionHashType::Starknet(Felt::from(bigint_value)));
+pub fn parse_transaction_hash_per_network(
+    tx_hash: &str,
+    network: &ENetwork,
+) -> Option<ETransactionHashType> {
+    if !is_valid_transaction_hash_for_network(tx_hash, network) {
+        return None;
     }
 
-    let eth_hash = H256::from_str(&format!("0x{}", trimmed)).ok()?;
-    Some(ETransactionHashType::Ethereum(eth_hash))
+    let trimmed = tx_hash.strip_prefix("0x")?;
+
+    match network {
+        ENetwork::Starknet => {
+            let bigint_value = BigInt::from_str_radix(trimmed, 16).ok()?;
+            Some(ETransactionHashType::Starknet(Felt::from(bigint_value)))
+        }
+        ENetwork::Ethereum => {
+            let eth_hash = H256::from_str(&format!("0x{}", trimmed)).ok()?;
+            Some(ETransactionHashType::Ethereum(eth_hash))
+        }
+    }
+}
+
+pub fn is_valid_starknet_transaction_hash(tx_hash: &str) -> bool {
+    tx_hash
+        .strip_prefix("0x")
+        .and_then(|trimmed| BigInt::from_str_radix(trimmed, 16).ok())
+        .map_or(false, |value| value < *CAIRO_PRIME_BIGINT)
+}
+
+pub fn is_valid_transaction_hash_for_network(tx_hash: &str, network: &ENetwork) -> bool {
+    match network {
+        ENetwork::Starknet => is_valid_starknet_transaction_hash(tx_hash),
+        ENetwork::Ethereum => tx_hash.starts_with("0x") && tx_hash.len() <= 66,
+    }
 }
 
 pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
@@ -109,14 +201,34 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     }
 }
 
-pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<ChainId> {
-    match chain_id {
-        "0x534e5f4d41494e" => Ok(ChainId::Mainnet),
-        "SN_MAIN" => Ok(ChainId::Mainnet),
-        "sn_main" => Ok(ChainId::Mainnet),
-        "0x534e5f5345504f4c4941" => Ok(ChainId::Sepolia),
-        "SN_SEPOLIA" => Ok(ChainId::Sepolia),
-        "sn_sepolia" => Ok(ChainId::Sepolia),
+//pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<ChainId> {
+//    match chain_id {
+//        "0x534e5f4d41494e" => Ok(ChainId::Mainnet),
+//        "SN_MAIN" => Ok(ChainId::Mainnet),
+//        "sn_main" => Ok(ChainId::Mainnet),
+//        "0x534e5f5345504f4c4941" => Ok(ChainId::Sepolia),
+//        "SN_SEPOLIA" => Ok(ChainId::Sepolia),
+//        "sn_sepolia" => Ok(ChainId::Sepolia),
+//        "eth_main" => Ok(ChainId::Other("eth_main".to_string())),
+//        "eth_sepolia" => Ok(ChainId::Other("eth_sepolia".to_string())),
+//        _ => Err(anyhow!("Invalid chain id")),
+//    }
+//}
+
+pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
+    match chain_id.to_lowercase().as_str() {
+        // Starknet
+        "0x534e5f4d41494e" | "sn_main" | "SN_MAIN" => {
+            Ok((EChainId::StarknetMainnet, ENetwork::Starknet))
+        }
+        "0x534e5f5345504f4c4941" | "sn_sepolia" | "SN_SEPOLIA" => {
+            Ok((EChainId::StarknetSepolia, ENetwork::Starknet))
+        }
+
+        // Ethereum
+        "eth_main" | "ETH_MAIN" => Ok((EChainId::EthereumMainnet, ENetwork::Ethereum)),
+        "eth_sepolia" | "ETH_SEPOLIA" => Ok((EChainId::EthereumSepolia, ENetwork::Ethereum)),
+
         _ => Err(anyhow!("Invalid chain id")),
     }
 }
@@ -127,6 +239,15 @@ pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
         ChainId::Sepolia => String::from("sn_sepolia"),
         ChainId::Other(chain_id) => chain_id.clone(),
         _ => panic!("Invalid chain id"),
+    }
+}
+
+pub fn to_chain_id(chain_id: &EChainId) -> EChainId {
+    match chain_id {
+        EChainId::EthereumMainnet => EChainId::StarknetMainnet,
+        EChainId::EthereumSepolia => EChainId::StarknetSepolia,
+        EChainId::StarknetMainnet => EChainId::EthereumMainnet,
+        EChainId::StarknetSepolia => EChainId::EthereumSepolia,
     }
 }
 

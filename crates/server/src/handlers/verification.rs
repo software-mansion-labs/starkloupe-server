@@ -7,6 +7,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use starknet_api::core::ChainId;
 use std::{collections::HashMap, sync::Arc};
 use tracing::error;
 use url::Url;
@@ -22,7 +23,7 @@ use verification::{
 };
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
-    felt_str_to_fixed, parse_version_string_to_tuple,
+    felt_str_to_fixed, parse_version_string_to_tuple, ENetwork,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -171,7 +172,7 @@ pub async fn verify_handler(
     chain_id: extract::Path<String>,
     Json(payload): Json<VerificationPayload>,
 ) -> Response {
-    let chain_id = match extract_chain_id(chain_id.as_str()) {
+    let (e_chain_id, network) = match extract_chain_id(chain_id.as_str()) {
         Ok(chain_id) => chain_id,
         Err(e) => {
             error!(
@@ -183,8 +184,15 @@ pub async fn verify_handler(
             return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
         }
     };
-    let chain_id_readable_string = chain_id_to_readable_string(&chain_id);
-    let provider_client = create_rpc_client(&chain_id);
+    if network == ENetwork::Ethereum {
+        let error_message = "Ethereum network is not supported for verification";
+        error!(chain_id = chain_id.as_str(), "{}", error_message);
+        return (StatusCode::BAD_REQUEST, error_message).into_response();
+    }
+
+    let core_chain_id = ChainId::from(e_chain_id);
+    let chain_id_readable_string = chain_id_to_readable_string(&core_chain_id);
+    let provider_client = create_rpc_client(&core_chain_id);
     match payload.identifier {
         ContractIdentifier::ClassHash { class_hash } => {
             let class_hash_fixed = match felt_str_to_fixed(&class_hash) {

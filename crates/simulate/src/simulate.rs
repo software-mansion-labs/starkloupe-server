@@ -86,8 +86,9 @@ use walnut_shared::field_element_to_felt;
 use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
-    eth_rpc_url, ETransactionHashType,
+    to_chain_id, ETransactionHashType,
 };
+use walnut_shared::{EChainId, ENetwork};
 
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
@@ -379,17 +380,20 @@ pub async fn simulate_by_calldata(
 pub async fn simulate_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    rpc_url: Url,
+    starknet_rpc_url: Option<Url>,
+    ethereum_rpc_url: Option<String>,
     tx_hash: &str,
-    chain_id: Option<ChainId>,
+    chain_id: Option<EChainId>,
+    network: &ENetwork,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
-    if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash) {
+    if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash, network) {
         let result = match transaction_hash {
             ETransactionHashType::Starknet(starknet_hash) => {
                 simulate_starknet_transaction_by_hash(
                     db_pool,
                     s3_client,
-                    rpc_url,
+                    starknet_rpc_url,
+                    ethereum_rpc_url,
                     starknet_hash,
                     chain_id,
                 )
@@ -399,7 +403,8 @@ pub async fn simulate_transaction_by_hash(
                 simulate_ethereum_transaction_by_hash(
                     db_pool,
                     s3_client,
-                    rpc_url,
+                    starknet_rpc_url,
+                    ethereum_rpc_url,
                     ethereum_hash,
                     chain_id,
                 )
@@ -415,11 +420,13 @@ pub async fn simulate_transaction_by_hash(
 async fn simulate_starknet_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    rpc_url: Url,
+    starknet_rpc_url: Option<Url>,
+    _ethereum_rpc_url: Option<String>,
     transaction_hash: Felt,
-    chain_id: Option<ChainId>,
+    chain_id: Option<EChainId>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
-    let provider_client = create_rpc_client_from_url(rpc_url.clone());
+    let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
+    let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
     // Fetch transaction details
     let transaction = provider_client
         .get_transaction_by_hash(felt_to_field_element(transaction_hash))
@@ -448,7 +455,7 @@ async fn simulate_starknet_transaction_by_hash(
                 {
                     // Fetch or derive chain_id
                     let chain_id = match chain_id {
-                        Some(chain_id) => chain_id,
+                        Some(chain_id) => ChainId::from(chain_id),
                         None => extract_chain_id_from_felt(field_element_to_felt(
                             provider_client
                                 .chain_id()
@@ -508,7 +515,7 @@ async fn simulate_starknet_transaction_by_hash(
                         db_pool,
                         s3_client,
                         SimulationArgs {
-                            rpc_url,
+                            rpc_url: starknet_rpc_url.clone(),
                             chain_id: chain_id.clone(),
                             block_number: Some(BlockNumber(block_number)),
                             nonce: Some(nonce),
@@ -552,17 +559,16 @@ async fn simulate_starknet_transaction_by_hash(
 pub async fn simulate_ethereum_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
-    rpc_url: Url,
+    starknet_rpc_url: Option<Url>,
+    ethereum_rpc_url: Option<String>,
     transaction_hash: H256,
-    chain_id: Option<ChainId>,
+    chain_id: Option<EChainId>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
-    let chain_id = match chain_id {
-        Some(cid) => cid,
-        None => return Err(TransactionSimulationError::TransactionHashNotFound),
-    };
-    // Fetch the tx from L1
-    let eth_rpc_url = eth_rpc_url(&chain_id);
-    let provider_eth_client = create_eth_provider_from_url(eth_rpc_url);
+    let chain_id = chain_id.ok_or(TransactionSimulationError::InvalidChainId)?;
+    let ethereum_rpc_url = ethereum_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
+
+    // Fetch the tx from L1HandlerTransaction
+    let provider_eth_client = create_eth_provider_from_url(ethereum_rpc_url);
     let transaction_receipt = provider_eth_client
         .get_transaction_receipt(transaction_hash)
         .await;
@@ -574,22 +580,26 @@ pub async fn simulate_ethereum_transaction_by_hash(
                     // Convert the event data to L1HandlerTransaction
                     let l1_handler_tx = L1HandlerTransaction::try_from(l1_event)
                         .expect("Can not convert L1 event to L1 Handler tx type");
+                    let l2_chain_id = to_chain_id(&chain_id);
+                    let core_l2_chain_id = ChainId::from(l2_chain_id);
                     let l2_tx_hash: Option<TransactionHash> = l1_handler_tx
                         .calculate_transaction_hash(
-                            &chain_id,
+                            &core_l2_chain_id,
                             &starknet_api::transaction::TransactionVersion::ZERO,
                         )
                         .ok();
-                    // Pozovi funkciju simulacije sa dobijenim argumentima
                     let l2_tx_hash_hex = l2_tx_hash.map(|hash| hash.to_hex_string());
                     let block_number = match &l2_tx_hash_hex {
                         Some(l2_tx_hash_hex) => {
-                            fetch_tx_block_number_from_voyager(&chain_id, l2_tx_hash_hex)
+                            fetch_tx_block_number_from_voyager(&core_l2_chain_id, l2_tx_hash_hex)
                                 .await
                                 .ok()
                         }
                         None => None,
                     };
+
+                    let starknet_rpc_url =
+                        starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
 
                     let (
                         simulation_result,
@@ -600,8 +610,8 @@ pub async fn simulate_ethereum_transaction_by_hash(
                         db_pool,
                         s3_client,
                         SimulationArgs {
-                            rpc_url: rpc_url.clone(),
-                            chain_id: chain_id.clone(),
+                            rpc_url: starknet_rpc_url.clone(),
+                            chain_id: core_l2_chain_id.clone(),
                             block_number: block_number.map(|bn| BlockNumber(bn)),
                             nonce: Some(l1_handler_tx.nonce),
                             sender_address: l1_handler_tx.contract_address,
@@ -619,7 +629,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
                     .await?;
                     return Ok(TransactionSimulationResult {
                         simulation_result,
-                        chain_id: chain_id_to_readable_string(&chain_id),
+                        chain_id: chain_id_to_readable_string(&core_l2_chain_id),
                         block_number: block_number
                             .map(|bn| starknet_old_types::BlockId::Number(bn))
                             .unwrap_or(starknet_old_types::BlockId::Tag(

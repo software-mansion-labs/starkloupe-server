@@ -16,10 +16,11 @@ use simulate::{
     simulate::{simulate_by_calldata, simulate_transaction_by_hash},
     SimulationArgs, SimulationRawArgs,
 };
+use starknet_api::core::ChainId;
 use std::sync::Arc;
 use tracing::error;
 use url::Url;
-use walnut_shared::{extract_chain_id, rpc_url};
+use walnut_shared::{extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum SimulationPayload {
@@ -81,7 +82,7 @@ pub async fn simulate_transaction(
                     error!("Failed to send Telegram notification. Error: {:?}", err);
                 }
             }
-            let rpc_url = match Url::parse(&args.rpc_url) {
+            let starknet_rpc_url = match Url::parse(&args.rpc_url) {
                 Ok(url) => url,
                 Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
             };
@@ -89,9 +90,11 @@ pub async fn simulate_transaction(
             simulate_transaction_by_hash(
                 &state.db_pool,
                 &state.s3_client,
-                rpc_url,
+                Some(starknet_rpc_url),
+                None,
                 &args.tx_hash,
                 None,
+                &ENetwork::Starknet,
             )
             .await
         }
@@ -122,19 +125,21 @@ pub async fn simulate_transaction_by_hash_handler(
         }
     }
 
-    let chain_id = match extract_chain_id(chain_id.as_str()) {
-        Ok(chain_id) => chain_id,
+    let (e_chain_id, network) = match extract_chain_id(chain_id.as_str()) {
+        Ok((chain_id, network)) => (chain_id, network),
         Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
 
-    let rpc_url = rpc_url(&chain_id);
+    let (starknet_rpc_url, etherem_rpc_url) = get_rpc_urls(&e_chain_id);
 
     let simulation_info = simulate_transaction_by_hash(
         &state.db_pool,
         &state.s3_client,
-        rpc_url,
+        starknet_rpc_url,
+        etherem_rpc_url,
         &tx_hash,
-        Some(chain_id),
+        Some(e_chain_id),
+        &network,
     )
     .await;
 
