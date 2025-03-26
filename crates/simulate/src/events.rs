@@ -110,14 +110,8 @@ impl EmittedEvent {
                                 .unzip(),
                         };
 
-                        let decoded_event_data = decode_calldata(
-                            &keys.to_vec(),
-                            &types,
-                            &names,
-                            Some(struct_abis),
-                            Some(enum_abis),
-                            &mut 0,
-                        );
+                        let decoded_event_data =
+                            decode_calldata(&keys.to_vec(), &types, &names, struct_abis, enum_abis);
 
                         let event = EmittedEvent {
                             contract_call_id: *contract_call_id,

@@ -6,262 +6,160 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use walnut_shared::abi::{Enum, Struct};
 
+type Structs<'a> = &'a [Struct];
+type Enums<'a> = &'a [Enum];
+
 pub fn decode_calldata(
-    datas: &[Felt],
+    data: &[Felt],
     types: &[Cow<str>],
     names: &[Cow<str>],
-    structs: Option<&[Struct]>,
-    enums: Option<&[Enum]>,
-    data_index: &mut usize,
+    structs: Structs<'_>,
+    enums: Enums<'_>,
 ) -> Option<Vec<DecodedValue>> {
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(types.len());
+    let mut current_data = data;
 
-    for (index, data_type) in types.iter().enumerate() {
-        if datas.len() <= *data_index {
-            break;
-        };
-
-        let e_data_type = EDataType::from_str(data_type, enums);
-
-        let decoded_value = match e_data_type {
-            EDataType::Primitive(_) => decode_primitive(
-                names.get(index).map(|n| n.as_ref()),
-                data_type.as_ref(),
-                datas,
-                data_index,
-            ),
-            EDataType::Array(inner_type) => decode_array(
-                names.get(index).map(|n| n.as_ref()),
-                datas,
-                data_index,
-                structs,
-                enums,
-                data_type,
-                &inner_type.to_string(),
-            ),
-            EDataType::UserEnum(_) => decode_enum(
-                names.get(index).map(|n| n.as_ref()),
-                datas,
-                data_index,
-                data_type,
-                enums,
-                structs,
-            ),
-            EDataType::Tuple(inner_types) => {
-                decode_tuple(datas, data_index, &inner_types, structs, enums)
-            }
-            EDataType::Struct(_) => decode_struct(
-                names.get(index).map(|n| n.as_ref()),
-                datas,
-                data_index,
-                data_type,
-                structs,
-                enums,
-            ),
-        };
-        if let Some(decoded_value) = decoded_value {
-            result.push(decoded_value);
-        }
+    for (idx, ty) in types.iter().enumerate() {
+        let decoded = decode_type(
+            &mut current_data,
+            ty.as_ref(),
+            names.get(idx).map(|n| n.as_ref()),
+            structs,
+            enums,
+        )?;
+        result.push(decoded);
     }
 
-    if result.is_empty() {
+    if !current_data.is_empty() {
         return None;
     }
+
     Some(result)
 }
 
-#[inline(always)]
-fn decode_primitive(
+fn decode_type(
+    data: &mut &[Felt],
+    ty: &str,
     name: Option<&str>,
-    data_type: &str,
-    datas: &[Felt],
-    data_index: &mut usize,
+    structs: Structs<'_>,
+    enums: Enums<'_>,
 ) -> Option<DecodedValue> {
-    datas.get(*data_index).map(|value| {
-        *data_index += 1;
-        create_decoded_value_by_type(name, data_type, DecodedValueType::Single(*value))
-    })
-}
-
-fn decode_array(
-    name: Option<&str>,
-    datas: &[Felt],
-    data_index: &mut usize,
-    structs: Option<&[Struct]>,
-    enums: Option<&[Enum]>,
-    data_type: &str,
-    inner_type: &str,
-) -> Option<DecodedValue> {
-    let array_length = if data_type.starts_with("[") && data_type.ends_with("]") {
-        let number_str = data_type[..data_type.len() - 1].rsplit(';').next()?;
-        let length = number_str.parse::<usize>().ok()?;
-        length
-    } else {
-        let length = datas.get(*data_index)?.to_usize()?;
-        *data_index += 1;
-        length
-    };
-
-    let decoded_elements: Vec<DecodedValueType> = (0..array_length)
-        .flat_map(|_| {
-            if let Some(decoded) = decode_calldata(
-                datas,
-                &[Cow::Borrowed(inner_type)],
-                &[],
-                structs,
-                enums,
-                data_index,
-            ) {
-                decoded.into_iter().map(|v| v.value).collect::<Vec<_>>()
-            } else if let Some(data) = datas.get(*data_index) {
-                *data_index += 1;
-                vec![DecodedValueType::Single(*data)]
-            } else {
-                vec![]
-            }
-        })
-        .collect();
-    Some(create_decoded_value_by_type(
-        name,
-        data_type,
-        DecodedValueType::Array(decoded_elements),
-    ))
-}
-
-fn decode_enum(
-    name: Option<&str>,
-    datas: &[Felt],
-    data_index: &mut usize,
-    data_type: &str,
-    enums: Option<&[Enum]>,
-    structs: Option<&[Struct]>,
-) -> Option<DecodedValue> {
-    if let Some(variant_index_felt) = datas.get(*data_index) {
-        if let Some(enum_item) = enums.and_then(|e| e.iter().find(|item| item.name == data_type)) {
-            if let Some(variant_index) = variant_index_felt.to_usize() {
-                *data_index += 1;
-
-                if let Some(enum_member) = enum_item.variants.get(variant_index) {
-                    let variant_name = &enum_member.name;
-                    let variant_type = &enum_member.ty;
-
-                    if variant_type.trim().is_empty() {
-                        return Some(create_decoded_value_by_type(
-                            name,
-                            data_type,
-                            DecodedValueType::String(variant_name.to_string()),
-                        ));
-                    }
-
-                    return decode_calldata(
-                        datas,
-                        &[Cow::Borrowed(variant_type)],
-                        &[Cow::Borrowed(variant_name)],
-                        structs,
-                        enums,
-                        data_index,
-                    )
-                    .and_then(|mut decoded_variants| decoded_variants.pop())
-                    .map(|decoded_variant| {
-                        create_decoded_value_by_type(
-                            name,
-                            format!("{}: {}", variant_name, variant_type).as_str(),
-                            decoded_variant.value,
-                        )
-                    });
-                }
-            }
-            return Some(create_decoded_value_by_type(
+    let etype = EDataType::from_str(ty, Some(enums));
+    match etype {
+        EDataType::Primitive(_) => {
+            let (value, rest) = data.split_first()?;
+            *data = rest;
+            Some(create_decoded_value_by_type(
                 name,
-                data_type,
-                DecodedValueType::Single(*variant_index_felt),
-            ));
+                ty,
+                DecodedValueType::Single(*value),
+            ))
         }
-    }
-    None
-}
 
-fn decode_tuple(
-    datas: &[Felt],
-    data_index: &mut usize,
-    inner_types: &[String],
-    structs: Option<&[Struct]>,
-    enums: Option<&[Enum]>,
-) -> Option<DecodedValue> {
-    let mut tuple_fields: Vec<DecodedValue> = Vec::new();
-
-    for inner_type in inner_types {
-        let decoded_field = decode_calldata(
-            datas,
-            &[Cow::Borrowed(inner_type)],
-            &[],
-            structs,
-            enums,
-            data_index,
-        )?
-        .into_iter()
-        .next()?;
-
-        tuple_fields.push(decoded_field);
-    }
-    let mut tuple_map = HashMap::new();
-    for (i, field) in tuple_fields.into_iter().enumerate() {
-        tuple_map.insert(i, field);
-    }
-
-    Some(create_decoded_value_by_type(
-        None,
-        &inner_types.join(", "),
-        DecodedValueType::Struct(tuple_map),
-    ))
-}
-
-fn decode_struct(
-    name: Option<&str>,
-    datas: &[Felt],
-    data_index: &mut usize,
-    data_type: &str,
-    structs: Option<&[Struct]>,
-    enums: Option<&[Enum]>,
-) -> Option<DecodedValue> {
-    let struct_map = decode_struct_map(datas, data_index, data_type, structs, enums);
-    (struct_map.is_some())
-        .then(|| create_decoded_value_by_type(name, data_type, struct_map.unwrap()))
-}
-
-fn decode_struct_map(
-    datas: &[Felt],
-    data_index: &mut usize,
-    data_type: &str,
-    structs: Option<&[Struct]>,
-    enums: Option<&[Enum]>,
-) -> Option<DecodedValueType> {
-    if let Some(structs) = structs {
-        if let Some(struct_item) = structs.iter().find(|item| item.name.contains(data_type)) {
-            // Collect the types and names as Vec<Cow<str>>
-            let types: Vec<Cow<str>> = struct_item
-                .members
-                .iter()
-                .map(|m| Cow::Borrowed(m.ty.as_str())) // Borrowed &str to Cow<str>
-                .collect();
-
-            let names: Vec<Cow<str>> = struct_item
-                .members
-                .iter()
-                .map(|m| Cow::Borrowed(m.name.as_str())) // Borrowed &str to Cow<str>
-                .collect();
-
-            if let Some(decoded_struct) =
-                decode_calldata(datas, &types, &names, Some(structs), enums, data_index)
+        EDataType::Array(_inner) => {
+            // Extract inner type string directly from the original type
+            let inner_ty_str = if let Some(inner_ty) =
+                ty.strip_prefix("Array<").and_then(|s| s.strip_suffix('>'))
             {
-                let mut decoded_struct_values = HashMap::new();
-                for (key, value) in decoded_struct.into_iter().enumerate() {
-                    decoded_struct_values.insert(key, value);
-                }
+                inner_ty
+            } else if let Some(inner_ty) =
+                ty.strip_prefix("Span<").and_then(|s| s.strip_suffix('>'))
+            {
+                inner_ty
+            } else if ty.ends_with("[]") {
+                ty.strip_suffix("[]").unwrap()
+            } else if let Some(stripped) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                stripped.split(';').next().unwrap().trim()
+            } else {
+                return None;
+            };
+            // Get array length (fixed or dynamic)
+            let array_length =
+                if let Some(stripped) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                    stripped
+                        .split(';')
+                        .nth(1)
+                        .unwrap()
+                        .trim()
+                        .parse::<usize>()
+                        .ok()?
+                } else {
+                    let (len_felt, rest) = data.split_first()?;
+                    let len = len_felt.to_usize()?;
+                    *data = rest;
+                    len
+                };
 
-                return Some(DecodedValueType::Struct(decoded_struct_values));
+            let mut elements = Vec::with_capacity(array_length);
+
+            // Decode each element using the original inner type string
+            for _ in 0..array_length {
+                let element = decode_type(data, inner_ty_str, None, structs, enums)?;
+                elements.push(element.value);
             }
+
+            Some(create_decoded_value_by_type(
+                name,
+                ty,
+                DecodedValueType::Array(elements),
+            ))
+        }
+        EDataType::UserEnum(_) => {
+            let (variant_idx, rest) = data.split_first()?;
+            let variant_idx = variant_idx.to_usize()?;
+            *data = rest;
+
+            let enum_def = enums.iter().find(|e| e.name == ty)?;
+            let variant = enum_def.variants.get(variant_idx)?;
+
+            let value = if variant.ty.is_empty() {
+                DecodedValueType::String(variant.name.clone())
+            } else {
+                let decoded = decode_type(data, &variant.ty, None, structs, enums)?;
+                decoded.value
+            };
+
+            Some(create_decoded_value_by_type(name, ty, value))
+        }
+        EDataType::Tuple(inners) => {
+            let mut elements = Vec::with_capacity(inners.len());
+            let mut tuple_data = *data;
+
+            for inner in inners {
+                let decoded = decode_type(&mut tuple_data, &inner, None, structs, enums)?;
+                elements.push(decoded.value);
+            }
+
+            *data = tuple_data;
+            Some(create_decoded_value_by_type(
+                name,
+                ty,
+                DecodedValueType::Array(elements),
+            ))
+        }
+        EDataType::Struct(_) => {
+            let struct_def = structs.iter().find(|s| s.name == ty)?;
+            let mut fields = HashMap::new();
+            let mut struct_data = *data;
+
+            for (index, member) in struct_def.members.iter().enumerate() {
+                let decoded = decode_type(
+                    &mut struct_data,
+                    &member.ty,
+                    Some(&member.name),
+                    structs,
+                    enums,
+                )?;
+
+                fields.insert(index, decoded);
+            }
+
+            *data = struct_data;
+            Some(create_decoded_value_by_type(
+                name,
+                ty,
+                DecodedValueType::Struct(fields),
+            ))
         }
     }
-    None
 }
