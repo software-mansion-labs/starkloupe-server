@@ -15,17 +15,21 @@ use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
 use std::sync::Arc;
 use url::Url;
 use walnut_shared::create_rpc_client_from_url;
+use walnut_shared::extract_chain_id;
 use walnut_shared::field_element_to_felt;
-use walnut_shared::{extract_chain_id, rpc_url};
+use walnut_shared::get_rpc_urls;
 
 pub async fn parse_chain_id_and_rpc_url(
     raw_args: &SimulationRawArgs,
 ) -> Result<(ChainId, Url), TransactionSimulationError> {
     if let Some(chain_id_str) = &raw_args.chain_id {
-        let chain_id = extract_chain_id(chain_id_str)
+        let (e_chain_id, _network) = extract_chain_id(chain_id_str)
             .map_err(|_| TransactionSimulationError::InvalidChainId)?;
-        let rpc_url = rpc_url(&chain_id);
-        Ok((chain_id, rpc_url))
+        let rpc_url = get_rpc_urls(&e_chain_id)
+            .0
+            .ok_or(TransactionSimulationError::InvalidRpcUrl)?;
+        let core_chain_id = ChainId::from(e_chain_id);
+        Ok((core_chain_id, rpc_url))
     } else if let Some(rpc_url_str) = &raw_args.rpc_url {
         let rpc_url =
             Url::parse(rpc_url_str).map_err(|_| TransactionSimulationError::InvalidRpcUrl)?;
@@ -36,8 +40,8 @@ pub async fn parse_chain_id_and_rpc_url(
                 .await
                 .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
         );
-        let chain_id = extract_chain_id_from_felt(chain_id_felt)?;
-        Ok((chain_id, rpc_url))
+        let core_chain_id = extract_chain_id_from_felt(chain_id_felt)?;
+        Ok((core_chain_id, rpc_url))
     } else {
         Err(TransactionSimulationError::MissingChainIdOrRpcUrl)
     }
