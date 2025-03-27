@@ -118,9 +118,8 @@ impl ContractCall {
                 &self.entry_point.calldata.0.to_vec(),
                 arguments_types,
                 arguments_names,
-                Some(struct_abis),
-                Some(enum_abis),
-                &mut 0,
+                struct_abis,
+                enum_abis,
             );
 
             self.calldata_decoded = decoded_arguments;
@@ -133,14 +132,8 @@ impl ContractCall {
     pub fn decode_call_result(&mut self, struct_abis: &[Struct], enum_abis: &[Enum]) {
         if let CallResult::Success { ret_data } = &self.result {
             if let Some(call_result_types) = &self.result_types {
-                let decoded_result = decode_calldata(
-                    ret_data,
-                    call_result_types,
-                    &[],
-                    Some(struct_abis),
-                    Some(enum_abis),
-                    &mut 0,
-                );
+                let decoded_result =
+                    decode_calldata(ret_data, call_result_types, &[], struct_abis, enum_abis);
                 self.decoded_result = decoded_result;
             }
         }
