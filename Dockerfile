@@ -3,10 +3,10 @@ FROM ubuntu:25.04 AS builder
 
 # Install required dependencies
 RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    libssl-dev \
-    pkg-config
+  curl \
+  build-essential \
+  libssl-dev \
+  pkg-config
 
 # Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
@@ -17,19 +17,19 @@ COPY . .
 
 RUN make deps
 ENV SQLX_OFFLINE=true
-RUN rustup install 1.80.0 && rustup default 1.80.0
+RUN rustup install 1.85.1 && rustup default 1.85.1
 RUN cargo build --locked --release --bin server
 
 FROM ubuntu:25.04 AS final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl \
-    curl \
-    build-essential \
-    ca-certificates \
-    git \
-    bash && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+  openssl \
+  curl \
+  build-essential \
+  ca-certificates \
+  git \
+  bash && \
+  apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y

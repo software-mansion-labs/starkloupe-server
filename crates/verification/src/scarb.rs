@@ -9,7 +9,7 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::{env, fs};
-use tracing::error;
+use tracing::{error, info};
 use walnut_shared::tuple_to_version_string;
 
 fn supported_old_cairo_versions() -> Vec<Version> {
@@ -43,15 +43,10 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
 
     let absolute_path = fs::canonicalize(path)?;
 
-    let scarb_cache_dir = env::current_dir()?.join(".cache/scarb");
-    let scarb_cache_dir_str = scarb_cache_dir.to_str().ok_or_else(|| {
-        error!("Error converting cache directory to string");
-        anyhow::anyhow!("Failed to convert cache dir to string")
-    })?;
+    info!("Build project with {:?}", &path);
     let child_result = unsafe {
         Command::new(absolute_path)
             .current_dir(tmp_dir)
-            .env("SCARB_CACHE", scarb_cache_dir_str)
             .arg("--profile")
             .arg(profile)
             .arg("build")
