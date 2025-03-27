@@ -101,19 +101,16 @@ impl EDataType {
         if let Some(primitive) = EPrimitiveType::from_str(s) {
             return Self::Primitive(primitive);
         }
-        if s.starts_with("Array<")
-            || s.starts_with("Array::<")
-            || s.starts_with("Span<")
-            || s.starts_with("Span::<")
+        if let Some(inner) = s
+            .strip_prefix("Array<")
+            .or_else(|| s.strip_prefix("Span<"))
+            .and_then(|s| s.strip_suffix('>'))
         {
-            let inner_start_index = s.find('<').unwrap() + 1;
-            let inner_type = &s[inner_start_index..s.len() - 1];
-            return Self::Array(Box::new(Self::from_str(inner_type, enum_abis)));
+            return Self::Array(Box::new(Self::from_str(inner, enum_abis)));
         }
-        if s.starts_with("[") && s.ends_with("]") {
-            if let Some(delimiter_index) = s.find(';') {
-                let inner_type = s[1..delimiter_index].trim();
-                return Self::Array(Box::new(Self::from_str(inner_type, enum_abis)));
+        if let Some(stripped) = s.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            if let Some((inner, _)) = stripped.split_once(';') {
+                return Self::Array(Box::new(Self::from_str(inner.trim(), enum_abis)));
             }
         }
         if s.starts_with("Tuple") || (s.starts_with("(") && s.ends_with(")")) {
@@ -129,19 +126,18 @@ impl EDataType {
     }
 }
 
-pub fn extract_inner_types(data_type: &str) -> Vec<String> {
+fn extract_inner_types(data_type: &str) -> Vec<String> {
     let inner_content = data_type
         .strip_prefix("Tuple<")
-        .and_then(|s| s.strip_suffix('>'))
+        .or_else(|| data_type.strip_prefix('('))
+        .and_then(|s| s.strip_suffix('>').or_else(|| s.strip_suffix(')')))
         .unwrap_or(data_type);
-
-    let inner_content = inner_content
-        .strip_prefix('(')
-        .and_then(|s| s.strip_suffix(')'))
-        .unwrap_or(inner_content);
 
     inner_content
         .split(',')
-        .map(|s| s.trim().trim_matches('"').to_string())
+        .map(|s| {
+            s.trim_matches(|c: char| c.is_whitespace() || c == '"')
+                .to_string()
+        })
         .collect()
 }
