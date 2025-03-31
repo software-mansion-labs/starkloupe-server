@@ -134,7 +134,7 @@ pub async fn get_contract_entrypoints_handler(
                                     .collect();
 
                                 (
-                                    selector_from_name(&func.name).0.to_fixed_hex_string(),
+                                    selector_from_name(&func.name).0.to_hex_string(),
                                     Function {
                                         name: func.name.clone(),
                                         inputs: simplified_inputs,
