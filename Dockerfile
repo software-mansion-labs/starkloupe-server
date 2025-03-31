@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Rust via rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup install 1.80.0 && rustup default 1.80.0
+RUN rustup install 1.85.1 && rustup default 1.85.1
 
 WORKDIR /opt/app
 
