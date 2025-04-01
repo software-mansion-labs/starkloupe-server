@@ -327,23 +327,38 @@ impl Mappings {
                     let simplified_type_name = simplify_type_name(result_type.as_str());
 
                     if is_panic_result(Some(&simplified_type_name)) && values[0] == Felt::ONE {
-                        let index = values[1].to_string().parse::<usize>().unwrap();
-                        let panic_reason = relocated_memory
-                            .get(index)
-                            .and_then(|opt| *opt)
-                            .expect("Failed to get panic reason from relocated_memory");
-                        let decoded_strings = felts_to_string(&[panic_reason]);
-                        let panic_string = decoded_strings.first().cloned().unwrap_or_default();
+                        let index = match values[1].to_string().parse::<usize>() {
+                            Ok(i) => i,
+                            Err(e) => {
+                                error!("Failed to parse panic index: {}", e);
+                                return (results, results_decoded);
+                            }
+                        };
 
-                        results.push(InternalFnCallIO {
-                            type_name: Some(simplified_type_name.clone()),
-                            value: vec!["1".to_string(), panic_string.clone()],
-                        });
-                        results_decoded.push(create_decoded_value_by_type(
-                            None,
-                            "Panic",
-                            DecodedValueType::String(panic_string),
-                        ));
+                        match relocated_memory[index] {
+                            Some(panic_data) => {
+                                let decoded = felts_to_string(&[panic_data]);
+                                let panic_str = decoded.first().cloned().unwrap_or_default();
+
+                                results.push(InternalFnCallIO {
+                                    type_name: Some(simplified_type_name.clone()),
+                                    value: vec!["1".to_string(), panic_str.clone()],
+                                });
+
+                                results_decoded.push(create_decoded_value_by_type(
+                                    None,
+                                    "Panic",
+                                    DecodedValueType::String(panic_str),
+                                ));
+                            }
+                            None => {
+                                error!(
+                                    "Missing panic data at index {} (memory value: {})",
+                                    index,
+                                    relocated_memory[index].unwrap_or(Felt::ZERO)
+                                );
+                            }
+                        }
                     } else {
                         let type_id = &return_ref.ty;
                         let mut data_index: usize = 0;
