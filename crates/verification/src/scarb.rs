@@ -41,17 +41,26 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
         .unwrap_or("300".to_string())
         .parse::<u64>()?;
 
-    let absolute_path = fs::canonicalize(path)?;
-
     info!("Build project with {:?}", &path);
+    let absolute_path = match fs::canonicalize(path) {
+        Ok(path) => Ok(path),
+        Err(e) => {
+            let binary = path
+                .split("binaries/")
+                .nth(1)
+                .unwrap_or("unknown component");
+            error!("{}", e);
+            Err(anyhow::anyhow!("Cannot find {} for verification", binary))
+        }
+    }?;
+
     let child_result = unsafe {
         Command::new(absolute_path)
             .current_dir(tmp_dir)
             .arg("--profile")
             .arg(profile)
             .arg("build")
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
             .pre_exec(move || {
                 if let Err(e) = set_limits(cpu_limit) {
                     error!("Failed to set cpu imit: {:?}", e);
@@ -69,7 +78,7 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
         Ok(c) => c,
         Err(e) => {
             error!("Failed to spawn process: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to spawn process: {:?}", e));
+            return Err(anyhow::anyhow!("Failed to run process: {:?}", e));
         }
     };
 
@@ -82,10 +91,9 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
     };
 
     if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Build failed with status: {}",
-            output.status
-        ));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        return Err(anyhow::anyhow!("{}\n{}", output.status, stdout));
     }
 
     Ok(())

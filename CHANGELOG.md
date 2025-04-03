@@ -1,5 +1,37 @@
 # Changelog
 
+### [0.0.64] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.64)
+
+- Change scarb output from inherted() to piped()
+
+### [0.0.63] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.63)
+
+- Remove use of expect() in getting data from relocated memory
+
+### [0.0.62] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.62)
+
+- Dockerfile upgrade rust version in final stage
+
+### [0.0.61] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.61)
+
+- Support for cairo 2.9.4
+
+### [0.0.60] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.60)
+
+- Remove to_fixed_string in the contract get entrypoint endpoint
+
+### [0.0.59] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.59)
+
+- Support to show searching on etehreum network
+
+### [0.0.58] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.58)
+
+- Upgrade rust version to 1.85.1
+
+### [0.0.57] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.57)
+
+- Optimize decode calldata
+
 ### [0.0.56] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.56)
 
 - CAIRO 1 ABI format support
