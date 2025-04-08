@@ -1,4 +1,3 @@
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
@@ -9,25 +8,28 @@ use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
 use runtime::starknet::context::SerializableGasPrices;
 use starknet::core::types::Felt;
+use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
-use starknet_api::transaction::PaymasterData;
 use starknet_old::core::types::{self as starknet_old_types, Event};
 use starknet_providers::jsonrpc::HttpTransport;
 use starknet_providers::JsonRpcClient;
 use starknet_providers::Provider;
 use std::sync::Arc;
-use walnut_shared::field_element_to_felt;
-use walnut_shared::old_resource_bounds_mapping_to_resource_bounds_b_tree_map;
+use walnut_shared::felts_to_string;
+use walnut_shared::old_resource_bounds_mapping_to_valid_resource_bounds;
 use walnut_shared::vec_field_element_to_vec_felt;
-use walnut_shared::{felts_to_string, max_resource_bounds_map};
-
-use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce, PatriciaKey};
-use starknet_api::data_availability::DataAvailabilityMode;
-use starknet_api::transaction::{
-    Calldata, Fee, ResourceBoundsMapping, TransactionHash, TransactionSignature, TransactionVersion,
+use walnut_shared::{
+    field_element_to_felt, old_resource_bounds_mapping_to_default_valid_resource_bounds,
 };
-use starknet_api::{contract_address, felt, patricia_key};
+
+use starknet_api::contract_address;
+use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce};
+use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::transaction::fields::{
+    Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
+};
+use starknet_api::transaction::{TransactionHash, TransactionVersion};
 use walnut_shared::{ETH_FEE_TOKEN_ADDRESS, STRK_FEE_TOKEN_ADDRESS};
 
 use crate::transaction_info::TransactionInformation;
@@ -45,7 +47,7 @@ pub fn extract_submitted_tx(
     TransactionVersion,
     TransactionType,
     TransactionSignature,
-    ResourceBoundsMapping,
+    ValidResourceBounds,
     PaymasterData,
 )> {
     match transaction {
@@ -59,8 +61,8 @@ pub fn extract_submitted_tx(
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::ZERO,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                ResourceBoundsMapping::default(),
+                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                old_resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
             starknet_old_types::InvokeTransaction::V1(tx) => Some((
@@ -70,8 +72,8 @@ pub fn extract_submitted_tx(
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::ONE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                ResourceBoundsMapping::default(),
+                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                old_resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
             starknet_old_types::InvokeTransaction::V3(tx) => Some((
@@ -81,8 +83,8 @@ pub fn extract_submitted_tx(
                 Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
                 TransactionVersion::THREE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                old_resource_bounds_mapping_to_resource_bounds_b_tree_map(&tx.resource_bounds),
+                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                old_resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                 PaymasterData(vec_field_element_to_vec_felt(tx.paymaster_data)),
             )),
         },
@@ -95,8 +97,8 @@ pub fn extract_submitted_tx(
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ZERO,
                     TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                    ResourceBoundsMapping::default(),
+                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
                     PaymasterData::default(),
                 )),
                 starknet_old_types::DeclareTransaction::V1(tx) => Some((
@@ -106,8 +108,8 @@ pub fn extract_submitted_tx(
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::ONE,
                     TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                    ResourceBoundsMapping::default(),
+                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
                     PaymasterData::default(),
                 )),
                 starknet_old_types::DeclareTransaction::V2(tx) => Some((
@@ -117,8 +119,8 @@ pub fn extract_submitted_tx(
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::TWO,
                     TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                    ResourceBoundsMapping::default(),
+                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
                     PaymasterData::default(),
                 )),
                 starknet_old_types::DeclareTransaction::V3(tx) => Some((
@@ -128,8 +130,8 @@ pub fn extract_submitted_tx(
                     Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
                     TransactionVersion::THREE,
                     TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature).into()),
-                    old_resource_bounds_mapping_to_resource_bounds_b_tree_map(&tx.resource_bounds),
+                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
+                    old_resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                     PaymasterData(vec_field_element_to_vec_felt(tx.paymaster_data)),
                 )),
             }
@@ -139,16 +141,12 @@ pub fn extract_submitted_tx(
             field_element_to_felt(tx.contract_address)
                 .try_into()
                 .unwrap(),
-            EntryPointSelector(
-                field_element_to_felt(tx.entry_point_selector)
-                    .try_into()
-                    .unwrap(),
-            ),
+            EntryPointSelector(field_element_to_felt(tx.entry_point_selector)),
             Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
             TransactionVersion::ZERO,
             TransactionType::L1Handler,
             TransactionSignature::default(),
-            ResourceBoundsMapping::default(),
+            old_resource_bounds_mapping_to_default_valid_resource_bounds(),
             PaymasterData::default(),
         )),
         _ => None,
@@ -318,7 +316,7 @@ pub fn extract_transaction_contex(
     nonce: &Option<Nonce>,
     chain_id: ChainId,
     block_info: &BlockInfo,
-    resource_bounds: Option<ResourceBoundsMapping>,
+    resource_bounds: Option<ValidResourceBounds>,
     paymaster_data: Option<PaymasterData>,
 ) -> Arc<TransactionContext> {
     // Create a chain-specific block context
@@ -353,7 +351,8 @@ pub fn extract_transaction_contex(
                 sender_address: *sender_address,
                 only_query: false,
             },
-            resource_bounds: resource_bounds.unwrap_or_else(max_resource_bounds_map),
+            resource_bounds: resource_bounds
+                .unwrap_or_else(|| old_resource_bounds_mapping_to_default_valid_resource_bounds()),
             tip: Default::default(),
             nonce_data_availability_mode: DataAvailabilityMode::L1,
             fee_data_availability_mode: DataAvailabilityMode::L1,

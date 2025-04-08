@@ -3,7 +3,7 @@ use crate::abi::{
     Item, Output, StateMutability, Struct,
 };
 use crate::utils::simplify_type_name;
-use blockifier::abi::abi_utils::selector_from_name;
+use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::EntryPointSelector;
 use std::{borrow::Cow, collections::HashSet};
 

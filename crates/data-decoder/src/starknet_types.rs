@@ -33,13 +33,6 @@ pub enum EPrimitiveType {
     Panic,
 }
 
-#[derive(Debug)]
-pub enum EEnumType {
-    PanicResult,
-    Option,
-    Result,
-}
-
 impl fmt::Display for EDataType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -85,17 +78,6 @@ impl EPrimitiveType {
     }
 }
 
-impl EEnumType {
-    pub fn from_str(s: &str) -> Option<Self> {
-        // Handle predefined enums like PanicResult, Option, Result
-        match s {
-            s if s.starts_with("PanicResult") => Some(Self::PanicResult),
-            s if s.starts_with("Option") => Some(Self::Option),
-            s if s.starts_with("Result") => Some(Self::Result),
-            _ => None,
-        }
-    }
-}
 impl EDataType {
     pub fn from_str(s: &str, enum_abis: Option<&[Enum]>) -> Self {
         if let Some(primitive) = EPrimitiveType::from_str(s) {

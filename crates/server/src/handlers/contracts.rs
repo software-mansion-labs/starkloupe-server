@@ -6,11 +6,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use blockifier::abi::abi_utils::selector_from_name;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
+use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::ChainId;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;

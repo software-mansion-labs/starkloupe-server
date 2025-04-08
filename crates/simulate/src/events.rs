@@ -1,12 +1,12 @@
 use crate::contract_names::ContractName;
 use crate::ContractCall;
 use crate::ContractCallsMap;
-use blockifier::abi::abi_utils::selector_from_name;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event as CheatnetEvent;
 use data_decoder::calldata_decoder::decode_calldata;
 use data_decoder::create_decoded_value_by_type;
 use data_decoder::{DecodedValue, DecodedValueType};
 use serde::Serialize;
+use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::ContractAddress;
 use starknet_selector_decoder::get_selector;
 use std::borrow::Cow;

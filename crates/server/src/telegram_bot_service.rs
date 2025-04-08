@@ -1,7 +1,7 @@
 use reqwest::Client;
-use simulate::{SimulationArgs, SimulationRawArgs};
+use simulate::SimulationArgs;
 use starknet_api::core::ChainId;
-use tracing::{debug, error, info};
+use tracing::error;
 use urlencoding::encode;
 
 pub async fn send_telegram_notification_tx_id(
@@ -126,4 +126,3 @@ async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::er
     }
     Ok(())
 }
-

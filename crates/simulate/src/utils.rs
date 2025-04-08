@@ -7,7 +7,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
-use starknet_api::transaction::Calldata;
+use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::TransactionVersion;
 use starknet_providers::Provider;
 use starknet_types_core::felt::Felt;

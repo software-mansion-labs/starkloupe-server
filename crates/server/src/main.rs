@@ -37,7 +37,6 @@ use crate::handlers::{
 };
 use axum::extract::State;
 use axum::http::StatusCode;
-use sentry;
 use tokio::time::{timeout, Duration};
 // Resources
 // https://github.com/tokio-rs/axum/tree/main/examples
@@ -107,8 +106,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "/v1/:chain_id/simulate-transaction/:tx_hash",
                     get(simulate_transaction_by_hash_handler),
                 )
-                .route("/v1/:chain_id/verify", post(verify_handler))
-                .route("/v1/verify", post(verify_handler_with_rpc))
                 .route(
                     "/v1/:chain_id/classes/:class_hash",
                     get(get_class_handler_with_chain_id),
@@ -120,6 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(get_contract_entrypoints_handler),
                 )
                 .route("/v1/search/:search_hash", get(get_search_handler))
+                .route("/v1/:chain_id/verify", post(verify_handler))
+                .route("/v1/verify", post(verify_handler_with_rpc))
                 .route(
                     "/v1/verification/:verification_status_id/status",
                     get(get_verification_status_handler),
