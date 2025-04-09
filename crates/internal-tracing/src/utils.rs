@@ -1,5 +1,4 @@
 use anyhow::Result;
-use blockifier::abi::abi_utils::selector_from_name;
 use cairo_lang_casm::{
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
@@ -20,6 +19,7 @@ use itertools::chain;
 use itertools::Itertools;
 use serde::Serialize;
 use starknet::core::types::Felt;
+use starknet_api::abi::abi_utils::selector_from_name;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use walnut_shared::felt252_serde::sierra_from_felt252s;

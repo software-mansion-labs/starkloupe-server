@@ -1,11 +1,10 @@
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::execution::contract_class::{
-    ContractClass as ContractClassBlockifier, ContractClassV0, ContractClassV1,
+    CompiledClassV0 as ContractClassV0, CompiledClassV1 as ContractClassV1,
+    RunnableCompiledClass as ContractClassBlockifier,
 };
 use blockifier::state::cached_state::StorageEntry;
 use blockifier::state::errors::StateError::{self, StateReadError};
 use blockifier::state::state_api::{StateReader, StateResult};
-use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cheatnet::state::BlockInfoReader;
@@ -20,10 +19,12 @@ use starknet::core::types::{
     DeployedContractItem, Felt, FlattenedSierraClass,
 };
 use starknet::core::types::{EntryPointsByType, SierraEntryPoint};
+use starknet_api::block::BlockInfo;
 use starknet_api::block::{BlockNumber, BlockTimestamp};
+use starknet_api::contract_class::{EntryPointType, SierraVersion};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::deprecated_contract_class::{
-    ContractClass as DeprecatedContractClass, EntryPoint, EntryPointType,
+    ContractClass as DeprecatedContractClass, EntryPointV0,
 };
 use starknet_api::state::StorageKey;
 use starknet_old::core::types::{self as starknet_old_types};
@@ -150,10 +151,7 @@ impl StateReader for InMemoryForkCache {
             .ok_or(StateError::UnavailableContractAddress(contract_address))
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<ContractClassBlockifier> {
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<ContractClassBlockifier> {
         let contract_class = self.class_hash_to_compiled_class.get(&class_hash).cloned();
         match contract_class {
             Some(contract_class) => Ok(contract_class),
@@ -417,24 +415,17 @@ impl ForkStateReader {
         });
 
         let casm_contract_class_raw =
-            compile_sierra(&sierra_contract_class, None, &SierraType::Contract)
+            compile_sierra::<String>(&sierra_contract_class, &SierraType::Contract)
                 .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
-        let casm_contract_class: CasmContractClass = serde_json::from_str(&casm_contract_class_raw)
-            .map_err(|e| {
-                StateError::StateReadError(format!(
-                    "Unable to deserialize CasmContractClass: {}",
-                    e
-                ))
-            })?;
-
         let compiled_contract_class = ContractClassBlockifier::V1(
-            ContractClassV1::try_from(casm_contract_class).map_err(|e| {
-                StateError::StateReadError(format!(
-                    "Unable to create ContractClassV1 from CasmContractClass: {}",
-                    e
-                ))
-            })?,
+            ContractClassV1::try_from_json_string(&casm_contract_class_raw, SierraVersion::LATEST)
+                .map_err(|e| {
+                    StateError::StateReadError(format!(
+                        "Unable to create ContractClassV1 from CasmContractClass: {}",
+                        e
+                    ))
+                })?,
         );
 
         in_memory_fork_cache.cache_compiled_contract_class(class_hash, compiled_contract_class);
@@ -496,19 +487,15 @@ impl ForkStateReader {
                 });
 
                 let casm_contract_class_raw =
-                    compile_sierra(&sierra_contract_class, None, &SierraType::Contract)
+                    compile_sierra::<String>(&sierra_contract_class, &SierraType::Contract)
                         .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
-                let casm_contract_class: CasmContractClass =
-                    serde_json::from_str(&casm_contract_class_raw).map_err(|e| {
-                        StateError::StateReadError(format!(
-                            "Unable to deserialize CasmContractClass: {}",
-                            e
-                        ))
-                    })?;
-
                 ContractClassBlockifier::V1(
-                    ContractClassV1::try_from(casm_contract_class).map_err(|e| {
+                    ContractClassV1::try_from_json_string(
+                        &casm_contract_class_raw,
+                        SierraVersion::LATEST,
+                    )
+                    .map_err(|e| {
                         StateError::StateReadError(format!(
                             "Unable to create ContractClassV1 from CasmContractClass: {}",
                             e
@@ -517,7 +504,7 @@ impl ForkStateReader {
                 )
             }
             ContractClassStarknet::Legacy(legacy_class) => {
-                let converted_entry_points: HashMap<EntryPointType, Vec<EntryPoint>> =
+                let converted_entry_points: HashMap<EntryPointType, Vec<EntryPointV0>> =
                     serde_json::from_str(
                         &serde_json::to_string(&legacy_class.entry_points_by_type).map_err(
                             |e| {
@@ -723,14 +710,11 @@ impl StateReader for ForkStateReader {
         }
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<ContractClassBlockifier> {
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<ContractClassBlockifier> {
         if let Ok(cache_hit) = self
             .in_memory_fork_cache
             .borrow()
-            .get_compiled_contract_class(class_hash)
+            .get_compiled_class(class_hash)
         {
             return Ok(cache_hit);
         }
@@ -753,7 +737,7 @@ impl StateReader for ForkStateReader {
                 )?;
                 self.in_memory_fork_cache
                     .borrow()
-                    .get_compiled_contract_class(ClassHash(class_hash_felt))
+                    .get_compiled_class(ClassHash(class_hash_felt))
                     .map_err(|_| {
                         StateError::StateReadError(format!(
                             "Failed to retrieve compiled contract class for class_hash: {}",
@@ -770,7 +754,7 @@ impl StateReader for ForkStateReader {
                 )?;
                 self.in_memory_fork_cache
                     .borrow()
-                    .get_compiled_contract_class(ClassHash(class_hash_felt))
+                    .get_compiled_class(ClassHash(class_hash_felt))
                     .map_err(|_| {
                         StateError::StateReadError(format!(
                             "Failed to retrieve compiled contract class for class_hash: {}",

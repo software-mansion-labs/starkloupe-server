@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 db = { path = "../db" }
-utoipa = "4.2.3"
+utoipa.workspace = true
 axum.workspace = true
 sqlx.workspace = true
 tower.workspace = true
@@ -39,7 +39,7 @@ walnut-shared.workspace = true
 verification.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
-sentry = "0.35.0"
+sentry.workspace = true
 starknet-providers.workspace = true
 starknet-old.workspace = true
 sentry-tracing.workspace = true

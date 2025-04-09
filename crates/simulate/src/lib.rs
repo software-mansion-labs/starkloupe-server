@@ -28,12 +28,12 @@ use starknet::core::types::Felt;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
-use starknet_api::transaction::Calldata;
+use starknet_api::transaction::fields::Calldata;
+use starknet_api::transaction::fields::PaymasterData;
+use starknet_api::transaction::fields::TransactionSignature;
+use starknet_api::transaction::fields::ValidResourceBounds;
 use starknet_api::transaction::L1HandlerTransaction;
-use starknet_api::transaction::PaymasterData;
-use starknet_api::transaction::ResourceBoundsMapping;
 use starknet_api::transaction::TransactionHash;
-use starknet_api::transaction::TransactionSignature;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::StarknetApiError;
 use starknet_old::core::types as starknet_old_types;
@@ -74,7 +74,7 @@ pub struct SimulationArgs {
     pub transaction_signature: Option<TransactionSignature>,
     pub transaction_hash: Option<TransactionHash>,
     pub transaction_type: Option<TransactionType>,
-    pub resource_bounds: Option<ResourceBoundsMapping>,
+    pub resource_bounds: Option<ValidResourceBounds>,
     pub paymaster_data: Option<PaymasterData>,
     pub strkgate_event: Option<starknet_old_types::Event>,
 }

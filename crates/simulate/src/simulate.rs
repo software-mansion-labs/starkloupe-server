@@ -22,24 +22,22 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
-use blockifier::abi::abi_utils::selector_from_name;
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::context::TransactionContext;
 use blockifier::execution::call_info::CallInfo;
-use blockifier::execution::call_info::Retdata;
 use blockifier::execution::common_hints::ExecutionMode;
-use blockifier::execution::contract_class::ContractClass as BlockifierContractClass;
+use blockifier::execution::contract_class::RunnableCompiledClass as BlockifierContractClass;
+use blockifier::execution::contract_class::TrackedResource;
 use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
-use blockifier::retdata;
+use blockifier::execution::entry_point::EntryPointRevertInfo;
+use blockifier::execution::entry_point::ExecutionRevertInfo;
+use blockifier::execution::entry_point::SierraGasRevertTracker;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
 use blockifier::state::state_api::State;
-use blockifier::transaction::constants;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
-use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
@@ -62,14 +60,18 @@ use sqlx::Postgres;
 use starknet::core::types::ContractClass;
 use starknet::core::types::ExecutionResult;
 use starknet::core::types::Felt;
+use starknet_api::abi::abi_utils::selector_from_name;
+use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
+use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress};
-use starknet_api::deprecated_contract_class::EntryPointType;
+use starknet_api::execution_resources::GasAmount;
+use starknet_api::transaction::constants;
+use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::L1HandlerTransaction;
-use starknet_api::transaction::TransactionVersion;
-use starknet_api::transaction::{Calldata, TransactionHash, TransactionHasher};
+use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::Provider;
 use std::collections::HashMap;
@@ -532,7 +534,6 @@ async fn simulate_starknet_transaction_by_hash(
                         },
                     )
                     .await?;
-
                     // Build and return simulation result
                     return Ok(TransactionSimulationResult {
                         simulation_result,
@@ -765,12 +766,23 @@ fn validate_call(
     tx_context: Arc<TransactionContext>,
     initial_gas: u64,
 ) -> Result<CallInfo, TransactionSimulationError> {
-    let mut resources = ExecutionResources::default();
+    let mut validation_context = EntryPointExecutionContext::new(
+        tx_context.clone(),
+        ExecutionMode::Validate,
+        false,
+        SierraGasRevertTracker::new(GasAmount(initial_gas)),
+    );
 
-    let mut validation_context =
-        EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Validate, false)?;
-
+    let tracked_resource = vec![TrackedResource::SierraGas];
+    validation_context.tracked_resource_stack = tracked_resource;
     let class_hash = state.get_class_hash_at(storage_address)?;
+    let reverted_info = ExecutionRevertInfo(vec![EntryPointRevertInfo::new(
+        storage_address,
+        class_hash,
+        0,
+        0,
+    )]);
+    validation_context.revert_infos = reverted_info;
 
     let mut validate_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
@@ -788,7 +800,6 @@ fn validate_call(
         &mut validate_call,
         state,
         cheatnet_state,
-        &mut resources,
         &mut validation_context,
     );
 
@@ -805,14 +816,14 @@ fn validate_call(
             ));
         }
     };
-    let contract_class = state.get_compiled_contract_class(class_hash)?;
+    let contract_class = state.get_compiled_class(class_hash)?;
     if matches!(
         contract_class,
         BlockifierContractClass::V0(_) | BlockifierContractClass::V1(_)
     ) {
-        let expected_retdata = retdata![Felt::from_hex(constants::VALIDATE_RETDATA)?];
+        let expected_retdata = vec![*constants::VALIDATE_RETDATA];
 
-        if validate_call_info.execution.retdata != expected_retdata {
+        if validate_call_info.execution.retdata.0 != expected_retdata {
             return Err(TransactionSimulationError::TransactionExecutionError(
                 TransactionExecutionError::InvalidValidateReturnData {
                     actual: validate_call_info.execution.retdata,
@@ -834,9 +845,23 @@ fn execute_call(
     tx_context: Arc<TransactionContext>,
     initial_gas: u64,
 ) -> Result<CallInfo, TransactionSimulationError> {
-    let mut resources = ExecutionResources::default();
-    let mut execution_context =
-        EntryPointExecutionContext::new(tx_context.clone(), ExecutionMode::Execute, false)?;
+    let mut execution_context = EntryPointExecutionContext::new(
+        tx_context.clone(),
+        ExecutionMode::Execute,
+        false,
+        SierraGasRevertTracker::new(GasAmount(initial_gas)),
+    );
+
+    let tracked_resource = vec![TrackedResource::SierraGas];
+    execution_context.tracked_resource_stack = tracked_resource;
+    let class_hash = state.get_class_hash_at(storage_address)?;
+    let reverted_info = ExecutionRevertInfo(vec![EntryPointRevertInfo::new(
+        storage_address,
+        class_hash,
+        0,
+        0,
+    )]);
+    execution_context.revert_infos = reverted_info;
 
     let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
@@ -873,7 +898,6 @@ fn execute_call(
         &mut execute_call,
         state,
         cheatnet_state,
-        &mut resources,
         &mut execution_context,
     )?;
 

@@ -3,7 +3,7 @@ pub mod abi_processor;
 pub mod felt252_serde;
 pub mod felt252_vec_compression;
 pub mod utils;
-use anyhow::{anyhow, Chain, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use ethers::providers::{Http, Provider as EthProvider};
 use ethers::types::H256;
@@ -15,9 +15,12 @@ use starknet::core::types::{
     BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem,
     ExecutionResult, Felt, StorageEntry,
 };
-use starknet_api::{
-    core::ChainId,
-    transaction::{Resource, ResourceBounds, ResourceBoundsMapping},
+use starknet_api::block::GasPrice;
+use starknet_api::core::ChainId;
+use starknet_api::execution_resources::GasAmount;
+use starknet_api::transaction::fields::{
+    AllResourceBounds, DeprecatedResourceBoundsMapping, Resource, ResourceBounds,
+    ValidResourceBounds,
 };
 use starknet_old::core::types::{self as starknet_old_types};
 use starknet_providers::{
@@ -201,20 +204,6 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     }
 }
 
-//pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<ChainId> {
-//    match chain_id {
-//        "0x534e5f4d41494e" => Ok(ChainId::Mainnet),
-//        "SN_MAIN" => Ok(ChainId::Mainnet),
-//        "sn_main" => Ok(ChainId::Mainnet),
-//        "0x534e5f5345504f4c4941" => Ok(ChainId::Sepolia),
-//        "SN_SEPOLIA" => Ok(ChainId::Sepolia),
-//        "sn_sepolia" => Ok(ChainId::Sepolia),
-//        "eth_main" => Ok(ChainId::Other("eth_main".to_string())),
-//        "eth_sepolia" => Ok(ChainId::Other("eth_sepolia".to_string())),
-//        _ => Err(anyhow!("Invalid chain id")),
-//    }
-//}
-
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
     match chain_id.to_lowercase().as_str() {
         // Starknet
@@ -340,39 +329,71 @@ pub fn vec_field_element_to_vec_felt(
 
 pub fn old_resource_bounds_mapping_to_resource_bounds_b_tree_map(
     resource_bounds_mapping: &starknet_old_types::ResourceBoundsMapping,
-) -> ResourceBoundsMapping {
-    ResourceBoundsMapping(BTreeMap::from([
+) -> DeprecatedResourceBoundsMapping {
+    DeprecatedResourceBoundsMapping(BTreeMap::from([
         (
             Resource::L1Gas,
             ResourceBounds {
-                max_amount: resource_bounds_mapping.l1_gas.max_amount,
-                max_price_per_unit: resource_bounds_mapping.l1_gas.max_price_per_unit,
+                max_amount: GasAmount(resource_bounds_mapping.l1_gas.max_amount),
+                max_price_per_unit: GasPrice(resource_bounds_mapping.l1_gas.max_price_per_unit),
             },
         ),
         (
             Resource::L2Gas,
             ResourceBounds {
-                max_amount: resource_bounds_mapping.l2_gas.max_amount,
-                max_price_per_unit: resource_bounds_mapping.l2_gas.max_price_per_unit,
+                max_amount: GasAmount(resource_bounds_mapping.l2_gas.max_amount),
+                max_price_per_unit: GasPrice(resource_bounds_mapping.l2_gas.max_price_per_unit),
             },
         ),
     ]))
 }
 
-pub fn max_resource_bounds_map() -> ResourceBoundsMapping {
-    ResourceBoundsMapping(BTreeMap::from([
+pub fn old_resource_bounds_mapping_to_valid_resource_bounds(
+    resource_bounds_mapping: &starknet_old_types::ResourceBoundsMapping,
+) -> ValidResourceBounds {
+    let l1_gas = ResourceBounds {
+        max_amount: GasAmount(resource_bounds_mapping.l1_gas.max_amount),
+        max_price_per_unit: GasPrice(resource_bounds_mapping.l1_gas.max_price_per_unit),
+    };
+
+    let l2_gas = ResourceBounds {
+        max_amount: GasAmount(resource_bounds_mapping.l2_gas.max_amount),
+        max_price_per_unit: GasPrice(resource_bounds_mapping.l2_gas.max_price_per_unit),
+    };
+
+    if l2_gas.is_zero() {
+        ValidResourceBounds::L1Gas(l1_gas)
+    } else {
+        ValidResourceBounds::AllResources(AllResourceBounds {
+            l1_gas,
+            l2_gas,
+            l1_data_gas: ResourceBounds::default(),
+        })
+    }
+}
+
+pub fn old_resource_bounds_mapping_to_default_valid_resource_bounds() -> ValidResourceBounds {
+    ValidResourceBounds::AllResources(AllResourceBounds {
+        l1_gas: ResourceBounds::default(),
+        l2_gas: ResourceBounds::default(),
+        l1_data_gas: ResourceBounds::default(),
+    })
+}
+
+pub fn max_resource_bounds_map() -> DeprecatedResourceBoundsMapping {
+    DeprecatedResourceBoundsMapping(BTreeMap::from([
         (
             Resource::L1Gas,
             ResourceBounds {
-                max_amount: u64::MAX,
-                max_price_per_unit: u128::MAX,
+                max_amount: GasAmount(u64::MAX),
+                max_price_per_unit: GasPrice(u128::MAX),
             },
         ),
         (
             Resource::L2Gas,
             ResourceBounds {
-                max_amount: u64::MAX,
-                max_price_per_unit: u128::MAX,
+                max_amount: GasAmount(u64::MAX),
+                max_price_per_unit: GasPrice(u128::MAX),
             },
         ),
     ]))
@@ -524,7 +545,7 @@ pub async fn fetch_tx_block_number_from_voyager(
     chain_id: &ChainId,
     tx_hash: &str,
 ) -> anyhow::Result<u64> {
-    let voyager_api_url = get_voyager_api_url(&chain_id)
+    let voyager_api_url = get_voyager_api_url(chain_id)
         .map(|url| url.to_string())
         .ok_or_else(|| anyhow::anyhow!("Invalid chain id"))?;
     let client = reqwest::Client::new();
@@ -574,7 +595,7 @@ async fn find_closest_block(
     while low <= high {
         let mid = (low + high) / 2;
 
-        if let Some(mid_timestamp) = get_block_timestamp(rpc_client, mid).await.ok() {
+        if let Ok(mid_timestamp) = get_block_timestamp(rpc_client, mid).await {
             if mid_timestamp >= target_timestamp && mid_timestamp <= target_timestamp + 60 {
                 return Ok(mid);
             } else if mid_timestamp < target_timestamp {
@@ -596,7 +617,7 @@ async fn get_block_timestamp(
     block_number: u64,
 ) -> anyhow::Result<u64> {
     let block = rpc_client
-        .get_block_with_tx_hashes(&starknet_old_types::BlockId::Number(block_number))
+        .get_block_with_tx_hashes(starknet_old_types::BlockId::Number(block_number))
         .await?;
     match block {
         starknet_old_types::MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),

@@ -6,7 +6,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::{collections::HashMap, fs::File};
 use tracing::error;
-use uuid::Uuid;
 
 pub fn create_files_from_map(
     source_code: &HashMap<String, String>,
