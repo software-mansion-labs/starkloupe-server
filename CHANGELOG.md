@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.65] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.65)
+
+- Upgrade foundry, blockifier, cairo and staknet dependencies
+
 ### [0.0.64] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.64)
 
 - Change scarb output from inherted() to piped()
