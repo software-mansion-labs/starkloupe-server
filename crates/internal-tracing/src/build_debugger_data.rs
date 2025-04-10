@@ -34,11 +34,15 @@ pub fn build_contract_call_debugger_data(
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
 ) -> Result<(ContractCallDebuggerData, u32)> {
-    let mappings = Mappings::new(vm_memory, full_class_debugger_data.contract_class.clone())
-        .map_err(|e| {
-            info!("Failed to create mappings: {:?}", e);
-            e
-        })?;
+    let mappings = Mappings::new(
+        vm_trace,
+        vm_memory,
+        full_class_debugger_data.contract_class.clone(),
+    )
+    .map_err(|e| {
+        info!("Failed to create mappings: {:?}", e);
+        e
+    })?;
 
     let (execution_trace, root_function_call_id) = get_internal_call_trace(
         &mappings,
