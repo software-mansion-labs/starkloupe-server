@@ -82,14 +82,22 @@ pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<us
     map
 }
 
-// Generates two mappings based on the given starknet foundry relocated trace entries and compiled CASM instructions:
-// 1. A mapping from PC values (from the starkent relocated trace) to the corresponding instruction indices.
-// 2. A mapping from PC values (from the starkent relocated trace) to the instruction system call expression.
-pub fn get_pc_mappings(
+pub fn get_pc_mappings(instructions: &[CasmInstruction]) -> HashMap<usize, usize> {
+    let mut pc_to_inst_indexes_map = HashMap::new();
+    let mut offset = 1;
+    for (i, inst) in instructions.iter().enumerate() {
+        pc_to_inst_indexes_map.insert(offset, i);
+        offset += inst.body.op_size();
+    }
+    pc_to_inst_indexes_map
+}
+
+// Generates mappings based on the given starknet foundry relocated trace entries and compiled CASM instructions:
+// A mapping from PC values (from the starkent relocated trace) to the instruction system call expression.
+pub fn get_pc_sys_call_mappings(
     relocated_trace: &[RelocatedTraceEntry],
     casm_instructions: &[CasmInstruction],
-) -> (HashMap<usize, usize>, HashMap<usize, CellExpression>) {
-    let mut pc_to_inst_indexes_map = HashMap::new();
+) -> HashMap<usize, CellExpression> {
     let mut pc_to_syscalls = HashMap::new();
 
     // Compute cumulative offsets for each instruction based on its operational size.
@@ -104,9 +112,7 @@ pub fn get_pc_mappings(
         let pc = trace_entry.pc;
 
         if let Some(index) = find_instruction_index(pc, &offsets) {
-            // Map the trace PC to its instruction index.
-            pc_to_inst_indexes_map.insert(pc, index);
-
+            // Map sys calls
             let inst = &casm_instructions[index];
             for hint in &inst.hints {
                 // If a system call hint is found, map the trace PC to system call CellExpression.
@@ -117,7 +123,7 @@ pub fn get_pc_mappings(
         }
     }
 
-    (pc_to_inst_indexes_map, pc_to_syscalls)
+    pc_to_syscalls
 }
 
 // Finds the index of the instruction corresponding to a given PC value using the offsets vector.
