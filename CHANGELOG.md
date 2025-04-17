@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.66] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.66)
+
+- Fic the pc to casm instraction mapping in case casm instraction is system call
+
 ### [0.0.65] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.65)
 
 - Upgrade foundry, blockifier, cairo and staknet dependencies
