@@ -14,6 +14,7 @@ use cairo_lang_starknet_classes::abi::{Event, EventField};
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
+use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::{DecodedValue, DecodedValueType};
 use itertools::chain;
 use itertools::Itertools;
@@ -91,26 +92,49 @@ pub fn get_pc_mappings(instructions: &[CasmInstruction]) -> HashMap<usize, usize
     pc_to_inst_indexes_map
 }
 
-pub fn get_pc_to_ptr_sys_call_mappings(
+// Generates mappings based on the given starknet foundry relocated trace entries and compiled CASM instructions:
+// A mapping from PC values (from the starkent relocated trace) to the instruction system call expression.
+pub fn get_pc_sys_call_mappings(
+    relocated_trace: &[RelocatedTraceEntry],
     casm_instructions: &[CasmInstruction],
-    pc_to_inst_indexes_map: &HashMap<usize, usize>,
 ) -> HashMap<usize, CellExpression> {
-    pc_to_inst_indexes_map
-        .iter()
-        .filter_map(|(&pc, &casm_index)| {
-            casm_instructions
-                .get(casm_index)?
-                .hints
-                .iter()
-                .find_map(|hint| {
-                    if let Hint::Starknet(StarknetHint::SystemCall { system }) = hint {
-                        Some((pc, CellExpression::from_res_operand(system.clone())))
-                    } else {
-                        None
-                    }
-                })
-        })
-        .collect()
+    let mut pc_to_syscalls = HashMap::new();
+
+    // Compute cumulative offsets for each instruction based on its operational size.
+    let mut offset = 0;
+    let mut offsets = vec![offset];
+    for inst in casm_instructions.iter() {
+        offset += inst.body.op_size();
+        offsets.push(offset);
+    }
+
+    for trace_entry in relocated_trace {
+        let pc = trace_entry.pc;
+
+        if let Some(index) = find_instruction_index(pc, &offsets) {
+            // Map sys calls
+            let inst = &casm_instructions[index];
+            for hint in &inst.hints {
+                // If a system call hint is found, map the trace PC to system call CellExpression.
+                if let Hint::Starknet(StarknetHint::SystemCall { system }) = hint {
+                    pc_to_syscalls.insert(pc, CellExpression::from_res_operand(system.clone()));
+                }
+            }
+        }
+    }
+
+    pc_to_syscalls
+}
+
+// Finds the index of the instruction corresponding to a given PC value using the offsets vector.
+pub fn find_instruction_index(pc: usize, offsets: &[usize]) -> Option<usize> {
+    let index = offsets.partition_point(|&x| x <= pc).saturating_sub(1);
+
+    if index < offsets.len() - 1 && pc < offsets[index + 1] {
+        Some(index)
+    } else {
+        None
+    }
 }
 
 #[derive(Serialize, Debug)]

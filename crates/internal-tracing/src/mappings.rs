@@ -39,7 +39,7 @@ use crate::{
     call_trace::{ContractCall, ESysCall, EventSysCall, InternalFnCallIO},
     utils::{
         compile_sierra_contract_class, find_event_by_selector, get_pc_mappings,
-        get_pc_to_ptr_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
+        get_pc_sys_call_mappings, is_panic_result, make_casm_to_sierra_map,
     },
 };
 use starknet_types_core::felt::{Felt, NonZeroFelt};
@@ -59,7 +59,11 @@ pub struct Mappings {
 }
 
 impl Mappings {
-    pub fn new(relocated_memory: &[Option<Felt>], contract_class: ContractClass) -> Result<Self> {
+    pub fn new(
+        relocated_trace_entry: &[RelocatedTraceEntry],
+        relocated_memory: &[Option<Felt>],
+        contract_class: ContractClass,
+    ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
             warn!("Failed to extract sierra program: {:?}", e);
             e
@@ -95,9 +99,8 @@ impl Mappings {
 
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
         let pc_to_inst_indexes_map = get_pc_mappings(&casm_program.instructions);
-
         let pc_to_ptr_sys_calls =
-            get_pc_to_ptr_sys_call_mappings(&casm_program.instructions, &pc_to_inst_indexes_map);
+            get_pc_sys_call_mappings(relocated_trace_entry, &casm_program.instructions);
         let memory_map: HashMap<usize, BigInt> = relocated_memory
             .iter()
             .enumerate()
