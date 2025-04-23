@@ -21,7 +21,6 @@ use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::error;
-use url::Url;
 use walnut_shared::{extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -125,7 +124,7 @@ pub async fn simulate_transaction(
             error!("Simulation task panicked: {:?}", join_err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulation transaction".to_string(),
+                "Failed to simulation transaction. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }
@@ -133,7 +132,7 @@ pub async fn simulate_transaction(
             error!("Simulation transaction request timed out");
             (
                 StatusCode::REQUEST_TIMEOUT,
-                "The server took too long to respond".to_string(),
+                "The server timed out. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }
@@ -196,7 +195,7 @@ pub async fn simulate_transaction_by_hash_handler(
             error!("Simulation of tx panicked: {:?}", join_err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulation transaction".to_string(),
+                "Failed to simulation transaction. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }
@@ -207,7 +206,7 @@ pub async fn simulate_transaction_by_hash_handler(
             );
             (
                 StatusCode::REQUEST_TIMEOUT,
-                "The server took too long to respond".to_string(),
+                "The server timed out. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }

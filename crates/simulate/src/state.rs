@@ -16,9 +16,13 @@ use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::{
     BlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
-    DeployedContractItem, Felt, FlattenedSierraClass,
+    DeployedContractItem, EntryPointsByType, Felt, FlattenedSierraClass,
+    MaybePendingBlockWithTxHashes, SierraEntryPoint, StarknetError, TransactionTrace,
 };
-use starknet::core::types::{EntryPointsByType, SierraEntryPoint};
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider, ProviderError, Url,
+};
 use starknet_api::block::BlockInfo;
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use starknet_api::contract_class::{EntryPointType, SierraVersion};
@@ -27,22 +31,13 @@ use starknet_api::deprecated_contract_class::{
     ContractClass as DeprecatedContractClass, EntryPointV0,
 };
 use starknet_api::state::StorageKey;
-use starknet_old::core::types::{self as starknet_old_types};
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::Provider;
-use starknet_providers::{JsonRpcClient, ProviderError};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 use tracing::error;
 use universal_sierra_compiler_api::{compile_sierra, SierraType};
-use url::Url;
 use verification::s3::fetch_verified_class_hash_with_contract_class_data;
-use walnut_shared::{
-    block_id_to_old_block_id, felt_to_field_element, field_element_to_felt,
-    old_declared_classes_to_declared_classes, old_deploy_contracts_to_deploy_contracts,
-    old_storage_diffs_to_storage_diffs,
-};
+use walnut_shared::create_rpc_client_from_url;
 
 #[derive(Debug, Default)]
 pub struct InMemoryForkCache {
@@ -190,9 +185,9 @@ impl ForkStateReader {
     ) -> anyhow::Result<Self> {
         let block_id = BlockId::Number(block_number);
         let adjusted_block_number = block_number - 1;
-
+        let client = create_rpc_client_from_url(url.clone());
         let mut fork_state_reader = ForkStateReader {
-            client: JsonRpcClient::new(HttpTransport::new(url.clone())),
+            client,
             block_number,
             adjusted_block_number,
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
@@ -204,10 +199,7 @@ impl ForkStateReader {
             fork_state_reader
                 .prepare_storage_view(block_id, transaction_index)
                 .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Unable to get trace block transactions from node provider: {}",
-                        e
-                    )
+                    anyhow::anyhow!("Unable to get trace block transactions from node provider",)
                 })?;
         }
         Ok(fork_state_reader)
@@ -227,10 +219,8 @@ impl ForkStateReader {
         transaction_index: usize,
     ) -> Result<(), StateError> {
         let results = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(
-                self.client
-                    .trace_block_transactions(block_id_to_old_block_id(block_id)),
-            )
+            tokio::runtime::Handle::current()
+                .block_on(self.client.trace_block_transactions(block_id))
         })
         .map_err(|err| {
             StateError::StateReadError(format!(
@@ -243,68 +233,44 @@ impl ForkStateReader {
                 break;
             }
             match &result.trace_root {
-                starknet_old_types::TransactionTrace::Invoke(invoke_trace) => {
+                TransactionTrace::Invoke(invoke_trace) => {
                     if let Some(state_diff) = &invoke_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
                         let declared = &state_diff.declared_classes;
                         let deployed = &state_diff.deployed_contracts;
-                        self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
-                            contract_storage_diff.to_vec(),
-                        ));
-                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
-                            deployed.to_vec(),
-                        ));
-                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
-                            declared.to_vec(),
-                        ));
+                        self.collect_storage_diffs(&contract_storage_diff.to_vec());
+                        self.collect_deploy_contract(&deployed.to_vec());
+                        self.collect_declared_classes(&declared.to_vec());
                     }
                 }
-                starknet_old_types::TransactionTrace::Declare(declare_trace) => {
+                TransactionTrace::Declare(declare_trace) => {
                     if let Some(state_diff) = &declare_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
                         let declared = &state_diff.declared_classes;
                         let deployed = &state_diff.deployed_contracts;
-                        self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
-                            contract_storage_diff.to_vec(),
-                        ));
-                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
-                            deployed.to_vec(),
-                        ));
-                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
-                            declared.to_vec(),
-                        ));
+                        self.collect_storage_diffs(&contract_storage_diff.to_vec());
+                        self.collect_deploy_contract(&deployed.to_vec());
+                        self.collect_declared_classes(&declared.to_vec());
                     }
                 }
-                starknet_old_types::TransactionTrace::DeployAccount(deploy_trace) => {
+                TransactionTrace::DeployAccount(deploy_trace) => {
                     if let Some(state_diff) = &deploy_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
                         let declared = &state_diff.declared_classes;
                         let deployed = &state_diff.deployed_contracts;
-                        self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
-                            contract_storage_diff.to_vec(),
-                        ));
-                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
-                            deployed.to_vec(),
-                        ));
-                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
-                            declared.to_vec(),
-                        ));
+                        self.collect_storage_diffs(&contract_storage_diff.to_vec());
+                        self.collect_deploy_contract(&deployed.to_vec());
+                        self.collect_declared_classes(&declared.to_vec());
                     }
                 }
-                starknet_old_types::TransactionTrace::L1Handler(l1handler_trace) => {
+                TransactionTrace::L1Handler(l1handler_trace) => {
                     if let Some(state_diff) = &l1handler_trace.state_diff {
                         let contract_storage_diff = &state_diff.storage_diffs;
                         let declared = &state_diff.declared_classes;
                         let deployed = &state_diff.deployed_contracts;
-                        self.collect_storage_diffs(&old_storage_diffs_to_storage_diffs(
-                            contract_storage_diff.to_vec(),
-                        ));
-                        self.collect_deploy_contract(&old_deploy_contracts_to_deploy_contracts(
-                            deployed.to_vec(),
-                        ));
-                        self.collect_declared_classes(&old_declared_classes_to_declared_classes(
-                            declared.to_vec(),
-                        ));
+                        self.collect_storage_diffs(&contract_storage_diff.to_vec());
+                        self.collect_deploy_contract(&deployed.to_vec());
+                        self.collect_declared_classes(&declared.to_vec());
                     }
                 }
             }
@@ -441,10 +407,8 @@ impl ForkStateReader {
         let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
 
         let contract_class = match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.client.get_class(
-                block_id_to_old_block_id(block_id),
-                felt_to_field_element(Felt::from_(class_hash)),
-            ))
+            tokio::runtime::Handle::current()
+                .block_on(self.client.get_class(block_id, Felt::from_(class_hash)))
         }) {
             Ok(contract_class_json) => {
                 let contract_class: ContractClassStarknet = serde_json::from_value(
@@ -461,9 +425,9 @@ impl ForkStateReader {
 
                 Ok(contract_class)
             }
-            Err(ProviderError::StarknetError(
-                starknet_old_types::StarknetError::ClassHashNotFound,
-            )) => Err(StateError::UndeclaredClassHash(class_hash)),
+            Err(ProviderError::StarknetError(StarknetError::ClassHashNotFound)) => {
+                Err(StateError::UndeclaredClassHash(class_hash))
+            }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
             Err(x) => Err(StateError::StateReadError(format!(
                 "Unable to get compiled class at {class_hash} from fork ({x})"
@@ -576,17 +540,14 @@ impl BlockInfoReader for ForkStateReader {
         }
 
         match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(
-                self.client
-                    .get_block_with_tx_hashes(block_id_to_old_block_id(self.block_id())),
-            )
+            tokio::runtime::Handle::current()
+                .block_on(self.client.get_block_with_tx_hashes(self.block_id()))
         }) {
-            Ok(starknet_old_types::MaybePendingBlockWithTxHashes::Block(block)) => {
+            Ok(MaybePendingBlockWithTxHashes::Block(block)) => {
                 let block_info = BlockInfo {
                     block_number: BlockNumber(block.block_number),
-                    sequencer_address: field_element_to_felt(block.sequencer_address)
-                        .try_into()
-                        .unwrap(),
+                    sequencer_address: ContractAddress::try_from(block.sequencer_address)
+                        .unwrap_or_default(),
                     block_timestamp: BlockTimestamp(block.timestamp),
                     gas_prices: SerializableGasPrices::default().into(),
                     use_kzg_da: true,
@@ -598,7 +559,7 @@ impl BlockInfoReader for ForkStateReader {
 
                 Ok(block_info)
             }
-            Ok(starknet_old_types::MaybePendingBlockWithTxHashes::PendingBlock(_)) => {
+            Ok(MaybePendingBlockWithTxHashes::PendingBlock(_)) => {
                 unreachable!("Pending block is not be allowed at the configuration level")
             }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
@@ -625,20 +586,19 @@ impl StateReader for ForkStateReader {
 
         match tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(self.client.get_storage_at(
-                felt_to_field_element(Felt::from_(contract_address)),
-                felt_to_field_element(Felt::from_(*key.0.key())),
-                block_id_to_old_block_id(self.adjusted_block_id()),
+                Felt::from_(contract_address),
+                Felt::from_(*key.0.key()),
+                self.adjusted_block_id(),
             ))
         }) {
             Ok(value) => {
-                let value_sf = field_element_to_felt(value);
                 self.in_memory_fork_cache
                     .borrow_mut()
-                    .cache_storage_at(contract_address, key, value_sf);
-                Ok(value_sf)
+                    .cache_storage_at(contract_address, key, value);
+                Ok(value)
             }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
-            Err(ProviderError::StarknetError(starknet_old_types::StarknetError::ContractNotFound)) => Ok(Default::default()),
+            Err(ProviderError::StarknetError(StarknetError::ContractNotFound)) => Ok(Default::default()),
             Err(x) => Err(StateReadError(format!(
                 "Unable to get storage at address: {contract_address:?} and key: {key:?} from fork ({x})"
             ))),
@@ -655,22 +615,22 @@ impl StateReader for ForkStateReader {
         }
 
         match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.client.get_nonce(
-                block_id_to_old_block_id(self.adjusted_block_id()),
-                felt_to_field_element(Felt::from_(contract_address)),
-            ))
+            tokio::runtime::Handle::current().block_on(
+                self.client
+                    .get_nonce(self.adjusted_block_id(), Felt::from_(contract_address)),
+            )
         }) {
             Ok(nonce) => {
-                let nonce = Nonce(field_element_to_felt(nonce));
+                let nonce = Nonce(nonce);
                 self.in_memory_fork_cache
                     .borrow_mut()
                     .cache_nonce_at(contract_address, nonce);
                 Ok(nonce)
             }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
-            Err(ProviderError::StarknetError(
-                starknet_old_types::StarknetError::ContractNotFound,
-            )) => Ok(Default::default()),
+            Err(ProviderError::StarknetError(StarknetError::ContractNotFound)) => {
+                Ok(Default::default())
+            }
             Err(x) => Err(StateReadError(format!(
                 "Unable to get nonce at {contract_address:?} from fork ({x})"
             ))),
@@ -688,21 +648,21 @@ impl StateReader for ForkStateReader {
         }
 
         match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.client.get_class_hash_at(
-                block_id_to_old_block_id(self.adjusted_block_id()),
-                felt_to_field_element(Felt::from_(contract_address)),
-            ))
+            tokio::runtime::Handle::current().block_on(
+                self.client
+                    .get_class_hash_at(self.adjusted_block_id(), Felt::from_(contract_address)),
+            )
         }) {
             Ok(class_hash) => {
-                let class_hash = ClassHash(field_element_to_felt(class_hash));
+                let class_hash = ClassHash(class_hash);
                 self.in_memory_fork_cache
                     .borrow_mut()
                     .cache_class_hash_at(contract_address, class_hash);
                 Ok(class_hash)
             }
-            Err(ProviderError::StarknetError(
-                starknet_old_types::StarknetError::ContractNotFound,
-            )) => Ok(Default::default()),
+            Err(ProviderError::StarknetError(StarknetError::ContractNotFound)) => {
+                Ok(Default::default())
+            }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
             Err(x) => Err(StateReadError(format!(
                 "Unable to get class hash at {contract_address:?} from fork ({x})"

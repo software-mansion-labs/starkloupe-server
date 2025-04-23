@@ -31,7 +31,7 @@ sqlx = { version = "0.7.2", features = [
   "time",
 ] }
 tower = { version = "0.4.13", features = ["timeout"] }
-tower-http = { version = "0.4.4", features = ["cors", "trace" ] }
+tower-http = { version = "0.4.4", features = ["cors", "trace"] }
 tokio = { version = "1.33.0", features = ["full"] }
 serde = { version = "1.0.163", features = ["derive"] }
 serde_json = "1.0.104"
@@ -86,14 +86,12 @@ ethers = "2.0.14"
 
 #starknet
 starknet = "0.14.0"
-starknet-providers = "0.10.0"
 starknet_api = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.13.5-modified-sierra-dep" }
 starknet-types-core = { version = "0.1.8", features = [
   "hash",
   "prime-bigint",
   "serde",
 ] }
-starknet-old = { package = "starknet", version = "0.10.0" }
 starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }
 
 blockifier = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.13.5-modified-sierra-dep", default-features = false, features = [
@@ -114,6 +112,11 @@ cairo-lang-starknet-classes = "2.11.2"
 cairo-lang-sierra-to-casm = "2.11.2"
 
 # Starknet Foundry
+#cheatnet = { path = "../walnut-starknet-foundry/crates/cheatnet/" }
+#runtime = { path = "../walnut-starknet-foundry/crates/runtime/" }
+#scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api"}
+#conversions = { path = "../walnut-starknet-foundry/crates/conversions"}
+#universal-sierra-compiler-api = { path = "../walnut-starknet-foundry/crates/universal-sierra-compiler-api"}
 cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }
 runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }
 scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }

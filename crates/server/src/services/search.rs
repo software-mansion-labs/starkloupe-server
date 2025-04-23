@@ -3,16 +3,15 @@ use ethers::providers::Middleware;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
+use starknet::providers::Provider;
 use starknet_api::core::ChainId;
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::Provider;
 use std::str::FromStr;
 use url::Url;
 use utoipa::ToSchema;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client,
-    create_rpc_client_from_url, felt_to_field_element, get_rpc_urls,
-    parse_transaction_hash_per_network, EChainId, ENetwork, ETransactionHashType,
+    create_rpc_client_from_url, get_rpc_urls, parse_transaction_hash_per_network, EChainId,
+    ENetwork, ETransactionHashType,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -112,9 +111,8 @@ pub async fn check_transaction(hash: &str, sources: &[ESourceType]) -> Option<Ve
                         }
                         ESourceType::RpcUrl(url) => create_rpc_client_from_url(url.clone()),
                     };
-                    let hash_field = felt_to_field_element(starknet_hash);
                     provider
-                        .get_transaction_status(hash_field)
+                        .get_transaction_status(starknet_hash)
                         .await
                         .ok()
                         .map(|_| Data {
@@ -164,7 +162,7 @@ pub async fn check_transaction(hash: &str, sources: &[ESourceType]) -> Option<Ve
 }
 
 pub async fn check_contract(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data>> {
-    let hash_field = felt_to_field_element(Felt::from_str(hash).ok()?);
+    let hash_felt = Felt::from_str(hash).ok()?;
 
     let mut futures: FuturesUnordered<_> = sources
         .iter()
@@ -186,8 +184,10 @@ pub async fn check_contract(hash: &str, sources: &[ESourceType]) -> Option<Vec<D
 
                 provider
                     .get_class_hash_at(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        hash_field,
+                        starknet::core::types::BlockId::Tag(
+                            starknet::core::types::BlockTag::Latest,
+                        ),
+                        hash_felt,
                     )
                     .await
                     .ok()
@@ -220,7 +220,7 @@ pub async fn check_contract(hash: &str, sources: &[ESourceType]) -> Option<Vec<D
 }
 
 pub async fn check_class(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data>> {
-    let hash_field = felt_to_field_element(Felt::from_str(hash).ok()?);
+    let hash_felt = Felt::from_str(hash).ok()?;
 
     let mut futures: FuturesUnordered<_> = sources
         .iter()
@@ -241,8 +241,10 @@ pub async fn check_class(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data
                 };
                 provider
                     .get_class(
-                        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-                        hash_field,
+                        starknet::core::types::BlockId::Tag(
+                            starknet::core::types::BlockTag::Latest,
+                        ),
+                        hash_felt,
                     )
                     .await
                     .map(|_| Data {

@@ -14,17 +14,18 @@ use crate::utils::{create_files_from_map, create_temp_directory, remove_walnut_d
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Postgres};
-use starknet::core::types::Felt;
-use starknet_old::core::types::{self as starknet_old_types};
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::{JsonRpcClient, Provider};
+use starknet::core::types::{BlockId, BlockTag, Felt};
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{error, info};
 use uuid::Uuid;
-use walnut_shared::{felt_to_field_element, field_element_to_felt, tuple_to_version_string};
+use walnut_shared::tuple_to_version_string;
 
 pub async fn verify_by_class_hash(
     db_pool: &Pool<Postgres>,
@@ -59,14 +60,11 @@ pub async fn verify_by_contract_address(
     let contract_address_felt =
         Felt::from_str(&contract_address).context("Contract address format is incorrect")?;
     let class_hash_felt = provider_client
-        .get_class_hash_at(
-            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-            felt_to_field_element(contract_address_felt),
-        )
+        .get_class_hash_at(BlockId::Tag(BlockTag::Latest), contract_address_felt)
         .await
         .context("Can't find the contract class on the network")?;
 
-    let class_hash = field_element_to_felt(class_hash_felt).to_fixed_hex_string();
+    let class_hash = class_hash_felt.to_fixed_hex_string();
 
     initiate_verification(
         db_pool,

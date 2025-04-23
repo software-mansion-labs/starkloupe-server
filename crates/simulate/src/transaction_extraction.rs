@@ -6,23 +6,17 @@ use blockifier::transaction::objects::{
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
-use runtime::starknet::context::SerializableGasPrices;
-use starknet::core::types::Felt;
-use starknet_api::block::BlockInfo;
+use starknet::core::types::{
+    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResult, Felt, InvokeTransaction,
+    MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
+};
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
-use starknet_old::core::types::{self as starknet_old_types, Event};
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::JsonRpcClient;
-use starknet_providers::Provider;
-use std::sync::Arc;
-use walnut_shared::felts_to_string;
-use walnut_shared::old_resource_bounds_mapping_to_valid_resource_bounds;
-use walnut_shared::vec_field_element_to_vec_felt;
-use walnut_shared::{
-    field_element_to_felt, old_resource_bounds_mapping_to_default_valid_resource_bounds,
-};
-
+use starknet_api::block::{BlockInfo, GasPriceVector, GasPrices, NonzeroGasPrice};
 use starknet_api::contract_address;
 use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
@@ -30,6 +24,12 @@ use starknet_api::transaction::fields::{
     Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
 };
 use starknet_api::transaction::{TransactionHash, TransactionVersion};
+use std::sync::Arc;
+use walnut_shared::felts_to_string;
+use walnut_shared::{
+    resource_bounds_mapping_to_default_valid_resource_bounds,
+    resource_bounds_mapping_to_valid_resource_bounds,
+};
 use walnut_shared::{ETH_FEE_TOKEN_ADDRESS, STRK_FEE_TOKEN_ADDRESS};
 
 use crate::transaction_info::TransactionInformation;
@@ -38,7 +38,7 @@ use crate::TransactionSimulationError;
 
 // TODO: Refactor this one
 pub fn extract_submitted_tx(
-    transaction: starknet_old_types::Transaction,
+    transaction: Transaction,
 ) -> Option<(
     Nonce,
     ContractAddress,
@@ -51,162 +51,121 @@ pub fn extract_submitted_tx(
     PaymasterData,
 )> {
     match transaction {
-        starknet_old_types::Transaction::Invoke(invoke_transaction) => match invoke_transaction {
-            starknet_old_types::InvokeTransaction::V0(tx) => Some((
+        Transaction::Invoke(invoke_transaction) => match invoke_transaction {
+            InvokeTransaction::V0(tx) => Some((
                 Nonce::default(),
-                field_element_to_felt(tx.contract_address)
-                    .try_into()
-                    .unwrap(),
+                ContractAddress::try_from(tx.contract_address).unwrap_or_default(),
                 EntryPointSelector::default(),
-                Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
+                Calldata(tx.calldata.into()),
                 TransactionVersion::ZERO,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                old_resource_bounds_mapping_to_default_valid_resource_bounds(),
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
-            starknet_old_types::InvokeTransaction::V1(tx) => Some((
-                Nonce(field_element_to_felt(tx.nonce)),
-                field_element_to_felt(tx.sender_address).try_into().unwrap(),
+            InvokeTransaction::V1(tx) => Some((
+                Nonce(tx.nonce),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
                 EntryPointSelector::default(),
-                Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
+                Calldata(tx.calldata.into()),
                 TransactionVersion::ONE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                old_resource_bounds_mapping_to_default_valid_resource_bounds(),
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
-            starknet_old_types::InvokeTransaction::V3(tx) => Some((
-                Nonce(field_element_to_felt(tx.nonce)),
-                field_element_to_felt(tx.sender_address).try_into().unwrap(),
+            InvokeTransaction::V3(tx) => Some((
+                Nonce(tx.nonce),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
                 EntryPointSelector::default(),
-                Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
+                Calldata(tx.calldata.into()),
                 TransactionVersion::THREE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                old_resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
-                PaymasterData(vec_field_element_to_vec_felt(tx.paymaster_data)),
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
+                PaymasterData(tx.paymaster_data),
             )),
         },
-        starknet_old_types::Transaction::Declare(declare_transaction) => {
-            match declare_transaction {
-                starknet_old_types::DeclareTransaction::V0(tx) => Some((
-                    Nonce::default(),
-                    field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    EntryPointSelector::default(),
-                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
-                    TransactionVersion::ZERO,
-                    TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
-                    PaymasterData::default(),
-                )),
-                starknet_old_types::DeclareTransaction::V1(tx) => Some((
-                    Nonce(field_element_to_felt(tx.nonce)),
-                    field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    EntryPointSelector::default(),
-                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
-                    TransactionVersion::ONE,
-                    TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
-                    PaymasterData::default(),
-                )),
-                starknet_old_types::DeclareTransaction::V2(tx) => Some((
-                    Nonce(field_element_to_felt(tx.nonce)),
-                    field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    EntryPointSelector::default(),
-                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
-                    TransactionVersion::TWO,
-                    TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                    old_resource_bounds_mapping_to_default_valid_resource_bounds(),
-                    PaymasterData::default(),
-                )),
-                starknet_old_types::DeclareTransaction::V3(tx) => Some((
-                    Nonce(field_element_to_felt(tx.nonce)),
-                    field_element_to_felt(tx.sender_address).try_into().unwrap(),
-                    EntryPointSelector::default(),
-                    Calldata(vec_field_element_to_vec_felt(vec![tx.class_hash]).into()),
-                    TransactionVersion::THREE,
-                    TransactionType::Declare,
-                    TransactionSignature(vec_field_element_to_vec_felt(tx.signature)),
-                    old_resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
-                    PaymasterData(vec_field_element_to_vec_felt(tx.paymaster_data)),
-                )),
-            }
-        }
-        starknet_old_types::Transaction::L1Handler(tx) => Some((
+        Transaction::Declare(declare_transaction) => match declare_transaction {
+            DeclareTransaction::V0(tx) => Some((
+                Nonce::default(),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
+                EntryPointSelector::default(),
+                Calldata(vec![tx.class_hash].into()),
+                TransactionVersion::ZERO,
+                TransactionType::Declare,
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_default_valid_resource_bounds(),
+                PaymasterData::default(),
+            )),
+            DeclareTransaction::V1(tx) => Some((
+                Nonce(tx.nonce),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
+                EntryPointSelector::default(),
+                Calldata(vec![tx.class_hash].into()),
+                TransactionVersion::ONE,
+                TransactionType::Declare,
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_default_valid_resource_bounds(),
+                PaymasterData::default(),
+            )),
+            DeclareTransaction::V2(tx) => Some((
+                Nonce(tx.nonce),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
+                EntryPointSelector::default(),
+                Calldata(vec![tx.class_hash].into()),
+                TransactionVersion::TWO,
+                TransactionType::Declare,
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_default_valid_resource_bounds(),
+                PaymasterData::default(),
+            )),
+            DeclareTransaction::V3(tx) => Some((
+                Nonce(tx.nonce),
+                ContractAddress::try_from(tx.sender_address).unwrap_or_default(),
+                EntryPointSelector::default(),
+                Calldata(vec![tx.class_hash].into()),
+                TransactionVersion::THREE,
+                TransactionType::Declare,
+                TransactionSignature(tx.signature),
+                resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
+                PaymasterData(tx.paymaster_data),
+            )),
+        },
+        Transaction::L1Handler(tx) => Some((
             Nonce(Felt::from(tx.nonce)),
-            field_element_to_felt(tx.contract_address)
-                .try_into()
-                .unwrap(),
-            EntryPointSelector(field_element_to_felt(tx.entry_point_selector)),
-            Calldata(vec_field_element_to_vec_felt(tx.calldata).into()),
+            ContractAddress::try_from(tx.contract_address).unwrap_or_default(),
+            EntryPointSelector(tx.entry_point_selector),
+            Calldata(tx.calldata.into()),
             TransactionVersion::ZERO,
             TransactionType::L1Handler,
             TransactionSignature::default(),
-            old_resource_bounds_mapping_to_default_valid_resource_bounds(),
+            resource_bounds_mapping_to_default_valid_resource_bounds(),
             PaymasterData::default(),
         )),
         _ => None,
     }
 }
 
-pub fn extract_block_number_transaction_receipt(
-    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
-) -> Option<u64> {
-    match transaction_receipt {
-        starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
-            starknet_old_types::TransactionReceipt::Invoke(invoke_receipt) => {
-                Some(invoke_receipt.block_number)
-            }
-            starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
-                Some(declare_receipt.block_number)
-            }
-            starknet_old_types::TransactionReceipt::L1Handler(l1_handler_receipt) => {
-                Some(l1_handler_receipt.block_number)
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 pub fn extract_execution_status_transaction_receipt(
-    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
-) -> Option<starknet_old_types::ExecutionResult> {
+    transaction_receipt: &TransactionReceipt,
+) -> Option<ExecutionResult> {
     match transaction_receipt {
-        starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
-            starknet_old_types::TransactionReceipt::Invoke(invoke_receipt) => {
-                Some(invoke_receipt.execution_result.clone())
-            }
-            starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
-                Some(declare_receipt.execution_result.clone())
-            }
-            _ => None,
-        },
+        TransactionReceipt::Invoke(invoke_receipt) => Some(invoke_receipt.execution_result.clone()),
+        TransactionReceipt::Declare(declare_receipt) => {
+            Some(declare_receipt.execution_result.clone())
+        }
         _ => None,
     }
 }
 
 pub fn extract_starkgate_event_transaction_receipt(
-    transaction_receipt: &starknet_old_types::MaybePendingTransactionReceipt,
+    transaction_receipt: &TransactionReceipt,
 ) -> Option<Event> {
     match transaction_receipt {
-        starknet_old_types::MaybePendingTransactionReceipt::Receipt(receipt) => match receipt {
-            starknet_old_types::TransactionReceipt::Invoke(invoke_receipt) => {
-                invoke_receipt.events.last().cloned()
-            }
-            starknet_old_types::TransactionReceipt::Declare(declare_receipt) => {
-                declare_receipt.events.last().cloned()
-            }
-            // TODO: Check this - maybe here we need all emited
-            starknet_old_types::TransactionReceipt::L1Handler(l1_handler_receipt) => {
-                l1_handler_receipt.events.last().cloned()
-            }
-            _ => None,
-        },
+        TransactionReceipt::Invoke(receipt) => receipt.events.last().cloned(),
+        TransactionReceipt::Declare(receipt) => receipt.events.last().cloned(),
+        TransactionReceipt::L1Handler(receipt) => receipt.events.last().cloned(),
         _ => None,
     }
 }
@@ -214,13 +173,13 @@ pub fn extract_starkgate_event_transaction_receipt(
 async fn fetch_block_with_txs(
     provider_client: &JsonRpcClient<HttpTransport>,
     block_number: u64,
-) -> Result<starknet_old_types::BlockWithTxs, TransactionSimulationError> {
-    let block_id = starknet_old_types::BlockId::Number(block_number);
+) -> Result<BlockWithTxs, TransactionSimulationError> {
+    let block_id = BlockId::Number(block_number);
     let block_with_txs = provider_client.get_block_with_txs(block_id).await;
 
     match block_with_txs {
-        Ok(starknet_old_types::MaybePendingBlockWithTxs::Block(block_txs)) => Ok(block_txs),
-        Ok(starknet_old_types::MaybePendingBlockWithTxs::PendingBlock(_)) => {
+        Ok(MaybePendingBlockWithTxs::Block(block_txs)) => Ok(block_txs),
+        Ok(MaybePendingBlockWithTxs::PendingBlock(_)) => {
             Err(TransactionSimulationError::PendingBlock(
                 "Pending block is not allowed at the configuration level".to_string(),
             ))
@@ -238,18 +197,55 @@ pub async fn extract_block_timestamp(
 }
 
 pub async fn extract_block_txs_info(
-    provider_client: &JsonRpcClient<HttpTransport>,
+    provider_client: &starknet::providers::jsonrpc::JsonRpcClient<
+        starknet::providers::jsonrpc::HttpTransport,
+    >,
     simulation_args: &SimulationArgs,
     block_number: u64,
 ) -> Result<(BlockInfo, usize, usize), TransactionSimulationError> {
     let block_txs = fetch_block_with_txs(provider_client, block_number).await?;
+    let gas_prices = GasPrices {
+        eth_gas_prices: GasPriceVector {
+            l1_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l1_gas_price.price_in_wei).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+
+            l1_data_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l1_data_gas_price.price_in_wei).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+
+            l2_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l2_gas_price.price_in_wei).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+        },
+
+        strk_gas_prices: GasPriceVector {
+            l1_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l1_gas_price.price_in_fri).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+
+            l1_data_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l1_data_gas_price.price_in_fri).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+
+            l2_gas_price: NonzeroGasPrice::try_from(
+                u128::try_from(block_txs.l2_gas_price.price_in_fri).unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+        },
+    };
+
     let block_info = BlockInfo {
         block_number: BlockNumber(block_txs.block_number),
-        sequencer_address: field_element_to_felt(block_txs.sequencer_address)
-            .try_into()
-            .unwrap(),
+        sequencer_address: ContractAddress::try_from(block_txs.sequencer_address)
+            .unwrap_or_default(),
         block_timestamp: BlockTimestamp(block_txs.timestamp),
-        gas_prices: SerializableGasPrices::default().into(),
+        gas_prices,
         use_kzg_da: true,
     };
     let total_txs_in_block = block_txs.transactions.len();
@@ -258,7 +254,7 @@ pub async fn extract_block_txs_info(
 }
 
 pub fn extract_transaction_index(
-    block_with_txs: &starknet_old_types::BlockWithTxs,
+    block_with_txs: &starknet::core::types::BlockWithTxs,
     simulation_args: &SimulationArgs,
 ) -> usize {
     for (index, tx) in block_with_txs.transactions.iter().enumerate() {
@@ -269,7 +265,7 @@ pub fn extract_transaction_index(
     0
 }
 
-fn match_transaction(tx: &starknet_old_types::Transaction, args: &SimulationArgs) -> bool {
+fn match_transaction(tx: &Transaction, args: &SimulationArgs) -> bool {
     let sender_address = *args.sender_address.0;
     let nonce = args.nonce.as_ref().map(|n| n.0);
     let version = args.transaction_version.0;
@@ -352,7 +348,7 @@ pub fn extract_transaction_contex(
                 only_query: false,
             },
             resource_bounds: resource_bounds
-                .unwrap_or_else(|| old_resource_bounds_mapping_to_default_valid_resource_bounds()),
+                .unwrap_or_else(|| resource_bounds_mapping_to_default_valid_resource_bounds()),
             tip: Default::default(),
             nonce_data_availability_mode: DataAvailabilityMode::L1,
             fee_data_availability_mode: DataAvailabilityMode::L1,

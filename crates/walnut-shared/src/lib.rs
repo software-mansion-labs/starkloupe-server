@@ -11,27 +11,18 @@ use num_bigint::BigInt;
 use num_traits::Num;
 use serde::Serialize;
 use serde_json::Value;
-use starknet::core::types::{
-    BlockId, BlockTag, ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem,
-    ExecutionResult, Felt, StorageEntry,
+use starknet::core::types::{BlockId, Felt, MaybePendingBlockWithTxHashes, ResourceBoundsMapping};
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider, Url,
 };
 use starknet_api::block::GasPrice;
 use starknet_api::core::ChainId;
 use starknet_api::execution_resources::GasAmount;
-use starknet_api::transaction::fields::{
-    AllResourceBounds, DeprecatedResourceBoundsMapping, Resource, ResourceBounds,
-    ValidResourceBounds,
-};
-use starknet_old::core::types::{self as starknet_old_types};
-use starknet_providers::{
-    jsonrpc::{HttpTransport, JsonRpcClient},
-    Provider,
-};
+use starknet_api::transaction::fields::{AllResourceBounds, ResourceBounds, ValidResourceBounds};
 use starknet_selector_decoder::get_selector;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
-use std::collections::BTreeMap;
 use std::str::FromStr;
-use url::Url;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Parameter {
@@ -97,11 +88,11 @@ pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> 
 pub fn rpc_url(chain_id: &ChainId) -> Url {
     match chain_id {
         ChainId::Mainnet => {
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
                 .unwrap()
         }
         ChainId::Sepolia => {
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
                 .unwrap()
         }
         _ => panic!("Invalid chain id"),
@@ -127,26 +118,26 @@ pub fn eth_rpc_url(chain_id: &ChainId) -> String {
 pub fn get_rpc_urls(chain_id: &EChainId) -> (Option<Url>, Option<String>) {
     match chain_id {
         EChainId::StarknetMainnet => (
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
             Some(
                 "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
             ),
 
         ),
         EChainId::StarknetSepolia => (
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
             Some(
                 "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
             ),
         ),
         EChainId::EthereumMainnet => (
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
             Some(
                 "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
             ),
         ),
         EChainId::EthereumSepolia => (
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
+            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
             Some(
                 "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
             ),
@@ -310,50 +301,17 @@ pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> Strin
     format!("{}-fp-{}", contract_call_id, fp)
 }
 
-pub fn felt_to_field_element(felt: Felt) -> starknet_old_types::FieldElement {
-    starknet_old_types::FieldElement::from_bytes_be(&felt.to_bytes_be()).unwrap()
-}
-
-pub fn field_element_to_felt(field_element: starknet_old_types::FieldElement) -> Felt {
-    Felt::from_bytes_be(&field_element.to_bytes_be())
-}
-
-pub fn vec_field_element_to_vec_felt(
-    field_elements: Vec<starknet_old_types::FieldElement>,
-) -> Vec<Felt> {
-    field_elements
-        .into_iter()
-        .map(|field_element| field_element_to_felt(field_element))
-        .collect()
-}
-
-pub fn old_resource_bounds_mapping_to_resource_bounds_b_tree_map(
-    resource_bounds_mapping: &starknet_old_types::ResourceBoundsMapping,
-) -> DeprecatedResourceBoundsMapping {
-    DeprecatedResourceBoundsMapping(BTreeMap::from([
-        (
-            Resource::L1Gas,
-            ResourceBounds {
-                max_amount: GasAmount(resource_bounds_mapping.l1_gas.max_amount),
-                max_price_per_unit: GasPrice(resource_bounds_mapping.l1_gas.max_price_per_unit),
-            },
-        ),
-        (
-            Resource::L2Gas,
-            ResourceBounds {
-                max_amount: GasAmount(resource_bounds_mapping.l2_gas.max_amount),
-                max_price_per_unit: GasPrice(resource_bounds_mapping.l2_gas.max_price_per_unit),
-            },
-        ),
-    ]))
-}
-
-pub fn old_resource_bounds_mapping_to_valid_resource_bounds(
-    resource_bounds_mapping: &starknet_old_types::ResourceBoundsMapping,
+pub fn resource_bounds_mapping_to_valid_resource_bounds(
+    resource_bounds_mapping: &ResourceBoundsMapping,
 ) -> ValidResourceBounds {
     let l1_gas = ResourceBounds {
         max_amount: GasAmount(resource_bounds_mapping.l1_gas.max_amount),
         max_price_per_unit: GasPrice(resource_bounds_mapping.l1_gas.max_price_per_unit),
+    };
+
+    let l1_data_gas = ResourceBounds {
+        max_amount: GasAmount(resource_bounds_mapping.l1_data_gas.max_amount),
+        max_price_per_unit: GasPrice(resource_bounds_mapping.l1_data_gas.max_price_per_unit),
     };
 
     let l2_gas = ResourceBounds {
@@ -367,107 +325,17 @@ pub fn old_resource_bounds_mapping_to_valid_resource_bounds(
         ValidResourceBounds::AllResources(AllResourceBounds {
             l1_gas,
             l2_gas,
-            l1_data_gas: ResourceBounds::default(),
+            l1_data_gas,
         })
     }
 }
 
-pub fn old_resource_bounds_mapping_to_default_valid_resource_bounds() -> ValidResourceBounds {
+pub fn resource_bounds_mapping_to_default_valid_resource_bounds() -> ValidResourceBounds {
     ValidResourceBounds::AllResources(AllResourceBounds {
         l1_gas: ResourceBounds::default(),
         l2_gas: ResourceBounds::default(),
         l1_data_gas: ResourceBounds::default(),
     })
-}
-
-pub fn max_resource_bounds_map() -> DeprecatedResourceBoundsMapping {
-    DeprecatedResourceBoundsMapping(BTreeMap::from([
-        (
-            Resource::L1Gas,
-            ResourceBounds {
-                max_amount: GasAmount(u64::MAX),
-                max_price_per_unit: GasPrice(u128::MAX),
-            },
-        ),
-        (
-            Resource::L2Gas,
-            ResourceBounds {
-                max_amount: GasAmount(u64::MAX),
-                max_price_per_unit: GasPrice(u128::MAX),
-            },
-        ),
-    ]))
-}
-
-pub fn block_id_to_old_block_id(block_id: BlockId) -> starknet_old_types::BlockId {
-    match block_id {
-        BlockId::Number(block_number) => starknet_old_types::BlockId::Number(block_number),
-        BlockId::Hash(block_hash) => {
-            starknet_old_types::BlockId::Hash(felt_to_field_element(block_hash))
-        }
-        BlockId::Tag(block_tag) => match block_tag {
-            BlockTag::Latest => {
-                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest)
-            }
-            BlockTag::Pending => {
-                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Pending)
-            }
-        },
-    }
-}
-
-pub fn old_execution_result_to_execution_result(
-    execution_result: starknet_old_types::ExecutionResult,
-) -> ExecutionResult {
-    match execution_result {
-        starknet_old_types::ExecutionResult::Succeeded => ExecutionResult::Succeeded,
-        starknet_old_types::ExecutionResult::Reverted { reason } => {
-            ExecutionResult::Reverted { reason }
-        }
-    }
-}
-
-pub fn old_storage_diffs_to_storage_diffs(
-    old_storage_diffs: Vec<starknet_old_types::ContractStorageDiffItem>,
-) -> Vec<ContractStorageDiffItem> {
-    old_storage_diffs
-        .into_iter()
-        .map(|old_storage_diff| ContractStorageDiffItem {
-            address: field_element_to_felt(old_storage_diff.address),
-            storage_entries: old_storage_diff
-                .storage_entries
-                .into_iter()
-                .map(|storage_entry| StorageEntry {
-                    key: field_element_to_felt(storage_entry.key),
-                    value: field_element_to_felt(storage_entry.value),
-                })
-                .collect(),
-        })
-        .collect()
-}
-
-pub fn old_deploy_contracts_to_deploy_contracts(
-    old_deploy_contracts: Vec<starknet_old_types::DeployedContractItem>,
-) -> Vec<DeployedContractItem> {
-    old_deploy_contracts
-        .into_iter()
-        .map(|old_deploy_contract| DeployedContractItem {
-            address: field_element_to_felt(old_deploy_contract.address),
-            class_hash: field_element_to_felt(old_deploy_contract.class_hash),
-        })
-        .collect()
-}
-
-pub fn old_declared_classes_to_declared_classes(
-    old_declared_classes: Vec<starknet_old_types::DeclaredClassItem>,
-) -> Vec<DeclaredClassItem> {
-    old_declared_classes
-        .into_iter()
-        .map(|old_declared_class| DeclaredClassItem {
-            class_hash: field_element_to_felt(old_declared_class.class_hash),
-            compiled_class_hash: field_element_to_felt(old_declared_class.compiled_class_hash),
-        })
-        .collect()
 }
 
 pub fn get_name_of_entry_point_selector(entry_point_selector: &Felt) -> Option<String> {
@@ -617,12 +485,10 @@ async fn get_block_timestamp(
     block_number: u64,
 ) -> anyhow::Result<u64> {
     let block = rpc_client
-        .get_block_with_tx_hashes(starknet_old_types::BlockId::Number(block_number))
+        .get_block_with_tx_hashes(BlockId::Number(block_number))
         .await?;
     match block {
-        starknet_old_types::MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),
-        starknet_old_types::MaybePendingBlockWithTxHashes::PendingBlock(pending_block) => {
-            Ok(pending_block.timestamp)
-        }
+        MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),
+        MaybePendingBlockWithTxHashes::PendingBlock(pending_block) => Ok(pending_block.timestamp),
     }
 }
