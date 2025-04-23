@@ -112,11 +112,6 @@ cairo-lang-starknet-classes = "2.11.2"
 cairo-lang-sierra-to-casm = "2.11.2"
 
 # Starknet Foundry
-#cheatnet = { path = "../walnut-starknet-foundry/crates/cheatnet/" }
-#runtime = { path = "../walnut-starknet-foundry/crates/runtime/" }
-#scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api"}
-#conversions = { path = "../walnut-starknet-foundry/crates/conversions"}
-#universal-sierra-compiler-api = { path = "../walnut-starknet-foundry/crates/universal-sierra-compiler-api"}
 cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }
 runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }
 scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "ee4f4c5ec45f0ee3dc186bf3e54a80c1aad04f57" }
