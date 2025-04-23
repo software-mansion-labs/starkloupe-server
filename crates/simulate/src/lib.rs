@@ -49,7 +49,7 @@ use utils::{
 };
 use walnut_shared::Parameter;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SimulationRawArgs {
     pub chain_id: Option<String>,
     pub rpc_url: Option<String>,
