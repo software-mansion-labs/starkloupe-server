@@ -6,6 +6,7 @@ pub mod events;
 pub mod function_calls;
 pub mod simulate;
 pub mod state;
+pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
@@ -39,6 +40,7 @@ use starknet_api::StarknetApiError;
 use starknet_old::core::types as starknet_old_types;
 use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
@@ -191,6 +193,7 @@ pub struct SimulationInfo {
     pub events: Vec<EmittedEvent>,
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
+    pub storage_changes: HashMap<u32, HashMap<String, (String, String)>>,
 }
 #[derive(Serialize, Debug)]
 pub struct ContractCallEvent {

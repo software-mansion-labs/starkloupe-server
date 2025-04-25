@@ -314,6 +314,10 @@ pub fn felt_to_field_element(felt: Felt) -> starknet_old_types::FieldElement {
     starknet_old_types::FieldElement::from_bytes_be(&felt.to_bytes_be()).unwrap()
 }
 
+pub fn hex_string_to_field_element(hex_string: &str) -> Result<starknet_old_types::FieldElement> {
+    starknet_old_types::FieldElement::from_hex_be(hex_string).map_err(|_| anyhow::anyhow!("Invalid field element"))
+}
+
 pub fn field_element_to_felt(field_element: starknet_old_types::FieldElement) -> Felt {
     Felt::from_bytes_be(&field_element.to_bytes_be())
 }

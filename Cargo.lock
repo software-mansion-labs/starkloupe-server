@@ -4660,6 +4660,7 @@ dependencies = [
  "smol_str",
  "sqlx",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "starknet-providers 0.10.0",
  "starknet-types-core",
  "starknet_api",
  "tracing",

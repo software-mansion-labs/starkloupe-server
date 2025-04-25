@@ -5,6 +5,7 @@ use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::events::EmittedEvent;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
+use crate::storage_changes::fetch_before_storage_changes;
 use crate::transaction_extraction::extract_block_number_transaction_receipt;
 use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
@@ -139,11 +140,21 @@ pub async fn simulate(
     let classes_debugger_data =
         fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
 
-    let (mut function_calls_map, event_calls_map) = create_function_calls_map(
-        &mut contract_calls_map,
-        &mut next_call_id,
-        &classes_debugger_data,
-    );
+    let (mut function_calls_map, event_calls_map, incomplete_storage_changes) =
+        create_function_calls_map(
+            &mut contract_calls_map,
+            &mut next_call_id,
+            &classes_debugger_data,
+            &cached_fork_state,
+        );
+
+    let storage_changes = fetch_before_storage_changes(
+        incomplete_storage_changes,
+        &contract_calls_map,
+        &provider_client,
+        block_number,
+    )
+    .await;
 
     filter_and_hide_unlinked_function_calls(&mut contract_calls_map, &function_calls_map);
 
@@ -239,6 +250,7 @@ pub async fn simulate(
             classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
             debugger_trace,
         }),
+        storage_changes,
     };
 
     Ok((
@@ -485,6 +497,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     classes_debugger_data: HashMap::new(),
                                     debugger_trace: Vec::new(),
                                 }),
+                                storage_changes: HashMap::new(),
                             };
                             return Ok(TransactionSimulationResult {
                                 simulation_result: simulation_info,

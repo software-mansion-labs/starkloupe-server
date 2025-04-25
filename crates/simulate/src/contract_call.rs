@@ -8,6 +8,7 @@ use serde::Serialize;
 use starknet::core::types::Felt;
 use std::borrow::Cow;
 use std::cell::Ref;
+use std::collections::HashMap;
 use verification::CodeLocation;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::get_name_of_entry_point_selector;

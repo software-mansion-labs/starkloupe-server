@@ -3,3 +3,6 @@ deps:
 
 postgres:
 	cd local && ./start-db-local.sh
+
+run:
+	cargo run --bin server

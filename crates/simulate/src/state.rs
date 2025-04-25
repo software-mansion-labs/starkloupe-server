@@ -119,6 +119,10 @@ impl InMemoryForkCache {
             _ => Err(StateError::UndeclaredClassHash(class_hash)),
         }
     }
+
+    pub fn get_storage_view(&self) -> HashMap<StorageEntry, Felt> {
+        self.storage_view.clone()
+    }
 }
 
 impl StateReader for InMemoryForkCache {
