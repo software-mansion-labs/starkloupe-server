@@ -96,7 +96,7 @@ starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selecto
 
 blockifier = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.13.5-modified-sierra-dep", default-features = false, features = [
   "testing",
-  "tracing",
+  "tracing", 
 ] }
 cairo-annotations = { version = "0.3.1" }
 cairo-vm = "1.0.2"

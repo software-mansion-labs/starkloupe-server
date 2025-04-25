@@ -301,6 +301,7 @@ pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> Strin
     format!("{}-fp-{}", contract_call_id, fp)
 }
 
+
 pub fn resource_bounds_mapping_to_valid_resource_bounds(
     resource_bounds_mapping: &ResourceBoundsMapping,
 ) -> ValidResourceBounds {

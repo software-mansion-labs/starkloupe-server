@@ -1,10 +1,18 @@
 use anyhow::Result;
+use blockifier::execution::{
+    deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
+};
 use cairo_lang_casm::{
+    ap_change::ApChange,
     cell_expression::CellExpression,
     hints::{Hint, StarknetHint},
     instructions::Instruction as CasmInstruction,
 };
-use cairo_lang_sierra::{extensions::gas::CostTokenType, program::Program};
+use cairo_lang_sierra::{
+    extensions::gas::CostTokenType,
+    ids::ConcreteTypeId,
+    program::{Program, TypeDeclaration},
+};
 use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
     metadata::{calc_metadata, MetadataComputationConfig},
@@ -15,7 +23,7 @@ use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use data_decoder::{DecodedValue, DecodedValueType};
+use data_decoder::{event_decoder::decode_event_datas, DecodedValue, DecodedValueType};
 use itertools::chain;
 use itertools::Itertools;
 use serde::Serialize;
@@ -23,8 +31,14 @@ use starknet::core::types::Felt;
 use starknet_api::abi::abi_utils::selector_from_name;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use tracing::error;
 use walnut_shared::felt252_serde::sierra_from_felt252s;
 use walnut_shared::utils::simplify_type_name;
+
+use crate::{
+    call_trace::{ContractCall, ESysCall, EventSysCall, StorageWrite},
+    mappings::get_value_from_cell_expression,
+};
 
 pub fn compile_sierra_contract_class(
     contract_class: ContractClass,
@@ -317,4 +331,136 @@ pub fn flatten_event_data_struct(decoded_values: Vec<DecodedValue>) -> Vec<Decod
             }
         })
         .collect()
+}
+
+pub fn get_system_call_at_trace_step(
+    pc_to_ptr_sys_calls: &HashMap<usize, CellExpression>,
+    relocated_memory: &[Option<Felt>],
+    trace_entry: &RelocatedTraceEntry,
+    type_declaration_map: Option<&HashMap<ConcreteTypeId, TypeDeclaration>>,
+    events: Option<&HashSet<Event>>,
+) -> Option<ESysCall> {
+    let pc = trace_entry.pc;
+    let ptr_sys_call = pc_to_ptr_sys_calls.get(&pc);
+    match ptr_sys_call {
+        Some(ptr_sys_call) => {
+            let value = get_value_from_cell_expression(
+                relocated_memory,
+                trace_entry,
+                ptr_sys_call,
+                &ApChange::Known(0),
+            )
+            .unwrap();
+            let mut ptr = value.to_string().parse::<usize>().unwrap();
+            let felt_value = relocated_memory.get(ptr).unwrap();
+            ptr += 1;
+            let selector = SyscallSelector::try_from(felt_value.unwrap());
+            match selector {
+                Ok(selector) => {
+                    match selector {
+                        DeprecatedSyscallSelector::CallContract => {
+                            // https://github.com/starkware-libs/blockifier/blob/9bfb3d4c8bf1b68a0c744d1249b32747c75a4d87/crates/blockifier/src/execution/syscalls/hint_processor.rs#L302C13-L306C15
+                            let _felt_value = relocated_memory.get(ptr).unwrap();
+                            ptr += 1;
+                            let felt_value: Felt = (*relocated_memory.get(ptr).unwrap()).unwrap();
+                            let contract_address = felt_value.to_fixed_hex_string();
+                            ptr += 1;
+                            let felt_value = (*relocated_memory.get(ptr).unwrap()).unwrap();
+                            let function_selector = felt_value.to_fixed_hex_string();
+                            let contract_call = ContractCall {
+                                contract_address,
+                                function_selector,
+                            };
+                            Some(ESysCall::ContractCall(contract_call))
+                        }
+                        DeprecatedSyscallSelector::EmitEvent => {
+                            if let (Some(type_declaration_map), Some(events)) =
+                                (type_declaration_map, events)
+                            {
+                                let _felt_value = relocated_memory.get(ptr).unwrap();
+
+                                ptr += 1;
+                                let felt_value: Felt =
+                                    (*relocated_memory.get(ptr).unwrap()).unwrap();
+
+                                let id = match felt_value.to_string().parse::<usize>() {
+                                    Ok(parsed_id) => parsed_id,
+                                    Err(_) => {
+                                        error!("Error: id is None, skipping event processing.");
+                                        return None;
+                                    }
+                                };
+                                let event_selector = relocated_memory
+                                    .get(id)
+                                    .and_then(|v| v.as_ref().copied())
+                                    .or_else(|| {
+                                        error!("Error: event_selector not found at index");
+                                        None
+                                    });
+                                if let Some(event_selector) = event_selector {
+                                    let (event_name, event_members) =
+                                        find_event_by_selector(&events, event_selector);
+                                    let conrete_type_id =
+                                        type_declaration_map.keys().find_map(|concrete_id| {
+                                            if let Some(name) = concrete_id.debug_name.as_ref() {
+                                                if let Some(event_name) = event_name.as_ref() {
+                                                    if &simplify_type_name(name.as_str())
+                                                        == event_name
+                                                    {
+                                                        return Some(concrete_id.clone());
+                                                    }
+                                                }
+                                            }
+                                            None
+                                        });
+                                    if let Some(conrete_type_id) = conrete_type_id {
+                                        let values: Vec<Felt> = relocated_memory
+                                            .iter()
+                                            .skip(id + 1)
+                                            .filter_map(|x| *x)
+                                            .collect();
+
+                                        if let Some(decoded_event) = decode_event_datas(
+                                            &conrete_type_id,
+                                            &type_declaration_map,
+                                            &values,
+                                            &mut 0,
+                                        ) {
+                                            let event_sys_call = EventSysCall {
+                                                event_selector,
+                                                event_name,
+                                                event_members,
+                                                event_datas: vec![decoded_event],
+                                            };
+
+                                            return Some(ESysCall::EventCall(event_sys_call));
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        }
+                        DeprecatedSyscallSelector::StorageWrite => {
+                            let _felt_value: Felt = (*relocated_memory.get(ptr).unwrap()).unwrap();
+                            ptr += 1;
+                            let _felt_value: Felt = (*relocated_memory.get(ptr).unwrap()).unwrap(); // Should be 0
+                            ptr += 1;
+                            let address = (*relocated_memory.get(ptr).unwrap()).unwrap();
+                            ptr += 1;
+                            let value = (*relocated_memory.get(ptr).unwrap()).unwrap();
+                            let storage_write = StorageWrite { address, value };
+                            Some(ESysCall::StorageWrite(storage_write))
+                        }
+                        _ => None,
+                    }
+                }
+                Err(e) => {
+                    dbg!(e);
+                    None
+                }
+            }
+        }
+
+        None => None,
+    }
 }
