@@ -1,6 +1,7 @@
-use starknet::core::types::Felt;
-use starknet_old::core::types as starknet_old_types;
-use walnut_shared::{field_element_to_felt, vec_field_element_to_vec_felt};
+use starknet::core::types::{
+    DeclareTransaction, DeployAccountTransaction, DeployTransaction, Felt, InvokeTransaction,
+    Transaction,
+};
 
 pub trait TransactionInformation {
     fn sender_address(&self) -> Option<Felt>;
@@ -9,72 +10,42 @@ pub trait TransactionInformation {
     fn version(&self) -> Felt;
 }
 
-impl TransactionInformation for starknet_old_types::Transaction {
+impl TransactionInformation for Transaction {
     fn sender_address(&self) -> Option<Felt> {
         match self {
-            starknet_old_types::Transaction::Invoke(tx) => match tx {
-                starknet_old_types::InvokeTransaction::V0(tx_v0) => {
-                    Some(field_element_to_felt(tx_v0.contract_address))
-                }
-                starknet_old_types::InvokeTransaction::V1(tx_v1) => {
-                    Some(field_element_to_felt(tx_v1.sender_address))
-                }
-                starknet_old_types::InvokeTransaction::V3(tx_v3) => {
-                    Some(field_element_to_felt(tx_v3.sender_address))
-                }
+            Transaction::Invoke(tx) => match tx {
+                InvokeTransaction::V0(tx_v0) => Some(tx_v0.contract_address),
+                InvokeTransaction::V1(tx_v1) => Some(tx_v1.sender_address),
+                InvokeTransaction::V3(tx_v3) => Some(tx_v3.sender_address),
             },
-            starknet_old_types::Transaction::Declare(tx) => match tx {
-                starknet_old_types::DeclareTransaction::V0(tx_v0) => {
-                    Some(field_element_to_felt(tx_v0.sender_address))
-                }
-                starknet_old_types::DeclareTransaction::V1(tx_v1) => {
-                    Some(field_element_to_felt(tx_v1.sender_address))
-                }
-                starknet_old_types::DeclareTransaction::V2(tx_v2) => {
-                    Some(field_element_to_felt(tx_v2.sender_address))
-                }
-                starknet_old_types::DeclareTransaction::V3(tx_v3) => {
-                    Some(field_element_to_felt(tx_v3.sender_address))
-                }
+            Transaction::Declare(tx) => match tx {
+                DeclareTransaction::V0(tx_v0) => Some(tx_v0.sender_address),
+                DeclareTransaction::V1(tx_v1) => Some(tx_v1.sender_address),
+                DeclareTransaction::V2(tx_v2) => Some(tx_v2.sender_address),
+                DeclareTransaction::V3(tx_v3) => Some(tx_v3.sender_address),
             },
-            starknet_old_types::Transaction::L1Handler(tx) => {
-                Some(field_element_to_felt(tx.contract_address))
-            }
+            Transaction::L1Handler(tx) => Some(tx.contract_address),
             _ => None,
         }
     }
 
     fn nonce(&self) -> Option<Felt> {
         match self {
-            starknet_old_types::Transaction::Invoke(tx) => match tx {
-                starknet_old_types::InvokeTransaction::V1(tx_v1) => {
-                    Some(field_element_to_felt(tx_v1.nonce))
-                }
-                starknet_old_types::InvokeTransaction::V3(tx_v3) => {
-                    Some(field_element_to_felt(tx_v3.nonce))
-                }
+            Transaction::Invoke(tx) => match tx {
+                InvokeTransaction::V1(tx_v1) => Some(tx_v1.nonce),
+                InvokeTransaction::V3(tx_v3) => Some(tx_v3.nonce),
                 _ => None,
             },
-            starknet_old_types::Transaction::Declare(tx) => match tx {
-                starknet_old_types::DeclareTransaction::V1(tx_v1) => {
-                    Some(field_element_to_felt(tx_v1.nonce))
-                }
-                starknet_old_types::DeclareTransaction::V2(tx_v2) => {
-                    Some(field_element_to_felt(tx_v2.nonce))
-                }
-                starknet_old_types::DeclareTransaction::V3(tx_v3) => {
-                    Some(field_element_to_felt(tx_v3.nonce))
-                }
+            Transaction::Declare(tx) => match tx {
+                DeclareTransaction::V1(tx_v1) => Some(tx_v1.nonce),
+                DeclareTransaction::V2(tx_v2) => Some(tx_v2.nonce),
+                DeclareTransaction::V3(tx_v3) => Some(tx_v3.nonce),
                 _ => None,
             },
-            starknet_old_types::Transaction::L1Handler(tx) => Some(Felt::from(tx.nonce)),
-            starknet_old_types::Transaction::DeployAccount(tx) => match tx {
-                starknet_old_types::DeployAccountTransaction::V1(tx_v1) => {
-                    Some(field_element_to_felt(tx_v1.nonce))
-                }
-                starknet_old_types::DeployAccountTransaction::V3(tx_v3) => {
-                    Some(field_element_to_felt(tx_v3.nonce))
-                }
+            Transaction::L1Handler(tx) => Some(Felt::from(tx.nonce)),
+            Transaction::DeployAccount(tx) => match tx {
+                DeployAccountTransaction::V1(tx_v1) => Some(tx_v1.nonce),
+                DeployAccountTransaction::V3(tx_v3) => Some(tx_v3.nonce),
             },
             _ => None,
         }
@@ -82,30 +53,16 @@ impl TransactionInformation for starknet_old_types::Transaction {
 
     fn calldata(&self) -> Option<Vec<Felt>> {
         match self {
-            starknet_old_types::Transaction::Invoke(tx) => match tx {
-                starknet_old_types::InvokeTransaction::V0(tx_v0) => {
-                    Some(vec_field_element_to_vec_felt(tx_v0.calldata.clone()))
-                }
-                starknet_old_types::InvokeTransaction::V1(tx_v1) => {
-                    Some(vec_field_element_to_vec_felt(tx_v1.calldata.clone()))
-                }
-                starknet_old_types::InvokeTransaction::V3(tx_v3) => {
-                    Some(vec_field_element_to_vec_felt(tx_v3.calldata.clone()))
-                }
+            Transaction::Invoke(tx) => match tx {
+                InvokeTransaction::V0(tx_v0) => Some(tx_v0.calldata.clone()),
+                InvokeTransaction::V1(tx_v1) => Some(tx_v1.calldata.clone()),
+                InvokeTransaction::V3(tx_v3) => Some(tx_v3.calldata.clone()),
             },
-            starknet_old_types::Transaction::L1Handler(tx) => {
-                Some(vec_field_element_to_vec_felt(tx.calldata.clone()))
-            }
-            starknet_old_types::Transaction::Deploy(tx) => Some(vec_field_element_to_vec_felt(
-                tx.constructor_calldata.clone(),
-            )),
-            starknet_old_types::Transaction::DeployAccount(tx) => match tx {
-                starknet_old_types::DeployAccountTransaction::V1(tx_v1) => Some(
-                    vec_field_element_to_vec_felt(tx_v1.constructor_calldata.clone()),
-                ),
-                starknet_old_types::DeployAccountTransaction::V3(tx_v3) => Some(
-                    vec_field_element_to_vec_felt(tx_v3.constructor_calldata.clone()),
-                ),
+            Transaction::L1Handler(tx) => Some(tx.calldata.clone()),
+            Transaction::Deploy(tx) => Some(tx.constructor_calldata.clone()),
+            Transaction::DeployAccount(tx) => match tx {
+                DeployAccountTransaction::V1(tx_v1) => Some(tx_v1.constructor_calldata.clone()),
+                DeployAccountTransaction::V3(tx_v3) => Some(tx_v3.constructor_calldata.clone()),
             },
             _ => None,
         }
@@ -113,19 +70,19 @@ impl TransactionInformation for starknet_old_types::Transaction {
 
     fn version(&self) -> Felt {
         match self {
-            starknet_old_types::Transaction::Invoke(tx) => match tx {
-                starknet_old_types::InvokeTransaction::V0(_) => Felt::ZERO,
-                starknet_old_types::InvokeTransaction::V1(_) => Felt::ONE,
-                starknet_old_types::InvokeTransaction::V3(_) => Felt::THREE,
+            Transaction::Invoke(tx) => match tx {
+                InvokeTransaction::V0(_) => Felt::ZERO,
+                InvokeTransaction::V1(_) => Felt::ONE,
+                InvokeTransaction::V3(_) => Felt::THREE,
             },
-            starknet_old_types::Transaction::Declare(tx) => match tx {
-                starknet_old_types::DeclareTransaction::V0(_) => Felt::ZERO,
-                starknet_old_types::DeclareTransaction::V1(_) => Felt::ONE,
-                starknet_old_types::DeclareTransaction::V2(_) => Felt::TWO,
-                starknet_old_types::DeclareTransaction::V3(_) => Felt::THREE,
+            Transaction::Declare(tx) => match tx {
+                DeclareTransaction::V0(_) => Felt::ZERO,
+                DeclareTransaction::V1(_) => Felt::ONE,
+                DeclareTransaction::V2(_) => Felt::TWO,
+                DeclareTransaction::V3(_) => Felt::THREE,
             },
-            starknet_old_types::Transaction::L1Handler(tx) => field_element_to_felt(tx.version),
-            starknet_old_types::Transaction::Deploy(tx) => field_element_to_felt(tx.version),
+            Transaction::L1Handler(tx) => tx.version,
+            Transaction::Deploy(tx) => tx.version,
             _ => Felt::ONE,
         }
     }

@@ -1369,7 +1369,7 @@ dependencies = [
 [[package]]
 name = "blockifier"
 version = "0.14.0-rc.3"
-source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#8c07d70034de58494a8ba72ac7c2660ae049dd77"
+source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#823cba4d0e94638fb1f91607f7047428f7e8131f"
 dependencies = [
  "anyhow",
  "ark-ec 0.4.2",
@@ -1402,8 +1402,8 @@ dependencies = [
  "sha2",
  "starknet-types-core",
  "starknet_api",
+ "starknet_compile_to_native",
  "starknet_infra_utils",
- "starknet_sierra_multicompile",
  "strum 0.25.0",
  "strum_macros 0.25.3",
  "tempfile",
@@ -4660,7 +4660,6 @@ dependencies = [
  "smol_str",
  "sqlx",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "starknet-providers 0.10.0",
  "starknet-types-core",
  "starknet_api",
  "tracing",
@@ -5573,7 +5572,7 @@ dependencies = [
 [[package]]
 name = "papyrus_config"
 version = "0.14.0-rc.3"
-source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#8c07d70034de58494a8ba72ac7c2660ae049dd77"
+source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#823cba4d0e94638fb1f91607f7047428f7e8131f"
 dependencies = [
  "clap",
  "itertools 0.12.1",
@@ -6456,15 +6455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rlimit"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7043b63bd0cd1aaa628e476b80e6d4023a3b50eb32789f2728908107bd0c793a"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "rlp"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7342,9 +7332,7 @@ dependencies = [
  "serde_json",
  "simulate",
  "sqlx",
- "starknet 0.10.0",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "starknet-providers 0.10.0",
  "starknet_api",
  "time",
  "tokio",
@@ -7491,9 +7479,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "starknet 0.10.0",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "starknet-providers 0.10.0",
  "starknet-selector-decoder",
  "starknet-types-core",
  "starknet_api",
@@ -7880,22 +7866,6 @@ dependencies = [
 
 [[package]]
 name = "starknet"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20b9a7b7bfd87287af85854f7458b8170ba6aa59c39113436532b7ff3d2fcbd8"
-dependencies = [
- "starknet-accounts 0.9.0",
- "starknet-contract 0.9.0",
- "starknet-core 0.10.0",
- "starknet-crypto 0.6.2",
- "starknet-ff",
- "starknet-macros 0.1.7",
- "starknet-providers 0.10.0",
- "starknet-signers 0.8.0",
-]
-
-[[package]]
-name = "starknet"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61e2e53e7705c9a9aad7f118a4bac7386afeb8db272b3eb445a464ca4c3dfee5"
@@ -7941,20 +7911,6 @@ dependencies = [
 
 [[package]]
 name = "starknet-accounts"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2095d7584608ae1707bd1cf2889368ab3734d9f54e4fcef4765cba1f3b3f7618"
-dependencies = [
- "async-trait",
- "auto_impl",
- "starknet-core 0.10.0",
- "starknet-providers 0.10.0",
- "starknet-signers 0.8.0",
- "thiserror 1.0.64",
-]
-
-[[package]]
-name = "starknet-accounts"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eca52534db01eda3bf3250f398bd4597aed3856d0d17d84070efbc7919abad71"
@@ -7994,21 +7950,6 @@ dependencies = [
  "starknet-accounts 0.8.0",
  "starknet-core 0.9.0",
  "starknet-providers 0.9.0",
- "thiserror 1.0.64",
-]
-
-[[package]]
-name = "starknet-contract"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb3b73d437b4d62241612d13fce612602de6684c149cccf696e76a20757e2156"
-dependencies = [
- "serde",
- "serde_json",
- "serde_with 2.3.3",
- "starknet-accounts 0.9.0",
- "starknet-core 0.10.0",
- "starknet-providers 0.10.0",
  "thiserror 1.0.64",
 ]
 
@@ -8303,26 +8244,6 @@ dependencies = [
 
 [[package]]
 name = "starknet-providers"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6abf40ffcbe3b887b4d5cfc8ab73170c816b4aa78d1d4ad59abd3fb3b0f53cd"
-dependencies = [
- "async-trait",
- "auto_impl",
- "ethereum-types",
- "flate2",
- "log",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "serde_with 2.3.3",
- "starknet-core 0.10.0",
- "thiserror 1.0.64",
- "url",
-]
-
-[[package]]
-name = "starknet-providers"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c74c3850a661fa1ffd3c3e2cb9db6e28c94ab9aaaa0496503014a814f09cd455"
@@ -8390,22 +8311,6 @@ dependencies = [
 
 [[package]]
 name = "starknet-signers"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e9a2bd4fd66090003c3b7f0d76476e5b63cd44f6a49ede2442673f4427d5a40"
-dependencies = [
- "async-trait",
- "auto_impl",
- "crypto-bigint 0.5.5",
- "eth-keystore",
- "rand 0.8.5",
- "starknet-core 0.10.0",
- "starknet-crypto 0.6.2",
- "thiserror 1.0.64",
-]
-
-[[package]]
-name = "starknet-signers"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2aeca13b8c61165b69d4775880d74ff9bbb9bafa36a297899e0f160619631b3"
@@ -8457,7 +8362,7 @@ dependencies = [
 [[package]]
 name = "starknet_api"
 version = "0.14.0-rc.3"
-source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#8c07d70034de58494a8ba72ac7c2660ae049dd77"
+source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#823cba4d0e94638fb1f91607f7047428f7e8131f"
 dependencies = [
  "bitvec",
  "cairo-lang-runner",
@@ -8483,32 +8388,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "starknet_infra_utils"
+name = "starknet_compile_to_native"
 version = "0.14.0-rc.3"
-source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#8c07d70034de58494a8ba72ac7c2660ae049dd77"
+source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#823cba4d0e94638fb1f91607f7047428f7e8131f"
 dependencies = [
- "tokio",
- "tracing",
+ "papyrus_config",
+ "serde",
+ "validator",
 ]
 
 [[package]]
-name = "starknet_sierra_multicompile"
+name = "starknet_infra_utils"
 version = "0.14.0-rc.3"
-source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#8c07d70034de58494a8ba72ac7c2660ae049dd77"
+source = "git+https://github.com/software-mansion-labs/sequencer.git?branch=main-v0.13.5-modified-sierra-dep#823cba4d0e94638fb1f91607f7047428f7e8131f"
 dependencies = [
- "cairo-lang-sierra",
- "cairo-lang-starknet-classes",
- "cairo-lang-utils",
- "papyrus_config",
- "rlimit",
- "serde",
- "serde_json",
- "starknet-types-core",
- "starknet_api",
- "starknet_infra_utils",
- "tempfile",
- "thiserror 1.0.64",
- "validator",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -9516,9 +9411,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "starknet 0.10.0",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "starknet-providers 0.10.0",
  "starknet-selector-decoder",
  "starknet_api",
  "time",
@@ -9575,9 +9468,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol_str",
- "starknet 0.10.0",
  "starknet 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "starknet-providers 0.10.0",
  "starknet-selector-decoder",
  "starknet-types-core",
  "starknet_api",

@@ -6,6 +6,7 @@ use data_decoder::calldata_decoder::decode_calldata;
 use data_decoder::create_decoded_value_by_type;
 use data_decoder::{DecodedValue, DecodedValueType};
 use serde::Serialize;
+use starknet::core::types::Event as StarknetEvent;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::ContractAddress;
 use starknet_selector_decoder::get_selector;
@@ -13,7 +14,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use tracing::error;
 use walnut_shared::abi::{Enum, Event, EventData, EventKind, Struct};
-use walnut_shared::field_element_to_felt;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct EmittedEvent {
@@ -132,24 +132,24 @@ impl EmittedEvent {
     }
 
     pub fn convert_event_to_emitted_event(
-        event: &starknet_old::core::types::Event,
+        event: &StarknetEvent,
         contract_name: &Option<ContractName>,
     ) -> Option<EmittedEvent> {
-        fn decode_event_data(event: &starknet_old::core::types::Event) -> Vec<DecodedValue> {
-            let low = field_element_to_felt(event.data[2]).to_biguint();
-            let high = field_element_to_felt(event.data[3]).to_biguint();
+        fn decode_event_data(event: &StarknetEvent) -> Vec<DecodedValue> {
+            let low = event.data[2].to_biguint();
+            let high = event.data[3].to_biguint();
             let u256_value = (high << 128) | low;
 
             vec![
                 create_decoded_value_by_type(
                     Some("from"),
                     "ContractAddress",
-                    DecodedValueType::Single(field_element_to_felt(event.data[0])),
+                    DecodedValueType::Single(event.data[0]),
                 ),
                 create_decoded_value_by_type(
                     Some("to"),
                     "ContractAddress",
-                    DecodedValueType::Single(field_element_to_felt(event.data[1])),
+                    DecodedValueType::Single(event.data[1]),
                 ),
                 create_decoded_value_by_type(
                     Some("amount"),
@@ -159,7 +159,7 @@ impl EmittedEvent {
             ]
         }
 
-        let selector_str = field_element_to_felt(event.keys[0]).to_fixed_hex_string();
+        let selector_str = event.keys[0].to_fixed_hex_string();
         let event_name = get_selector(&selector_str);
 
         match (event_name, contract_name) {
@@ -172,9 +172,7 @@ impl EmittedEvent {
                         && event.data.len() == 4
                     {
                         let contract_address: Option<ContractAddress> =
-                            match ContractAddress::try_from(field_element_to_felt(
-                                event.from_address,
-                            )) {
+                            match ContractAddress::try_from(event.from_address) {
                                 Ok(addr) => Some(addr),
                                 Err(e) => {
                                     error!("Failed to convert contract address: {}", e);

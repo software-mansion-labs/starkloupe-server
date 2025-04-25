@@ -24,8 +24,8 @@ use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::Serializer;
-use starknet::core::types::ExecutionResult;
-use starknet::core::types::Felt;
+use starknet::core::types::{BlockId, Event, ExecutionResult, Felt};
+use starknet::providers::{ProviderError, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
@@ -37,14 +37,11 @@ use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::StarknetApiError;
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::ProviderError;
 use starknet_types_core::felt::FromStrError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
-use url::Url;
 use utils::{
     eth_address_to_felt, eth_u256_to_felt, parse_block_number, parse_calldata,
     parse_chain_id_and_rpc_url, parse_contract_address, parse_nonce, parse_transaction_version,
@@ -78,7 +75,7 @@ pub struct SimulationArgs {
     pub transaction_type: Option<TransactionType>,
     pub resource_bounds: Option<ValidResourceBounds>,
     pub paymaster_data: Option<PaymasterData>,
-    pub strkgate_event: Option<starknet_old_types::Event>,
+    pub strkgate_event: Option<Event>,
 }
 
 impl SimulationArgs {
@@ -116,7 +113,7 @@ pub struct TransactionSimulationResult {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
     #[serde(serialize_with = "serialize_block_number")]
-    pub block_number: starknet_old_types::BlockId,
+    pub block_number: BlockId,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
     pub sender_address: String,
@@ -171,17 +168,14 @@ pub enum TransactionSimulationError {
     OtherError(String),
 }
 
-fn serialize_block_number<S>(
-    block_id: &starknet_old_types::BlockId,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_block_number<S>(block_id: &BlockId, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     match block_id {
-        starknet_old_types::BlockId::Number(num) => serializer.serialize_u64(*num),
-        starknet_old_types::BlockId::Hash(hash) => serializer.serialize_str(&format!("{:?}", hash)),
-        starknet_old_types::BlockId::Tag(tag) => serializer.serialize_str(&format!("{:?}", tag)),
+        BlockId::Number(num) => serializer.serialize_u64(*num),
+        BlockId::Hash(hash) => serializer.serialize_str(&format!("{:?}", hash)),
+        BlockId::Tag(tag) => serializer.serialize_str(&format!("{:?}", tag)),
     }
 }
 

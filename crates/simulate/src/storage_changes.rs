@@ -6,16 +6,14 @@ use internal_tracing::{
         compile_sierra_contract_class, get_pc_sys_call_mappings, get_system_call_at_trace_step,
     },
 };
-use starknet::core::types::Felt;
-use starknet_api::{core::ContractAddress, state::StorageKey};
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::{
+use starknet::core::types::{BlockId, Felt};
+use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
+use starknet_api::{core::ContractAddress, state::StorageKey};
 use std::collections::HashMap;
 use tracing::warn;
-use walnut_shared::{felt_to_field_element, field_element_to_felt, hex_string_to_field_element};
 
 use crate::contract_calls_map::ContractCallsMap;
 
@@ -140,14 +138,13 @@ pub async fn fetch_before_storage_changes(
                 );
                 let before_from_provider = provider_client
                     .get_storage_at(
-                        felt_to_field_element(contract_address_felt),
-                        hex_string_to_field_element(address).unwrap(),
-                        starknet_old_types::BlockId::Number(block_number),
+                        contract_address_felt,
+                        Felt::from_hex(address).unwrap(),
+                        BlockId::Number(block_number),
                     )
                     .await
                     .ok();
-                *before = before_from_provider
-                    .map(|before| field_element_to_felt(before).to_hex_string());
+                *before = before_from_provider.map(|before| before.to_hex_string());
             }
         }
         let mut filtered_contract_storage_changes = HashMap::new();

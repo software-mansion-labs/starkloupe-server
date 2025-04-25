@@ -5,18 +5,16 @@ use blockifier::transaction::transaction_types::TransactionType;
 use ethers::types::{Address, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
+use starknet::providers::{Provider, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::TransactionVersion;
-use starknet_providers::Provider;
 use starknet_types_core::felt::Felt;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
 use std::sync::Arc;
-use url::Url;
 use walnut_shared::create_rpc_client_from_url;
 use walnut_shared::extract_chain_id;
-use walnut_shared::field_element_to_felt;
 use walnut_shared::get_rpc_urls;
 
 pub async fn parse_chain_id_and_rpc_url(
@@ -34,12 +32,10 @@ pub async fn parse_chain_id_and_rpc_url(
         let rpc_url =
             Url::parse(rpc_url_str).map_err(|_| TransactionSimulationError::InvalidRpcUrl)?;
         let provider_client = create_rpc_client_from_url(rpc_url.clone());
-        let chain_id_felt = field_element_to_felt(
-            provider_client
-                .chain_id()
-                .await
-                .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
-        );
+        let chain_id_felt = provider_client
+            .chain_id()
+            .await
+            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?;
         let core_chain_id = extract_chain_id_from_felt(chain_id_felt)?;
         Ok((core_chain_id, rpc_url))
     } else {

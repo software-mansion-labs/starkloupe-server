@@ -6,7 +6,6 @@ use crate::events::EmittedEvent;
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
-use crate::transaction_extraction::extract_block_number_transaction_receipt;
 use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_chain_id_from_felt;
@@ -58,9 +57,10 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::ContractClass;
-use starknet::core::types::ExecutionResult;
-use starknet::core::types::Felt;
+use starknet::core::types::{
+    BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
+};
+use starknet::providers::Provider;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
@@ -73,8 +73,6 @@ use starknet_api::transaction::constants;
 use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::Provider;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
@@ -82,10 +80,8 @@ use tracing::warn;
 use url::Url;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
-use walnut_shared::felt_to_field_element;
 use walnut_shared::felts_to_string;
 use walnut_shared::fetch_tx_block_number_from_voyager;
-use walnut_shared::field_element_to_felt;
 use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
@@ -103,7 +99,10 @@ pub async fn simulate(
     let block_number = if let Some(bn) = args.block_number {
         bn.0
     } else {
-        provider_client.block_number().await?
+        provider_client
+            .block_number()
+            .await
+            .map_err(TransactionSimulationError::ProviderError)?
     };
 
     let (block_info, transaction_index, total_txs_in_block) =
@@ -200,7 +199,7 @@ pub async fn simulate(
     // To maintain consistency with blockchain explorers, we need to manually append this event
     // to the vector of all events.
     let strkgate_emitted_event = if let Some(event) = strkgate_event {
-        let contract_address_felt = field_element_to_felt(event.from_address);
+        let contract_address_felt = event.from_address;
         let contract_address_str = contract_address_felt.to_fixed_hex_string();
 
         let contract_name = contract_names_fetcher
@@ -353,9 +352,9 @@ pub async fn simulate_by_calldata(
     };
     let readable_chain_id = chain_id_to_readable_string(&args.chain_id);
     let block_number = if let Some(bn) = args.block_number {
-        starknet_old_types::BlockId::Number(bn.0)
+        BlockId::Number(bn.0)
     } else {
-        starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest)
+        BlockId::Tag(BlockTag::Latest)
     };
 
     let sender_address = args.sender_address.0.to_string();
@@ -441,9 +440,9 @@ async fn simulate_starknet_transaction_by_hash(
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
     let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
-    // Fetch transaction details
+    // Fetch transaction
     let transaction = provider_client
-        .get_transaction_by_hash(felt_to_field_element(transaction_hash))
+        .get_transaction_by_hash(transaction_hash)
         .await;
     if let Ok(transaction) = transaction {
         if let Some((
@@ -459,110 +458,116 @@ async fn simulate_starknet_transaction_by_hash(
         )) = extract_submitted_tx(transaction)
         {
             // Fetch receipt
-            let transaction_receipt = provider_client
-                .get_transaction_receipt(felt_to_field_element(transaction_hash))
+            let transaction_receipt_with_block_info = provider_client
+                .get_transaction_receipt(transaction_hash)
                 .await;
-            if let Ok(transaction_receipt) = transaction_receipt {
-                //Fetch block number
-                if let Some(block_number) =
-                    extract_block_number_transaction_receipt(&transaction_receipt)
-                {
-                    // Fetch or derive chain_id
-                    let chain_id = match chain_id {
-                        Some(chain_id) => ChainId::from(chain_id),
-                        None => extract_chain_id_from_felt(field_element_to_felt(
-                            provider_client
-                                .chain_id()
-                                .await
-                                .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?,
-                        ))?,
-                    };
+            if let Ok(transaction_receipt_with_block_info) = transaction_receipt_with_block_info {
+                let transaction_receipt = transaction_receipt_with_block_info.receipt;
+                let block_info = transaction_receipt_with_block_info.block;
 
-                    // Check for execution status
-                    if let Some(starknet_old_types::ExecutionResult::Reverted { reason }) =
-                        extract_execution_status_transaction_receipt(&transaction_receipt)
-                    {
-                        if reason.contains("RunResources") {
-                            // Fetch block timestamp
-                            let block_timestamp =
-                                extract_block_timestamp(&provider_client, block_number).await?;
-
-                            let simulation_info = SimulationInfo {
-                                contract_calls_map: ContractCallsMap::new(),
-                                function_calls_map: FunctionCallsMap::new(),
-                                event_calls_map: EventCallsMap::default(),
-                                events: Vec::new(),
-                                execution_result: ExecutionResult::Reverted { reason },
-                                simulation_debugger_data: Some(SimulationDebuggerData {
-                                    classes_debugger_data: HashMap::new(),
-                                    debugger_trace: Vec::new(),
-                                }),
-                                storage_changes: HashMap::new(),
-                            };
-                            return Ok(TransactionSimulationResult {
-                                simulation_result: simulation_info,
-                                chain_id: chain_id_to_readable_string(&chain_id),
-                                block_number: starknet_old_types::BlockId::Number(block_number),
-                                block_timestamp: block_timestamp.0,
-                                nonce: nonce.0.to_u64(),
-                                sender_address: sender_address.0.to_string(),
-                                calldata: calldata_to_hex(&calldata),
-                                transaction_version: transaction_version.0.to_u64().unwrap()
-                                    as usize,
-                                transaction_type: transaction_type_to_string(transaction_type),
-                                transaction_index_in_block: None,
-                                total_transactions_in_block: None,
-                                l1_tx_hash: None,
-                                l2_tx_hash: Some(transaction_hash.to_hex_string()),
-                            });
-                        }
+                match block_info {
+                    ReceiptBlock::Pending => {
+                        return Err(TransactionSimulationError::PendingBlock(
+                            "Transaction simualtion in pending block not found".to_string(),
+                        ));
                     }
+                    ReceiptBlock::Block { block_number, .. } => {
+                        // Fetch or derive chain_id
+                        let chain_id = match chain_id {
+                            Some(chain_id) => ChainId::from(chain_id),
+                            None => extract_chain_id_from_felt(
+                                provider_client.chain_id().await.map_err(|_| {
+                                    TransactionSimulationError::FailedToFetchChainId
+                                })?,
+                            )?,
+                        };
 
-                    let strkgate_event =
-                        extract_starkgate_event_transaction_receipt(&transaction_receipt);
-                    // Perform transaction simulation
-                    let (
-                        simulation_result,
-                        block_timestamp,
-                        transaction_index_in_block,
-                        total_transactions_in_block,
-                    ) = simulate(
-                        db_pool,
-                        s3_client,
-                        SimulationArgs {
-                            rpc_url: starknet_rpc_url.clone(),
-                            chain_id: chain_id.clone(),
-                            block_number: Some(BlockNumber(block_number)),
-                            nonce: Some(nonce),
-                            sender_address,
-                            entry_point_selector: Some(entry_point_selector),
-                            calldata: calldata.clone(),
-                            transaction_version,
-                            transaction_signature: Some(signature),
-                            transaction_hash: Some(TransactionHash(transaction_hash)),
-                            transaction_type: Some(transaction_type),
-                            resource_bounds: Some(resource_bounds),
-                            paymaster_data: Some(paymaster_data),
-                            strkgate_event,
-                        },
-                    )
-                    .await?;
-                    // Build and return simulation result
-                    return Ok(TransactionSimulationResult {
-                        simulation_result,
-                        chain_id: chain_id_to_readable_string(&chain_id),
-                        block_number: starknet_old_types::BlockId::Number(block_number),
-                        block_timestamp: block_timestamp.0,
-                        nonce: nonce.0.to_u64(),
-                        sender_address: sender_address.0.to_string(),
-                        calldata: calldata_to_hex(&calldata),
-                        transaction_version: transaction_version.0.to_u64().unwrap() as usize,
-                        transaction_type: transaction_type_to_string(transaction_type),
-                        transaction_index_in_block: Some(transaction_index_in_block),
-                        total_transactions_in_block: Some(total_transactions_in_block),
-                        l1_tx_hash: None,
-                        l2_tx_hash: Some(transaction_hash.to_hex_string()),
-                    });
+                        // Check for execution status
+                        if let Some(ExecutionResult::Reverted { reason }) =
+                            extract_execution_status_transaction_receipt(&transaction_receipt)
+                        {
+                            if reason.contains("RunResources") {
+                                // Fetch block timestamp
+                                let block_timestamp =
+                                    extract_block_timestamp(&provider_client, block_number).await?;
+
+                                let simulation_info = SimulationInfo {
+                                    contract_calls_map: ContractCallsMap::new(),
+                                    function_calls_map: FunctionCallsMap::new(),
+                                    event_calls_map: EventCallsMap::default(),
+                                    events: Vec::new(),
+                                    execution_result: ExecutionResult::Reverted { reason },
+                                    simulation_debugger_data: Some(SimulationDebuggerData {
+                                        classes_debugger_data: HashMap::new(),
+                                        debugger_trace: Vec::new(),
+                                    }),
+                                    storage_changes: HashMap::new(),
+                            };
+                                return Ok(TransactionSimulationResult {
+                                    simulation_result: simulation_info,
+                                    chain_id: chain_id_to_readable_string(&chain_id),
+                                    block_number: BlockId::Number(block_number),
+                                    block_timestamp: block_timestamp.0,
+                                    nonce: nonce.0.to_u64(),
+                                    sender_address: sender_address.0.to_string(),
+                                    calldata: calldata_to_hex(&calldata),
+                                    transaction_version: transaction_version.0.to_u64().unwrap()
+                                        as usize,
+                                    transaction_type: transaction_type_to_string(transaction_type),
+                                    transaction_index_in_block: None,
+                                    total_transactions_in_block: None,
+                                    l1_tx_hash: None,
+                                    l2_tx_hash: Some(transaction_hash.to_hex_string()),
+                                });
+                            }
+                        }
+
+                        let strkgate_event =
+                            extract_starkgate_event_transaction_receipt(&transaction_receipt);
+                        // Perform transaction simulation
+                        let (
+                            simulation_result,
+                            block_timestamp,
+                            transaction_index_in_block,
+                            total_transactions_in_block,
+                        ) = simulate(
+                            db_pool,
+                            s3_client,
+                            SimulationArgs {
+                                rpc_url: starknet_rpc_url.clone(),
+                                chain_id: chain_id.clone(),
+                                block_number: Some(BlockNumber(block_number)),
+                                nonce: Some(nonce),
+                                sender_address,
+                                entry_point_selector: Some(entry_point_selector),
+                                calldata: calldata.clone(),
+                                transaction_version,
+                                transaction_signature: Some(signature),
+                                transaction_hash: Some(TransactionHash(transaction_hash)),
+                                transaction_type: Some(transaction_type),
+                                resource_bounds: Some(resource_bounds),
+                                paymaster_data: Some(paymaster_data),
+                                strkgate_event,
+                            },
+                        )
+                        .await?;
+                        // Build and return simulation result
+                        return Ok(TransactionSimulationResult {
+                            simulation_result,
+                            chain_id: chain_id_to_readable_string(&chain_id),
+                            block_number: BlockId::Number(block_number),
+                            block_timestamp: block_timestamp.0,
+                            nonce: nonce.0.to_u64(),
+                            sender_address: sender_address.0.to_string(),
+                            calldata: calldata_to_hex(&calldata),
+                            transaction_version: transaction_version.0.to_u64().unwrap() as usize,
+                            transaction_type: transaction_type_to_string(transaction_type),
+                            transaction_index_in_block: Some(transaction_index_in_block),
+                            total_transactions_in_block: Some(total_transactions_in_block),
+                            l1_tx_hash: None,
+                            l2_tx_hash: Some(transaction_hash.to_hex_string()),
+                        });
+                    }
                 }
             }
         }
@@ -644,11 +649,11 @@ pub async fn simulate_ethereum_transaction_by_hash(
                     return Ok(TransactionSimulationResult {
                         simulation_result,
                         chain_id: chain_id_to_readable_string(&core_l2_chain_id),
-                        block_number: block_number
-                            .map(|bn| starknet_old_types::BlockId::Number(bn))
-                            .unwrap_or(starknet_old_types::BlockId::Tag(
-                                starknet_old_types::BlockTag::Latest,
-                            )),
+                        block_number: block_number.map(|bn| BlockId::Number(bn)).unwrap_or(
+                            starknet::core::types::BlockId::Tag(
+                                starknet::core::types::BlockTag::Latest,
+                            ),
+                        ),
                         block_timestamp: block_timestamp.0,
                         nonce: l1_handler_tx.nonce.0.to_u64(),
                         sender_address: l1_handler_tx.contract_address.to_string(),

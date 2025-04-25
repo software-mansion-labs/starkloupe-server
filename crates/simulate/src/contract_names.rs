@@ -1,15 +1,14 @@
 use futures::future::join_all;
 use serde_json::Value;
-use starknet::core::types::Felt;
+use starknet::core::types::{BlockId, BlockTag, Felt, FunctionCall};
 use starknet::macros::selector;
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use starknet_api::core::{ChainId, ContractAddress};
-use starknet_old::core::types as starknet_old_types;
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::JsonRpcClient;
-use starknet_providers::Provider;
 use std::collections::{HashMap, HashSet};
 use tracing::info;
-use walnut_shared::felt_to_field_element;
 use walnut_shared::{bytes_to_text, get_voyager_api_url};
 
 use crate::contract_calls_map::ContractCallsMap;
@@ -140,18 +139,18 @@ impl ContractNamesFetcher {
 
     async fn query_contract_and_decode(
         &self,
-        token_contract_address: Felt,
+        contract_address: Felt,
         entry_point_selector: Felt,
     ) -> Option<String> {
         let call_result = self
             .provider_client
             .call(
-                starknet_old_types::FunctionCall {
-                    contract_address: felt_to_field_element(token_contract_address),
-                    entry_point_selector: felt_to_field_element(entry_point_selector),
+                FunctionCall {
+                    contract_address,
+                    entry_point_selector,
                     calldata: vec![],
                 },
-                starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
+                BlockId::Tag(BlockTag::Latest),
             )
             .await;
         if let Ok(call_result) = call_result {

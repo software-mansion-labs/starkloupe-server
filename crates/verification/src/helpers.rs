@@ -10,10 +10,11 @@ use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
-use starknet::core::types::{ContractClass as CoreContractClass, Felt};
-use starknet_old::core::types::{self as starknet_old_types};
-use starknet_providers::jsonrpc::HttpTransport;
-use starknet_providers::{JsonRpcClient, Provider};
+use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, Felt};
+use starknet::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -21,7 +22,7 @@ use std::{collections::HashMap, fs::File};
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
-use walnut_shared::{extract_cairo_version_from_program, felt_to_field_element};
+use walnut_shared::extract_cairo_version_from_program;
 
 pub fn initialize_status_map(
     class_hashes: &[String],
@@ -85,13 +86,9 @@ pub async fn fetch_class_from_blockchain(
     class_hash: &str,
 ) -> Result<(Vec<Felt>, (u32, u32, u32))> {
     let class_hash_felt = Felt::from_str(class_hash).context("Invalid class hash format")?;
-    let class_hash_field = felt_to_field_element(class_hash_felt);
 
     let class_from_blockchain = provider_client
-        .get_class(
-            starknet_old_types::BlockId::Tag(starknet_old_types::BlockTag::Latest),
-            class_hash_field,
-        )
+        .get_class(BlockId::Tag(BlockTag::Latest), class_hash_felt)
         .await
         .context("Failed to get class from the network")?;
 
