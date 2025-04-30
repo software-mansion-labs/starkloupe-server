@@ -341,8 +341,7 @@ impl Mappings {
 
                         match relocated_memory[index] {
                             Some(panic_data) => {
-                                let decoded = felts_to_string(&[panic_data]);
-                                let panic_str = decoded.first().cloned().unwrap_or_default();
+                                let panic_str = felts_to_string(&[panic_data]);
 
                                 results.push(InternalFnCallIO {
                                     type_name: Some(simplified_type_name.clone()),

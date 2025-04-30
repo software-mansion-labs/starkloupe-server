@@ -502,7 +502,7 @@ async fn simulate_starknet_transaction_by_hash(
                                         debugger_trace: Vec::new(),
                                     }),
                                     storage_changes: HashMap::new(),
-                            };
+                                };
                                 return Ok(TransactionSimulationResult {
                                     simulation_result: simulation_info,
                                     chain_id: chain_id_to_readable_string(&chain_id),
@@ -755,14 +755,15 @@ fn get_execution_result(
             if let CallResult::Failure(failure) = &call.result {
                 match failure {
                     CallFailure::Panic { panic_data } => {
-                        let decoded_strings = felts_to_string(panic_data);
-                        let reason = decoded_strings.join(" ");
-
+                        let reason = felts_to_string(panic_data);
+                        Ok(ExecutionResult::Reverted {
+                            reason: reason.trim().to_string(),
+                        })
+                    }
+                    CallFailure::Error { msg } => {
+                        let reason = msg.to_string().trim().to_string();
                         Ok(ExecutionResult::Reverted { reason })
                     }
-                    CallFailure::Error { msg } => Ok(ExecutionResult::Reverted {
-                        reason: msg.to_string(),
-                    }),
                 }
             } else {
                 Ok(ExecutionResult::Succeeded)
