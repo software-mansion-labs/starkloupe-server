@@ -1,4 +1,4 @@
-use crate::utils::skip_builtin_type_declaration;
+use crate::utils::{is_allocation_safe, skip_builtin_type_declaration};
 use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
@@ -251,6 +251,10 @@ fn decode_array(
 
         let (extracted_length, memory_values) =
             extract_memory_values(relocated_memory, values, data_index);
+
+        if !is_allocation_safe(extracted_length) {
+            return None;
+        }
 
         if memory_values.is_empty() {
             return None;

@@ -1,4 +1,5 @@
 use crate::starknet_types::EDataType;
+use crate::utils::is_allocation_safe;
 use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
@@ -89,6 +90,10 @@ fn decode_type(
                     *data = rest;
                     len
                 };
+
+            if !is_allocation_safe(array_length) {
+                return None;
+            }
 
             let mut elements = Vec::with_capacity(array_length);
 
