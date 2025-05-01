@@ -337,6 +337,8 @@ impl ForkStateReader {
             .map(|element| Felt::from(element.value.clone()))
             .collect();
 
+        let sierra_program_version =
+            SierraVersion::extract_from_program(&converted_sierra_program)?;
         let entry_points = &contract_class.entry_points_by_type;
         let entry_points_converted = EntryPointsByType {
             constructor: entry_points
@@ -389,7 +391,7 @@ impl ForkStateReader {
                 .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
         let compiled_contract_class = ContractClassBlockifier::V1(
-            ContractClassV1::try_from_json_string(&casm_contract_class_raw, SierraVersion::LATEST)
+            ContractClassV1::try_from_json_string(&casm_contract_class_raw, sierra_program_version)
                 .map_err(|e| {
                     StateError::StateReadError(format!(
                         "Unable to create ContractClassV1 from CasmContractClass: {}",
@@ -458,10 +460,12 @@ impl ForkStateReader {
                     compile_sierra::<String>(&sierra_contract_class, &SierraType::Contract)
                         .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
+                let sierra_program_version =
+                    SierraVersion::extract_from_program(&flattened_class.sierra_program)?;
                 ContractClassBlockifier::V1(
                     ContractClassV1::try_from_json_string(
                         &casm_contract_class_raw,
-                        SierraVersion::LATEST,
+                        sierra_program_version,
                     )
                     .map_err(|e| {
                         StateError::StateReadError(format!(
