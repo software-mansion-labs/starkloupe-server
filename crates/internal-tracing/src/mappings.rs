@@ -13,7 +13,9 @@ use cairo_lang_sierra::{
     program::{GenFunction, Program, StatementIdx, TypeDeclaration},
     program_registry::ProgramRegistry,
 };
-use cairo_lang_sierra_to_casm::compiler::{SierraStatementDebugInfo, StatementKindDebugInfo};
+use cairo_lang_sierra_to_casm::compiler::{
+    CairoProgram, SierraStatementDebugInfo, StatementKindDebugInfo,
+};
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::{
     abi::{Event, Item},
@@ -64,6 +66,7 @@ impl Mappings {
         relocated_trace_entry: &[RelocatedTraceEntry],
         relocated_memory: &[Option<Felt>],
         contract_class: ContractClass,
+        casm_program: CairoProgram,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
             warn!("Failed to extract sierra program: {:?}", e);
@@ -91,12 +94,6 @@ impl Mappings {
                     .collect()
             })
             .unwrap_or_default();
-
-        let casm_program =
-            compile_sierra_contract_class(contract_class, usize::MAX).map_err(|e| {
-                warn!("Failed to compile sierra contract class: {:?}", e);
-                e
-            })?;
 
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
         let pc_to_inst_indexes_map = get_pc_mappings(&casm_program.instructions);

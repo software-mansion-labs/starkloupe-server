@@ -1,3 +1,5 @@
+use starknet::core::types::ContractClass as ContractClassStarknet;
+
 pub fn simplify_type_name(type_str: &str) -> String {
     if let (Some(inner), Some(_)) = (type_str.strip_prefix('['), type_str.strip_suffix(']')) {
         if let Some(delim_index) = inner.find(';') {
@@ -115,4 +117,61 @@ pub fn remove_unwanted_types(type_str: &str) -> String {
         out.push(')');
     }
     out
+}
+
+pub fn convert_contract_class(
+    from: ContractClassStarknet,
+) -> Option<cairo_lang_starknet_classes::contract_class::ContractClass> {
+    match from {
+        starknet::core::types::ContractClass::Sierra(ref class) => {
+            let cloned_class = class.clone();
+            Some(cairo_lang_starknet_classes::contract_class::ContractClass {
+                sierra_program: cloned_class
+                    .sierra_program
+                    .iter()
+                    .map(|felt| felt.to_biguint().into())
+                    .collect(),
+                sierra_program_debug_info: None,
+                contract_class_version: cloned_class.contract_class_version,
+                entry_points_by_type:
+                    cairo_lang_starknet_classes::contract_class::ContractEntryPoints {
+                        external: cloned_class
+                            .entry_points_by_type
+                            .external
+                            .iter()
+                            .map(|entry_point| {
+                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
+                                    selector: entry_point.selector.to_biguint(),
+                                    function_idx: entry_point.function_idx as usize,
+                                }
+                            })
+                            .collect(),
+                        l1_handler: cloned_class
+                            .entry_points_by_type
+                            .l1_handler
+                            .iter()
+                            .map(|entry_point| {
+                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
+                                    selector: entry_point.selector.to_biguint(),
+                                    function_idx: entry_point.function_idx as usize,
+                                }
+                            })
+                            .collect(),
+                        constructor: cloned_class
+                            .entry_points_by_type
+                            .constructor
+                            .iter()
+                            .map(|entry_point| {
+                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
+                                    selector: entry_point.selector.to_biguint(),
+                                    function_idx: entry_point.function_idx as usize,
+                                }
+                            })
+                            .collect(),
+                    },
+                abi: None,
+            })
+        }
+        _ => None,
+    }
 }

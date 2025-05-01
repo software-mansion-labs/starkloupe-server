@@ -1,4 +1,5 @@
 use anyhow::Result;
+use cairo_lang_sierra_to_casm::compiler::CairoProgram;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
@@ -33,11 +34,13 @@ pub fn build_contract_call_debugger_data(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
+    casm_program: CairoProgram,
 ) -> Result<(ContractCallDebuggerData, u32)> {
     let mappings = Mappings::new(
         vm_trace,
         vm_memory,
         full_class_debugger_data.contract_class.clone(),
+        casm_program,
     )
     .map_err(|e| {
         info!("Failed to create mappings: {:?}", e);

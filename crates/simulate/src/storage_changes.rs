@@ -1,10 +1,9 @@
 use blockifier::state::cached_state::StorageEntry;
+use cairo_lang_sierra_to_casm::compiler::CairoProgram;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use internal_tracing::{
     call_trace::ESysCall,
-    utils::{
-        compile_sierra_contract_class, get_pc_sys_call_mappings, get_system_call_at_trace_step,
-    },
+    utils::{get_pc_sys_call_mappings, get_system_call_at_trace_step},
 };
 use starknet::core::types::{BlockId, Felt};
 use starknet::providers::{
@@ -13,109 +12,42 @@ use starknet::providers::{
 };
 use starknet_api::{core::ContractAddress, state::StorageKey};
 use std::collections::HashMap;
-use tracing::warn;
 
 use crate::contract_calls_map::ContractCallsMap;
 
 pub fn get_storage_changes(
-    contract_class: starknet::core::types::ContractClass,
+    casm_program: &CairoProgram,
     vm_trace: &[RelocatedTraceEntry],
     vm_memory: &[Option<Felt>],
     storage_view: &HashMap<StorageEntry, Felt>,
     contract_address: ContractAddress,
 ) -> Option<HashMap<String, (Option<String>, String)>> {
-    match contract_class {
-        starknet::core::types::ContractClass::Sierra(ref class) => {
-            let cloned_class = class.clone();
-            let contract_class = cairo_lang_starknet_classes::contract_class::ContractClass {
-                sierra_program: cloned_class
-                    .sierra_program
-                    .iter()
-                    .map(|felt| felt.to_biguint().into())
-                    .collect(),
-                sierra_program_debug_info: None,
-                contract_class_version: cloned_class.contract_class_version,
-                entry_points_by_type:
-                    cairo_lang_starknet_classes::contract_class::ContractEntryPoints {
-                        external: cloned_class
-                            .entry_points_by_type
-                            .external
-                            .iter()
-                            .map(|entry_point| {
-                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
-                                    selector: entry_point.selector.to_biguint(),
-                                    function_idx: entry_point.function_idx as usize,
-                                }
-                            })
-                            .collect(),
-                        l1_handler: cloned_class
-                            .entry_points_by_type
-                            .l1_handler
-                            .iter()
-                            .map(|entry_point| {
-                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
-                                    selector: entry_point.selector.to_biguint(),
-                                    function_idx: entry_point.function_idx as usize,
-                                }
-                            })
-                            .collect(),
-                        constructor: cloned_class
-                            .entry_points_by_type
-                            .constructor
-                            .iter()
-                            .map(|entry_point| {
-                                cairo_lang_starknet_classes::contract_class::ContractEntryPoint {
-                                    selector: entry_point.selector.to_biguint(),
-                                    function_idx: entry_point.function_idx as usize,
-                                }
-                            })
-                            .collect(),
-                    },
-                abi: None,
-            };
-            let casm_program = compile_sierra_contract_class(contract_class, usize::MAX)
-                .map_err(|e| {
-                    warn!("Failed to compile sierra contract class: {:?}", e);
-                    e
-                })
-                .unwrap();
-
-            let pc_to_ptr_sys_calls =
-                get_pc_sys_call_mappings(vm_trace, &casm_program.instructions);
-
-            let mut storage_changes: HashMap<String, (Option<String>, String)> = HashMap::new();
-            for trace_entry in vm_trace {
-                let syscall = get_system_call_at_trace_step(
-                    &pc_to_ptr_sys_calls,
-                    vm_memory,
-                    trace_entry,
-                    None,
-                    None,
+    let pc_to_ptr_sys_calls = get_pc_sys_call_mappings(vm_trace, &casm_program.instructions);
+    let mut storage_changes: HashMap<String, (Option<String>, String)> = HashMap::new();
+    for trace_entry in vm_trace {
+        let syscall =
+            get_system_call_at_trace_step(&pc_to_ptr_sys_calls, vm_memory, trace_entry, None, None);
+        match syscall {
+            Some(ESysCall::StorageWrite(storage_write)) => {
+                let before = storage_view
+                    .get(&(
+                        contract_address,
+                        StorageKey(storage_write.address.try_into().unwrap()),
+                    ))
+                    .cloned();
+                storage_changes.insert(
+                    storage_write.address.to_hex_string(),
+                    (
+                        before.map(|before| before.to_hex_string()),
+                        storage_write.value.to_hex_string(),
+                    ),
                 );
-                match syscall {
-                    Some(ESysCall::StorageWrite(storage_write)) => {
-                        let before = storage_view
-                            .get(&(
-                                contract_address,
-                                StorageKey(storage_write.address.try_into().unwrap()),
-                            ))
-                            .cloned();
-                        storage_changes.insert(
-                            storage_write.address.to_hex_string(),
-                            (
-                                before.map(|before| before.to_hex_string()),
-                                storage_write.value.to_hex_string(),
-                            ),
-                        );
-                    }
-                    _ => {}
-                }
             }
-
-            Some(storage_changes)
+            _ => {}
         }
-        _ => None,
     }
+
+    Some(storage_changes)
 }
 
 pub async fn fetch_before_storage_changes(
