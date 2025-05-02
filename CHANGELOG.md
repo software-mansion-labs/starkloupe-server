@@ -1,5 +1,25 @@
 # Changelog
 
+### [0.0.72] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.72)
+
+- Fix the revert tx error messages parsing
+
+### [0.0.71] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.71)
+
+- Storage changes optimization
+
+### [0.0.70] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.70)
+
+- Array allocation size check
+
+### [0.0.69] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.69)
+
+- Upgrade to latest starknet::providers - 0.14.0, remove old starknet providers - 0.10.0
+
+### [0.0.68] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.68)
+
+- Storage changes
+
 ### [0.0.67] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.67)
 
 - Add timeout duration for transaction simulation request

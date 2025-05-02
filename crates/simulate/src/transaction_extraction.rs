@@ -371,9 +371,6 @@ pub fn extract_transaction_contex(
 pub fn extract_chain_id_from_felt(
     chain_id_felt: Felt,
 ) -> Result<ChainId, TransactionSimulationError> {
-    let chain_id_string = felts_to_string(&[chain_id_felt])
-        .first()
-        .cloned()
-        .unwrap_or_default();
+    let chain_id_string = felts_to_string(&[chain_id_felt]);
     Ok(ChainId::Other(chain_id_string))
 }

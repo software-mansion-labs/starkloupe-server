@@ -245,33 +245,47 @@ pub fn felt_vec_to_hex_vec(felt_array: Vec<Felt>) -> Vec<String> {
     hex_representation
 }
 
-pub fn felts_to_string(felts: &[Felt]) -> Vec<String> {
-    let mut decoded_strings = Vec::new();
+pub fn felts_to_string(felts: &[Felt]) -> String {
+    let mut result = String::new();
+    let mut pending_text = String::new();
 
     for felt in felts {
-        // Convert Felt to BigUint
-        let value = felt.to_biguint();
+        let hex_str = format!("{:x}", felt);
 
-        // Convert BigUint to bytes (big-endian)
-        let mut felt_bytes = value.to_bytes_be();
+        if let Ok(bytes) = hex::decode(&hex_str) {
+            if bytes.iter().all(|&b| b.is_ascii() && !b.is_ascii_control()) {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
 
-        // Remove leading zeros (optional)
-        while let Some(0) = felt_bytes.first() {
-            felt_bytes.remove(0);
+                if !pending_text.is_empty() {
+                    pending_text.push_str(&text);
+                    continue;
+                }
+                pending_text = text;
+                continue;
+            }
         }
 
-        // Attempt to decode bytes into a String
-        match String::from_utf8(felt_bytes.clone()) {
-            Ok(s) => decoded_strings.push(s),
-            Err(_) => {
-                // Include the raw hexadecimal representation
-                let hex_repr = format!("0x{}", hex::encode(&felt_bytes));
-                decoded_strings.push(hex_repr);
+        if !pending_text.is_empty() {
+            if !result.is_empty() {
+                result.push(' ');
             }
+            result.push_str(&pending_text);
+            pending_text.clear();
+        }
+
+        if !result.is_empty() {
+            result.push(' ');
         }
     }
 
-    decoded_strings
+    if !pending_text.is_empty() {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        result.push_str(&pending_text);
+    }
+
+    result
 }
 
 pub fn clone_vm_trace(vm_trace: &Vec<RelocatedTraceEntry>) -> Vec<RelocatedTraceEntry> {
@@ -300,7 +314,6 @@ pub fn get_contract_call_id(
 pub fn get_internal_function_call_id(contract_call_id: &str, fp: usize) -> String {
     format!("{}-fp-{}", contract_call_id, fp)
 }
-
 
 pub fn resource_bounds_mapping_to_valid_resource_bounds(
     resource_bounds_mapping: &ResourceBoundsMapping,

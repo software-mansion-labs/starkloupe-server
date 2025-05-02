@@ -124,7 +124,7 @@ pub async fn simulate_transaction(
             error!("Simulation task panicked: {:?}", join_err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulation transaction. Reach out to us for assistance.".to_string(),
+                "Failed to simulate transaction. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }
@@ -195,7 +195,7 @@ pub async fn simulate_transaction_by_hash_handler(
             error!("Simulation of tx panicked: {:?}", join_err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulation transaction. Reach out to us for assistance.".to_string(),
+                "Failed to simulate transaction. Reach out to us for assistance.".to_string(),
             )
                 .into_response()
         }
