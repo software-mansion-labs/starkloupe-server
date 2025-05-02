@@ -1,4 +1,5 @@
 use blockifier::execution::entry_point::CallEntryPoint;
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CallTrace;
@@ -8,7 +9,6 @@ use serde::Serialize;
 use starknet::core::types::Felt;
 use std::borrow::Cow;
 use std::cell::Ref;
-use std::collections::HashMap;
 use verification::CodeLocation;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::get_name_of_entry_point_selector;
@@ -39,6 +39,9 @@ pub struct ContractCall {
     pub cairo_version: Option<String>,
     pub is_failed: bool,
     pub is_deepest_panic_result: bool,
+
+    pub sierra_gas: u64,
+    pub vm_resources: ExecutionResources,
 
     pub result_types: Option<Vec<Cow<'static, str>>>,
     pub arguments_names: Option<Vec<Cow<'static, str>>>,
@@ -92,6 +95,9 @@ impl ContractCall {
             cairo_version: None,
             is_failed: matches!(call_trace_ref.result, CallResult::Failure(_)),
             is_deepest_panic_result: false,
+
+            sierra_gas: call_trace_ref.gas_consumed,
+            vm_resources: call_trace_ref.used_execution_resources.clone(),
 
             result_types: None,
             decoded_result: None,

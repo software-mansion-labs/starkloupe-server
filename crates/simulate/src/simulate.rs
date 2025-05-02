@@ -26,12 +26,9 @@ use blockifier::context::TransactionContext;
 use blockifier::execution::call_info::CallInfo;
 use blockifier::execution::common_hints::ExecutionMode;
 use blockifier::execution::contract_class::RunnableCompiledClass as BlockifierContractClass;
-use blockifier::execution::contract_class::TrackedResource;
 use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
-use blockifier::execution::entry_point::EntryPointRevertInfo;
-use blockifier::execution::entry_point::ExecutionRevertInfo;
 use blockifier::execution::entry_point::SierraGasRevertTracker;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
@@ -337,7 +334,6 @@ fn run_simulation(
             u64::MAX,
         );
     }
-
     Ok(cheatnet_state)
 }
 
@@ -792,16 +788,7 @@ fn validate_call(
         SierraGasRevertTracker::new(GasAmount(initial_gas)),
     );
 
-    let tracked_resource = vec![TrackedResource::SierraGas];
-    validation_context.tracked_resource_stack = tracked_resource;
     let class_hash = state.get_class_hash_at(storage_address)?;
-    let reverted_info = ExecutionRevertInfo(vec![EntryPointRevertInfo::new(
-        storage_address,
-        class_hash,
-        0,
-        0,
-    )]);
-    validation_context.revert_infos = reverted_info;
 
     let mut validate_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
@@ -870,17 +857,6 @@ fn execute_call(
         false,
         SierraGasRevertTracker::new(GasAmount(initial_gas)),
     );
-
-    let tracked_resource = vec![TrackedResource::SierraGas];
-    execution_context.tracked_resource_stack = tracked_resource;
-    let class_hash = state.get_class_hash_at(storage_address)?;
-    let reverted_info = ExecutionRevertInfo(vec![EntryPointRevertInfo::new(
-        storage_address,
-        class_hash,
-        0,
-        0,
-    )]);
-    execution_context.revert_infos = reverted_info;
 
     let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
