@@ -2085,7 +2085,7 @@ dependencies = [
 [[package]]
 name = "cairo-serde-macros"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2174,7 +2174,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "cheatnet"
 version = "0.40.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "bimap",
@@ -2446,7 +2446,7 @@ checksum = "21a53c0a4d288377e7415b53dcfc3c04da5cdc2cc95c8d5ac178b58f0b861ad6"
 [[package]]
 name = "conversions"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "blockifier",
@@ -2728,7 +2728,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 [[package]]
 name = "data-transformer"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "cairo-lang-diagnostics",
@@ -6536,7 +6536,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "blockifier",
@@ -6763,7 +6763,7 @@ dependencies = [
 [[package]]
 name = "scarb-api"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "camino",
@@ -7392,7 +7392,7 @@ dependencies = [
 [[package]]
 name = "shared"
 version = "0.1.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "cairo-lang-runner",
@@ -9198,7 +9198,7 @@ checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 [[package]]
 name = "universal-sierra-compiler-api"
 version = "1.0.0"
-source = "git+https://github.com/walnuthq/starknet-foundry?rev=a8c740f4e721277b9df3748f1f75ee842e948fe6#a8c740f4e721277b9df3748f1f75ee842e948fe6"
+source = "git+https://github.com/walnuthq/starknet-foundry?rev=800e8322d73395cd2962cb8e5682ea0234f8d385#800e8322d73395cd2962cb8e5682ea0234f8d385"
 dependencies = [
  "anyhow",
  "cairo-lang-casm",

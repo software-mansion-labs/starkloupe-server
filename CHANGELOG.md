@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.73] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.73)
+
+- Fix the usage of Sierra version from sierra program instead of LATEST constant
+
 ### [0.0.72] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.72)
 
 - Fix the revert tx error messages parsing
