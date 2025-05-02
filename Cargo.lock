@@ -7462,6 +7462,7 @@ dependencies = [
  "anyhow",
  "aws-sdk-s3",
  "blockifier",
+ "cairo-lang-sierra-to-casm",
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
  "cairo-vm",
