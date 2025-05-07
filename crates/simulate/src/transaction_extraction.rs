@@ -363,7 +363,7 @@ pub fn extract_transaction_contex(
                 max_fee: max_fee.unwrap_or(Fee(u128::MAX)),
             })
         }
-        // Sve ostale kombinacije idu u current
+        // All other to current
         _ => TransactionInfo::Current(CurrentTransactionInfo {
             common_fields: CommonAccountFields {
                 transaction_hash: transaction_hash.unwrap_or_default(),
