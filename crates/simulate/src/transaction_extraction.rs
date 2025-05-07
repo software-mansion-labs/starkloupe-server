@@ -6,6 +6,7 @@ use blockifier::transaction::objects::{
 };
 use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
+use num_traits::ToPrimitive;
 use starknet::core::types::{
     BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResult, Felt, InvokeTransaction,
     MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
@@ -47,6 +48,7 @@ pub fn extract_submitted_tx(
     TransactionVersion,
     TransactionType,
     TransactionSignature,
+    Fee,
     ValidResourceBounds,
     PaymasterData,
 )> {
@@ -60,6 +62,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::ZERO,
                 TransactionType::InvokeFunction,
                 TransactionSignature(tx.signature),
+                Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
@@ -71,6 +74,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::ONE,
                 TransactionType::InvokeFunction,
                 TransactionSignature(tx.signature),
+                Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
@@ -82,6 +86,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::THREE,
                 TransactionType::InvokeFunction,
                 TransactionSignature(tx.signature),
+                Fee(u128::MAX),
                 resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                 PaymasterData(tx.paymaster_data),
             )),
@@ -95,6 +100,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::ZERO,
                 TransactionType::Declare,
                 TransactionSignature(tx.signature),
+                Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
@@ -106,6 +112,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::ONE,
                 TransactionType::Declare,
                 TransactionSignature(tx.signature),
+                Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
@@ -117,6 +124,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::TWO,
                 TransactionType::Declare,
                 TransactionSignature(tx.signature),
+                Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
             )),
@@ -128,6 +136,7 @@ pub fn extract_submitted_tx(
                 TransactionVersion::THREE,
                 TransactionType::Declare,
                 TransactionSignature(tx.signature),
+                Fee::default(),
                 resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                 PaymasterData(tx.paymaster_data),
             )),
@@ -140,6 +149,7 @@ pub fn extract_submitted_tx(
             TransactionVersion::ZERO,
             TransactionType::L1Handler,
             TransactionSignature::default(),
+            Fee::default(),
             resource_bounds_mapping_to_default_valid_resource_bounds(),
             PaymasterData::default(),
         )),
@@ -312,10 +322,10 @@ pub fn extract_transaction_contex(
     nonce: &Option<Nonce>,
     chain_id: ChainId,
     block_info: &BlockInfo,
+    max_fee: Option<Fee>,
     resource_bounds: Option<ValidResourceBounds>,
     paymaster_data: Option<PaymasterData>,
 ) -> Arc<TransactionContext> {
-    // Create a chain-specific block context
     let chain_info = ChainInfo {
         chain_id,
         fee_token_addresses: FeeTokenAddresses {
@@ -324,8 +334,8 @@ pub fn extract_transaction_contex(
         },
     };
 
-    let transaction_info = match transaction_type {
-        Some(TransactionType::L1Handler) => {
+    let transaction_info = match (transaction_version, transaction_type) {
+        (_, Some(TransactionType::L1Handler)) => {
             TransactionInfo::Deprecated(DeprecatedTransactionInfo {
                 common_fields: CommonAccountFields {
                     transaction_hash: transaction_hash.unwrap_or_default(),
@@ -335,10 +345,26 @@ pub fn extract_transaction_contex(
                     sender_address: *sender_address,
                     only_query: false,
                 },
-                max_fee: Fee::default(),
+                max_fee: max_fee.unwrap_or_default(),
             })
         }
-        Some(_) | None => TransactionInfo::Current(CurrentTransactionInfo {
+        (version, Some(TransactionType::InvokeFunction))
+            if version.0 == Felt::ZERO || version.0 == Felt::ONE =>
+        {
+            TransactionInfo::Deprecated(DeprecatedTransactionInfo {
+                common_fields: CommonAccountFields {
+                    transaction_hash: transaction_hash.unwrap_or_default(),
+                    version: *transaction_version,
+                    signature: transaction_signature.unwrap_or_default(),
+                    nonce: nonce.unwrap_or_default(),
+                    sender_address: *sender_address,
+                    only_query: false,
+                },
+                max_fee: max_fee.unwrap_or(Fee(u128::MAX)),
+            })
+        }
+        // Sve ostale kombinacije idu u current
+        _ => TransactionInfo::Current(CurrentTransactionInfo {
             common_fields: CommonAccountFields {
                 transaction_hash: transaction_hash.unwrap_or_default(),
                 version: *transaction_version,
@@ -367,7 +393,6 @@ pub fn extract_transaction_contex(
         tx_info: transaction_info,
     })
 }
-
 pub fn extract_chain_id_from_felt(
     chain_id_felt: Felt,
 ) -> Result<ChainId, TransactionSimulationError> {
