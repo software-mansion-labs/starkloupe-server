@@ -1,7 +1,4 @@
 use anyhow::Result;
-use blockifier::execution::{
-    deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
-};
 use cairo_lang_casm::{
     ap_change::ApChange,
     cell_expression::{CellExpression, CellOperator},
@@ -22,9 +19,9 @@ use cairo_lang_starknet_classes::{
     contract_class::ContractClass,
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
+use data_decoder::create_decoded_value_by_type;
 use data_decoder::internal_function_decoder::decode_internal_datas;
 use data_decoder::utils::skip_builtin_type_declaration;
-use data_decoder::{create_decoded_value_by_type, event_decoder::decode_event_datas};
 use data_decoder::{DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
@@ -38,10 +35,9 @@ use walnut_shared::felts_to_string;
 use walnut_shared::utils::simplify_type_name;
 
 use crate::{
-    call_trace::{ContractCall, ESysCall, EventSysCall, InternalFnCallIO, StorageWrite},
+    call_trace::{ESysCall, InternalFnCallIO},
     utils::{
-        compile_sierra_contract_class, find_event_by_selector, get_pc_mappings,
-        get_pc_sys_call_mappings, get_system_call_at_trace_step, is_panic_result,
+        get_pc_mappings, get_pc_sys_call_mappings, get_system_call_at_trace_step, is_panic_result,
         make_casm_to_sierra_map,
     },
 };

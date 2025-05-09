@@ -1,6 +1,5 @@
 use starknet::core::types::{
-    DeclareTransaction, DeployAccountTransaction, DeployTransaction, Felt, InvokeTransaction,
-    Transaction,
+    DeclareTransaction, DeployAccountTransaction, Felt, InvokeTransaction, Transaction,
 };
 
 pub trait TransactionInformation {

@@ -3,6 +3,7 @@ pub mod contract_calls_map;
 pub mod contract_names;
 pub mod debugger_trace;
 pub mod events;
+pub mod execution;
 pub mod function_calls;
 pub mod simulate;
 pub mod state;
@@ -11,6 +12,7 @@ pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
 use blockifier::execution::errors::EntryPointExecutionError;
+use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
@@ -30,6 +32,7 @@ use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::transaction::fields::Calldata;
+use starknet_api::transaction::fields::Fee;
 use starknet_api::transaction::fields::PaymasterData;
 use starknet_api::transaction::fields::TransactionSignature;
 use starknet_api::transaction::fields::ValidResourceBounds;
@@ -73,6 +76,7 @@ pub struct SimulationArgs {
     pub transaction_signature: Option<TransactionSignature>,
     pub transaction_hash: Option<TransactionHash>,
     pub transaction_type: Option<TransactionType>,
+    pub max_fee: Option<Fee>,
     pub resource_bounds: Option<ValidResourceBounds>,
     pub paymaster_data: Option<PaymasterData>,
     pub strkgate_event: Option<Event>,
@@ -101,6 +105,7 @@ impl SimulationArgs {
             transaction_signature: None,
             transaction_hash: None,
             transaction_type: None,
+            max_fee: None,
             resource_bounds: None,
             paymaster_data: None,
             strkgate_event: None,
@@ -164,6 +169,8 @@ pub enum TransactionSimulationError {
     FailedToFetchChainId,
     #[error("Failed to decode chain id")]
     FailedToDecodeChainId,
+    #[error("Fee check error")]
+    FeeCheckError(#[from] FeeCheckError),
     #[error("Error occurred: {0}")]
     OtherError(String),
 }

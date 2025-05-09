@@ -3,6 +3,9 @@ use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::events::EmittedEvent;
+use crate::execution::{
+    execute_transaction_flows, get_execution_result, handle_invoke_function_post_exec,
+};
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
@@ -13,31 +16,17 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::utils::calldata_to_hex;
-use crate::utils::transaction_type_to_string;
-use crate::ContractCall;
+use crate::utils::{calldata_to_hex, transaction_type_to_string};
 use crate::EStarknetEvent;
 use crate::FunctionCallsMap;
 use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
-use blockifier::context::TransactionContext;
-use blockifier::execution::call_info::CallInfo;
-use blockifier::execution::common_hints::ExecutionMode;
-use blockifier::execution::contract_class::RunnableCompiledClass as BlockifierContractClass;
-use blockifier::execution::entry_point::CallEntryPoint;
-use blockifier::execution::entry_point::CallType;
-use blockifier::execution::entry_point::EntryPointExecutionContext;
-use blockifier::execution::entry_point::SierraGasRevertTracker;
+use blockifier::fee::fee_checks::PostExecutionReport;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use blockifier::state::state_api::State;
-use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
 use ethers::abi::AbiDecode;
 use ethers::abi::AbiEncode;
@@ -58,26 +47,18 @@ use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
 use starknet::providers::Provider;
-use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
-use starknet_api::contract_class::EntryPointType;
-use starknet_api::core::EntryPointSelector;
-use starknet_api::core::{ChainId, ContractAddress};
-use starknet_api::execution_resources::GasAmount;
-use starknet_api::transaction::constants;
-use starknet_api::transaction::fields::Calldata;
+use starknet_api::core::ChainId;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::sync::Arc;
 use tracing::warn;
 use url::Url;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
-use walnut_shared::felts_to_string;
 use walnut_shared::fetch_tx_block_number_from_voyager;
 use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::{
@@ -89,6 +70,7 @@ use walnut_shared::{EChainId, ENetwork};
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
+    execution_result: Option<ExecutionResult>,
     args: SimulationArgs,
 ) -> Result<(SimulationInfo, BlockTimestamp, usize, usize), TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
@@ -121,7 +103,8 @@ pub async fn simulate(
     );
     let strkgate_event = args.strkgate_event.clone();
 
-    let cheatnet_state = run_simulation(block_info, args, &mut cached_fork_state)?;
+    let (cheatnet_state, post_execution_report) =
+        run_simulation(block_info, args, &mut cached_fork_state)?;
 
     let ContractCallsMapBuilder {
         mut contract_calls_map,
@@ -220,13 +203,17 @@ pub async fn simulate(
         .set_contract_names(&mut contract_calls_map)
         .await;
 
-    let execution_result =
-        get_execution_result(&contract_calls_map.0, deepest_failed_contract_call_id)?;
+    let execution_result = get_execution_result(
+        &contract_calls_map.0,
+        deepest_failed_contract_call_id,
+        post_execution_report,
+        execution_result,
+    )?;
 
     if let ExecutionResult::Reverted { reason, .. } = &execution_result {
         if let Some(call) = contract_calls_map
             .0
-            .get_mut(&deepest_failed_contract_call_id.unwrap())
+            .get_mut(&deepest_failed_contract_call_id.unwrap_or(1))
         {
             call.error_message = Some(reason.clone());
             call.is_deepest_panic_result = true;
@@ -281,18 +268,21 @@ fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
-) -> Result<CheatnetState, TransactionSimulationError> {
+) -> Result<(CheatnetState, Option<PostExecutionReport>), TransactionSimulationError> {
+    let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
+    let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(
         &args.sender_address,
         &args.transaction_version,
-        args.transaction_signature,
+        args.transaction_signature.clone(),
         &args.transaction_hash,
         &args.transaction_type,
         &args.nonce,
-        args.chain_id,
+        args.chain_id.clone(),
         &block_info,
-        args.resource_bounds,
-        args.paymaster_data,
+        args.max_fee,
+        args.resource_bounds.clone(),
+        args.paymaster_data.clone(),
     );
 
     let mut cheatnet_state = CheatnetState {
@@ -302,39 +292,30 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
-    if args.transaction_hash.is_some() && args.transaction_type != Some(TransactionType::L1Handler)
-    {
-        let validate_selector = match args.transaction_type {
-            Some(TransactionType::Declare) => {
-                selector_from_name(constants::VALIDATE_DECLARE_ENTRY_POINT_NAME)
-            }
-            _ => selector_from_name(constants::VALIDATE_ENTRY_POINT_NAME),
-        };
+    //Execute and validation and calls
+    let (validate_call_info, execute_call_info) = execute_transaction_flows(
+        &args,
+        cached_fork_state,
+        &mut cheatnet_state,
+        transaction_context.clone(),
+    )?;
 
-        let _validate_result = validate_call(
-            args.calldata.clone(),
-            args.sender_address,
-            validate_selector,
+    //Handle post-execution for InvokeFunction
+    let post_execution_report = if args.transaction_type == Some(TransactionType::InvokeFunction) {
+        Some(handle_invoke_function_post_exec(
+            &args,
             cached_fork_state,
-            &mut cheatnet_state,
-            transaction_context.clone(),
-            u64::MAX,
-        );
-    }
+            &transaction_context,
+            validate_call_info,
+            execute_call_info,
+            signature_len,
+            calldata_len,
+        )?)
+    } else {
+        None
+    };
 
-    if args.transaction_type.is_none() || args.transaction_type != Some(TransactionType::Declare) {
-        let _execution_result = execute_call(
-            args.entry_point_selector,
-            args.calldata.clone(),
-            args.sender_address,
-            args.transaction_type,
-            cached_fork_state,
-            &mut cheatnet_state,
-            transaction_context.clone(),
-            u64::MAX,
-        );
-    }
-    Ok(cheatnet_state)
+    Ok((cheatnet_state, post_execution_report))
 }
 
 pub async fn simulate_by_calldata(
@@ -367,7 +348,7 @@ pub async fn simulate_by_calldata(
         block_timestamp,
         transaction_index_in_block,
         total_transactions_in_block,
-    ) = simulate(db_pool, s3_client, args).await?;
+    ) = simulate(db_pool, s3_client, None, args).await?;
 
     Ok(TransactionSimulationResult {
         simulation_result,
@@ -449,6 +430,7 @@ async fn simulate_starknet_transaction_by_hash(
             transaction_version,
             transaction_type,
             signature,
+            max_fee,
             resource_bounds,
             paymaster_data,
         )) = extract_submitted_tx(transaction)
@@ -478,9 +460,10 @@ async fn simulate_starknet_transaction_by_hash(
                             )?,
                         };
 
+                        let tx_execution_result =
+                            extract_execution_status_transaction_receipt(&transaction_receipt);
                         // Check for execution status
-                        if let Some(ExecutionResult::Reverted { reason }) =
-                            extract_execution_status_transaction_receipt(&transaction_receipt)
+                        if let Some(ExecutionResult::Reverted { ref reason }) = tx_execution_result
                         {
                             if reason.contains("RunResources") {
                                 // Fetch block timestamp
@@ -492,7 +475,9 @@ async fn simulate_starknet_transaction_by_hash(
                                     function_calls_map: FunctionCallsMap::new(),
                                     event_calls_map: EventCallsMap::default(),
                                     events: Vec::new(),
-                                    execution_result: ExecutionResult::Reverted { reason },
+                                    execution_result: ExecutionResult::Reverted {
+                                        reason: reason.to_string(),
+                                    },
                                     simulation_debugger_data: Some(SimulationDebuggerData {
                                         classes_debugger_data: HashMap::new(),
                                         debugger_trace: Vec::new(),
@@ -529,6 +514,7 @@ async fn simulate_starknet_transaction_by_hash(
                         ) = simulate(
                             db_pool,
                             s3_client,
+                            tx_execution_result,
                             SimulationArgs {
                                 rpc_url: starknet_rpc_url.clone(),
                                 chain_id: chain_id.clone(),
@@ -541,6 +527,7 @@ async fn simulate_starknet_transaction_by_hash(
                                 transaction_signature: Some(signature),
                                 transaction_hash: Some(TransactionHash(transaction_hash)),
                                 transaction_type: Some(transaction_type),
+                                max_fee: Some(max_fee),
                                 resource_bounds: Some(resource_bounds),
                                 paymaster_data: Some(paymaster_data),
                                 strkgate_event,
@@ -624,6 +611,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
                     ) = simulate(
                         db_pool,
                         s3_client,
+                        None,
                         SimulationArgs {
                             rpc_url: starknet_rpc_url.clone(),
                             chain_id: core_l2_chain_id.clone(),
@@ -636,6 +624,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
                             transaction_signature: None,
                             transaction_hash: l2_tx_hash,
                             transaction_type: Some(TransactionType::L1Handler),
+                            max_fee: None,
                             resource_bounds: None,
                             paymaster_data: None,
                             strkgate_event: None,
@@ -740,161 +729,4 @@ fn extract_sierra_and_cairo_versions(sierra_program: &[Felt]) -> (Option<String>
     );
 
     (Some(sierra_version), Some(cairo_version))
-}
-
-fn get_execution_result(
-    contract_calls_map: &HashMap<u32, ContractCall>,
-    deepest_contract_call_id: Option<u32>,
-) -> Result<ExecutionResult, TransactionSimulationError> {
-    if let Some(deepest_contract_call_id) = deepest_contract_call_id {
-        if let Some(call) = contract_calls_map.get(&deepest_contract_call_id) {
-            if let CallResult::Failure(failure) = &call.result {
-                match failure {
-                    CallFailure::Panic { panic_data } => {
-                        let reason = felts_to_string(panic_data);
-                        Ok(ExecutionResult::Reverted {
-                            reason: reason.trim().to_string(),
-                        })
-                    }
-                    CallFailure::Error { msg } => {
-                        let reason = msg.to_string().trim().to_string();
-                        Ok(ExecutionResult::Reverted { reason })
-                    }
-                }
-            } else {
-                Ok(ExecutionResult::Succeeded)
-            }
-        } else {
-            unreachable!("deepest_contract_call_id not found in contract_calls_map");
-        }
-    } else {
-        Ok(ExecutionResult::Succeeded)
-    }
-}
-
-fn validate_call(
-    calldata: Calldata,
-    storage_address: ContractAddress,
-    validate_selector: EntryPointSelector,
-    state: &mut dyn State,
-    cheatnet_state: &mut CheatnetState,
-    tx_context: Arc<TransactionContext>,
-    initial_gas: u64,
-) -> Result<CallInfo, TransactionSimulationError> {
-    let mut validation_context = EntryPointExecutionContext::new(
-        tx_context.clone(),
-        ExecutionMode::Validate,
-        false,
-        SierraGasRevertTracker::new(GasAmount(initial_gas)),
-    );
-
-    let class_hash = state.get_class_hash_at(storage_address)?;
-
-    let mut validate_call = CallEntryPoint {
-        entry_point_type: EntryPointType::External,
-        entry_point_selector: validate_selector,
-        calldata,
-        class_hash: None,
-        code_address: None,
-        storage_address,
-        caller_address: ContractAddress::default(),
-        call_type: CallType::Call,
-        initial_gas,
-    };
-
-    let validate_call_info = execute_call_entry_point(
-        &mut validate_call,
-        state,
-        cheatnet_state,
-        &mut validation_context,
-    );
-
-    let validate_call_info = match validate_call_info {
-        Ok(info) => info,
-        Err(err) => {
-            return Err(TransactionSimulationError::TransactionExecutionError(
-                TransactionExecutionError::ExecutionError {
-                    error: err,
-                    class_hash,
-                    storage_address,
-                    selector: validate_selector,
-                },
-            ));
-        }
-    };
-    let contract_class = state.get_compiled_class(class_hash)?;
-    if matches!(
-        contract_class,
-        BlockifierContractClass::V0(_) | BlockifierContractClass::V1(_)
-    ) {
-        let expected_retdata = vec![*constants::VALIDATE_RETDATA];
-
-        if validate_call_info.execution.retdata.0 != expected_retdata {
-            return Err(TransactionSimulationError::TransactionExecutionError(
-                TransactionExecutionError::InvalidValidateReturnData {
-                    actual: validate_call_info.execution.retdata,
-                },
-            ));
-        }
-    }
-
-    Ok(validate_call_info)
-}
-
-fn execute_call(
-    entry_point_selector: Option<EntryPointSelector>,
-    calldata: Calldata,
-    storage_address: ContractAddress,
-    transaction_type: Option<TransactionType>,
-    state: &mut dyn State,
-    cheatnet_state: &mut CheatnetState,
-    tx_context: Arc<TransactionContext>,
-    initial_gas: u64,
-) -> Result<CallInfo, TransactionSimulationError> {
-    let mut execution_context = EntryPointExecutionContext::new(
-        tx_context.clone(),
-        ExecutionMode::Execute,
-        false,
-        SierraGasRevertTracker::new(GasAmount(initial_gas)),
-    );
-
-    let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
-
-    let mut execute_call = CallEntryPoint {
-        entry_point_type: EntryPointType::External,
-        entry_point_selector: execute_entry_point_selector,
-        calldata: calldata.clone(),
-        class_hash: None,
-        code_address: None,
-        storage_address,
-        caller_address: ContractAddress::default(),
-        call_type: CallType::Call,
-        initial_gas,
-    };
-
-    if transaction_type.is_some()
-        && transaction_type == Some(TransactionType::L1Handler)
-        && entry_point_selector.is_some()
-    {
-        execute_call = CallEntryPoint {
-            entry_point_type: EntryPointType::L1Handler,
-            entry_point_selector: entry_point_selector.unwrap(),
-            calldata,
-            class_hash: None,
-            code_address: None,
-            storage_address,
-            caller_address: ContractAddress::default(),
-            call_type: CallType::Call,
-            initial_gas,
-        }
-    }
-
-    let execution_result = execute_call_entry_point(
-        &mut execute_call,
-        state,
-        cheatnet_state,
-        &mut execution_context,
-    )?;
-
-    Ok(execution_result)
 }
