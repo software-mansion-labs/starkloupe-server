@@ -1,5 +1,6 @@
 use crate::state::ForkStateReader;
 use crate::ContractCall;
+use crate::DetailedTransactionReceipt;
 use crate::SimulationArgs;
 use crate::TransactionSimulationError;
 use blockifier::context::TransactionContext;
@@ -12,6 +13,7 @@ use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
 use blockifier::execution::entry_point::SierraGasRevertTracker;
 use blockifier::fee::fee_checks::PostExecutionReport;
+use blockifier::fee::fee_utils::get_vm_resources_cost;
 use blockifier::fee::receipt::TransactionReceipt;
 use blockifier::fee::resources::ComputationResources;
 use blockifier::fee::resources::StarknetResources;
@@ -28,13 +30,18 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::Cal
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
 use starknet::core::types::ExecutionResult;
+use starknet::core::types::Felt;
 use starknet_api::abi::abi_utils::selector_from_name;
+use starknet_api::calldata;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::ContractAddress;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::execution_resources::GasAmount;
+use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::constants;
 use starknet_api::transaction::fields::Calldata;
+use starknet_api::transaction::fields::Fee;
+use starknet_api::transaction::fields::GasVectorComputationMode;
 use std::collections::HashMap;
 use std::sync::Arc;
 use walnut_shared::felts_to_string;
@@ -61,6 +68,26 @@ pub fn execute_transaction_flows(
         None
     };
 
+    // Ensure we have validation info if required
+    if should_validate(args) && validate_call_info.is_none() {
+        return Err(TransactionSimulationError::OtherError(
+            "Transaction validate error".to_string(),
+        ));
+    }
+
+    let mut execution_context = EntryPointExecutionContext::new(
+        transaction_context.clone(),
+        ExecutionMode::Execute,
+        false,
+        SierraGasRevertTracker::new(GasAmount(u64::MAX)),
+    );
+
+    if args.transaction_type.is_none() {
+        return Err(TransactionSimulationError::OtherError(
+            "Transaction type must be known".to_string(),
+        ));
+    }
+
     let execute_call_info = if should_execute(args) {
         execute_call(
             args.entry_point_selector,
@@ -69,8 +96,8 @@ pub fn execute_transaction_flows(
             args.transaction_type,
             cached_fork_state,
             cheatnet_state,
-            transaction_context.clone(),
             u64::MAX,
+            &mut execution_context,
         )
         .ok()
     } else {
@@ -80,25 +107,28 @@ pub fn execute_transaction_flows(
     Ok((validate_call_info, execute_call_info))
 }
 
-pub fn handle_invoke_function_post_exec(
+pub fn handle_post_exec_and_collect_gas_vectors(
     args: &SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
-    transaction_context: &TransactionContext,
+    cheatnet_state: &mut CheatnetState,
+    transaction_context: Arc<TransactionContext>,
     validate_call_info: Option<CallInfo>,
     execute_call_info: Option<CallInfo>,
     signature_len: usize,
     calldata_len: usize,
-) -> Result<PostExecutionReport, TransactionSimulationError> {
+) -> Result<(PostExecutionReport, DetailedTransactionReceipt), TransactionSimulationError> {
     let state_changes = cached_fork_state.get_actual_state_changes()?;
+
     let versioned_constants = transaction_context.block_context.versioned_constants();
+    let use_kzg_da = transaction_context.block_context.block_info().use_kzg_da;
+    let gas_mode = transaction_context.get_gas_vector_computation_mode();
 
     let execution_summary = CallInfo::summarize_many(
         validate_call_info.iter().chain(execute_call_info.iter()),
         versioned_constants,
     );
-
     let tx_resources = calculate_transaction_resources(
-        &args,
+        args,
         &transaction_context,
         &execution_summary,
         signature_len,
@@ -106,14 +136,89 @@ pub fn handle_invoke_function_post_exec(
         &state_changes,
     );
 
-    let tx_receipt = create_transaction_receipt(&transaction_context, tx_resources);
+    let tx_receipt = create_transaction_receipt(&transaction_context, &tx_resources);
 
-    Ok(PostExecutionReport::new(
-        cached_fork_state,
-        transaction_context,
-        &tx_receipt,
-        true,
-    )?)
+    let post_exec_report =
+        PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
+
+    let _fee_call_info = if args.transaction_type == Some(TransactionType::InvokeFunction) {
+        let fee = tx_receipt.fee;
+        Some(execute_fee_transfer(
+            cached_fork_state,
+            cheatnet_state,
+            transaction_context.clone(),
+            fee,
+            versioned_constants
+                .os_constants
+                .gas_costs
+                .base
+                .default_initial_gas_cost,
+        )?)
+    } else {
+        None
+    };
+
+    let fee_state_changes = cached_fork_state.get_actual_state_changes()?;
+
+    let tx_resources = calculate_transaction_resources(
+        args,
+        &transaction_context,
+        &execution_summary,
+        signature_len,
+        calldata_len,
+        &fee_state_changes,
+    );
+
+    let tx_receipt = create_transaction_receipt(&transaction_context, &tx_resources);
+
+    let starknet_resources = tx_receipt.resources.starknet_resources;
+    let computation_resources = tx_receipt.resources.computation;
+
+    let starknet_resources_archival_data_gas_vector = starknet_resources
+        .archival_data
+        .to_gas_vector(versioned_constants, &gas_mode);
+    let starknet_resources_message_gas_vector = starknet_resources.messages.to_gas_vector();
+    let starknet_resources_state_gas_vector = starknet_resources
+        .state
+        .to_gas_vector(use_kzg_da, &versioned_constants.allocation_cost);
+    let starknet_resources_gas_vector =
+        starknet_resources.to_gas_vector(versioned_constants, use_kzg_da, &gas_mode);
+
+    let computation_resources_vm_cost_gas_vector = get_vm_resources_cost(
+        versioned_constants,
+        &computation_resources.vm_resources,
+        computation_resources.n_reverted_steps,
+        &gas_mode,
+    );
+    let total_sierra_gas = computation_resources
+        .sierra_gas
+        .checked_add(computation_resources.reverted_sierra_gas)
+        .unwrap_or_default();
+    let computation_resources_sierra_gas_vector = match gas_mode {
+        GasVectorComputationMode::All => GasVector::from_l2_gas(total_sierra_gas),
+        GasVectorComputationMode::NoL2Gas => GasVector::from_l1_gas(
+            versioned_constants.sierra_gas_to_l1_gas_amount_round_up(total_sierra_gas),
+        ),
+    };
+    let computation_resources_gas_vector =
+        computation_resources.to_gas_vector(versioned_constants, &gas_mode);
+
+    let detailed_receipt = DetailedTransactionReceipt {
+        fee: tx_receipt.fee,
+        gas: tx_receipt.gas,
+        da_gas: tx_receipt.da_gas,
+
+        starknet_resources_gas_vector,
+        starknet_resources_archival_data_gas_vector,
+        starknet_resources_message_gas_vector,
+        starknet_resources_state_gas_vector,
+
+        computation_resources_vm_cost_gas_vector,
+        computation_resources_sierra_gas_vector,
+        computation_resources_gas_vector,
+    };
+
+    Ok((post_exec_report, detailed_receipt))
 }
 
 pub fn get_execution_result(
@@ -163,6 +268,8 @@ fn calculate_transaction_resources(
 ) -> TransactionResources {
     let charged_resources = execution_summary.charged_resources.clone();
     let versioned_constants = transaction_context.block_context.versioned_constants();
+    let use_kzg_da = transaction_context.block_context.block_info().use_kzg_da;
+    let gas_mode = transaction_context.get_gas_vector_computation_mode();
 
     let state_changes_count = state_changes.count_for_fee_charge(
         Some(args.sender_address),
@@ -185,14 +292,14 @@ fn calculate_transaction_resources(
         execution_summary.clone(),
     );
 
-    let total_vm_resources = &charged_resources.vm_resources
-        + &versioned_constants
-            .get_additional_os_tx_resources(
-                TransactionType::InvokeFunction,
-                &starknet_resources,
-                transaction_context.block_context.block_info().use_kzg_da,
-            )
-            .filter_unused_builtins();
+    let addition_os_resources = versioned_constants
+        .get_additional_os_tx_resources(
+            TransactionType::InvokeFunction,
+            &starknet_resources,
+            use_kzg_da,
+        )
+        .filter_unused_builtins();
+    let total_vm_resources = &charged_resources.vm_resources + &addition_os_resources;
 
     let computation_resources = ComputationResources {
         vm_resources: total_vm_resources,
@@ -209,7 +316,7 @@ fn calculate_transaction_resources(
 
 fn create_transaction_receipt(
     transaction_context: &TransactionContext,
-    resources: TransactionResources,
+    resources: &TransactionResources,
 ) -> TransactionReceipt {
     let versioned_constants = transaction_context.block_context.versioned_constants();
     let gas_mode = transaction_context.get_gas_vector_computation_mode();
@@ -233,7 +340,7 @@ fn create_transaction_receipt(
         fee,
         gas,
         da_gas,
-        resources,
+        resources: resources.clone(),
     }
 }
 
@@ -330,16 +437,9 @@ fn execute_call(
     transaction_type: Option<TransactionType>,
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,
-    tx_context: Arc<TransactionContext>,
     initial_gas: u64,
+    execution_context: &mut EntryPointExecutionContext,
 ) -> Result<CallInfo, TransactionSimulationError> {
-    let mut execution_context = EntryPointExecutionContext::new(
-        tx_context.clone(),
-        ExecutionMode::Execute,
-        false,
-        SierraGasRevertTracker::new(GasAmount(initial_gas)),
-    );
-
     let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
     let mut execute_call = CallEntryPoint {
@@ -371,8 +471,53 @@ fn execute_call(
         }
     }
 
+    let execution_result =
+        execute_call_entry_point(&mut execute_call, state, cheatnet_state, execution_context)?;
+
+    Ok(execution_result)
+}
+
+pub fn execute_fee_transfer(
+    state: &mut dyn State,
+    cheatnet_state: &mut CheatnetState,
+    tx_context: Arc<TransactionContext>,
+    actual_fee: Fee,
+    initial_gas: u64,
+) -> Result<CallInfo, TransactionSimulationError> {
+    let mut execution_context = EntryPointExecutionContext::new(
+        tx_context.clone(),
+        ExecutionMode::Execute,
+        false,
+        SierraGasRevertTracker::new(GasAmount(initial_gas)),
+    );
+
+    let storage_address = tx_context.fee_token_address();
+    let lsb_amount = Felt::from(actual_fee.0);
+    let msb_amount = Felt::ZERO;
+
+    let mut fee_transfer_call = CallEntryPoint {
+        entry_point_type: EntryPointType::External,
+        entry_point_selector: selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME),
+        calldata: calldata![
+            *tx_context
+                .block_context
+                .block_info()
+                .sequencer_address
+                .0
+                .key(),
+            lsb_amount,
+            msb_amount
+        ],
+        class_hash: None,
+        code_address: None,
+        storage_address,
+        caller_address: tx_context.tx_info.sender_address(),
+        call_type: CallType::Call,
+        initial_gas,
+    };
+
     let execution_result = execute_call_entry_point(
-        &mut execute_call,
+        &mut fee_transfer_call,
         state,
         cheatnet_state,
         &mut execution_context,

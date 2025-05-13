@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+semver.workspace = true
 ethers.workspace = true
 serde.workspace = true
 blockifier.workspace = true
