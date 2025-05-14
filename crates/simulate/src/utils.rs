@@ -1,10 +1,14 @@
+use crate::contract_calls_map::ContractCallsMap;
 use crate::transaction_extraction::extract_chain_id_from_felt;
+use crate::DetailedTransactionReceipt;
+use crate::FlameChartNode;
 use crate::SimulationRawArgs;
 use crate::TransactionSimulationError;
 use blockifier::transaction::transaction_types::TransactionType;
 use ethers::types::{Address, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
+use semver::Version;
 use starknet::providers::{Provider, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
@@ -127,4 +131,171 @@ pub fn eth_u256_to_felt(value: U256) -> Felt {
     let mut bytes = [0u8; 32];
     value.to_big_endian(&mut bytes);
     Felt::from_bytes_be(&bytes)
+}
+
+fn update_flamechart_node_names_recursively(
+    node: &mut FlameChartNode,
+    contract_calls_map: &ContractCallsMap,
+) {
+    if let Some(contract_call) = contract_calls_map.0.get(&node.call_id) {
+        node.name = Some(format_flamechart_node_name(
+            &contract_call.contract_name,
+            &contract_call.erc20_token_name,
+            &contract_call.erc20_token_symbol,
+            &contract_call.entry_point_interface_name,
+            &contract_call.entry_point_name,
+            &contract_call.entry_point_selector,
+            &contract_call.entry_point.storage_address.0.to_hex_string(),
+        ));
+    }
+
+    for child in &mut node.children {
+        update_flamechart_node_names_recursively(child, contract_calls_map);
+    }
+}
+
+pub fn format_flamechart_node_name(
+    contract_name: &Option<String>,
+    erc20_token_name: &Option<String>,
+    erc20_token_symbol: &Option<String>,
+    entry_point_interface_name: &Option<String>,
+    entry_point_name: &Option<String>,
+    entry_point_selector: &Option<String>,
+    contract_address: &str,
+) -> String {
+    let suffix = entry_point_name
+        .as_deref()
+        .or(entry_point_selector.as_deref())
+        .unwrap_or_default();
+
+    if let Some(name) = contract_name.as_deref() {
+        return format!("{}.{}", name, suffix);
+    }
+
+    if erc20_token_name.is_some() || erc20_token_symbol.is_some() {
+        let name = erc20_token_name.as_deref().unwrap_or_default();
+        let symbol = erc20_token_symbol
+            .as_deref()
+            .map(|s| format!(" ({})", s))
+            .unwrap_or_default();
+        return format!("{}{}.{}", name, symbol, suffix);
+    }
+
+    if let Some(interface) = entry_point_interface_name.as_deref() {
+        if let Some(last_part) = interface.rsplit("::").next() {
+            return format!("{}.{}", last_part, suffix);
+        }
+    }
+
+    format!("{}.{}", contract_address, suffix)
+}
+
+pub fn build_flamegraph(
+    detailed_tx_receipt: &DetailedTransactionReceipt,
+    contract_calls_map: &ContractCallsMap,
+    contract_flamechart: &mut [FlameChartNode],
+) -> Option<FlameChartNode> {
+    // Early return if any call has sierra_version < 1.7.0
+    if contract_flamechart
+        .iter()
+        .any(|node| contains_old_sierra_version(node, contract_calls_map))
+    {
+        return None;
+    }
+
+    for node in contract_flamechart.iter_mut() {
+        update_flamechart_node_names_recursively(node, contract_calls_map);
+    }
+    Some(FlameChartNode {
+        call_id: 0,
+        value: detailed_tx_receipt.gas.l2_gas.0,
+        name: Some("Total resources".to_string()),
+        children: vec![
+            FlameChartNode {
+                call_id: 0,
+                name: Some("Starknet resources".to_string()),
+                value: detailed_tx_receipt.starknet_resources_gas_vector.l2_gas.0,
+                children: vec![
+                    FlameChartNode {
+                        call_id: 0,
+                        name: Some("Archival resources".to_string()),
+                        value: detailed_tx_receipt
+                            .starknet_resources_archival_data_gas_vector
+                            .l2_gas
+                            .0,
+                        ..Default::default()
+                    },
+                    FlameChartNode {
+                        call_id: 0,
+                        name: Some("Messages resources".to_string()),
+                        value: detailed_tx_receipt
+                            .starknet_resources_message_gas_vector
+                            .l2_gas
+                            .0,
+                        ..Default::default()
+                    },
+                    FlameChartNode {
+                        call_id: 0,
+                        name: Some("State resources".to_string()),
+                        value: detailed_tx_receipt
+                            .starknet_resources_state_gas_vector
+                            .l2_gas
+                            .0,
+                        ..Default::default()
+                    },
+                ],
+            },
+            FlameChartNode {
+                call_id: 0,
+                name: Some("Computation Resources".to_string()),
+                value: detailed_tx_receipt
+                    .computation_resources_gas_vector
+                    .l2_gas
+                    .0,
+                children: vec![
+                    FlameChartNode {
+                        call_id: 0,
+                        name: Some("VM Cost".to_string()),
+                        value: detailed_tx_receipt
+                            .computation_resources_vm_cost_gas_vector
+                            .l2_gas
+                            .0,
+                        ..Default::default()
+                    },
+                    FlameChartNode {
+                        call_id: 0,
+                        name: Some("Sierra Cost".to_string()),
+                        value: detailed_tx_receipt
+                            .computation_resources_sierra_gas_vector
+                            .l2_gas
+                            .0,
+                        children: contract_flamechart.to_vec(),
+                    },
+                ],
+            },
+        ],
+    })
+}
+
+fn contains_old_sierra_version(
+    node: &FlameChartNode,
+    contract_calls_map: &ContractCallsMap,
+) -> bool {
+    if let Some(contract_call) = contract_calls_map.0.get(&node.call_id) {
+        if let Some(version) = &contract_call.sierra_version {
+            if is_version_less_than(version, "1.7.0") {
+                return true;
+            }
+        }
+    }
+
+    node.children
+        .iter()
+        .any(|child| contains_old_sierra_version(child, contract_calls_map))
+}
+
+fn is_version_less_than(version: &str, threshold: &str) -> bool {
+    Version::parse(version)
+        .and_then(|v| Version::parse(threshold).map(|t| v < t))
+        .unwrap_or(false)
 }

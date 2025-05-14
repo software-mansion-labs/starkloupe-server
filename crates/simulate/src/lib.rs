@@ -31,6 +31,7 @@ use starknet::providers::{ProviderError, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
+use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::fields::Fee;
 use starknet_api::transaction::fields::PaymasterData;
@@ -104,13 +105,37 @@ impl SimulationArgs {
             transaction_version,
             transaction_signature: None,
             transaction_hash: None,
-            transaction_type: None,
+            transaction_type: Some(TransactionType::InvokeFunction),
             max_fee: None,
             resource_bounds: None,
             paymaster_data: None,
             strkgate_event: None,
         })
     }
+}
+
+#[derive(Serialize, Debug)]
+pub struct DetailedTransactionReceipt {
+    pub fee: Fee,
+    pub gas: GasVector,
+    pub da_gas: GasVector,
+
+    pub starknet_resources_gas_vector: GasVector,
+    pub starknet_resources_archival_data_gas_vector: GasVector,
+    pub starknet_resources_message_gas_vector: GasVector,
+    pub starknet_resources_state_gas_vector: GasVector,
+
+    pub computation_resources_gas_vector: GasVector,
+    pub computation_resources_vm_cost_gas_vector: GasVector,
+    pub computation_resources_sierra_gas_vector: GasVector,
+}
+
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct FlameChartNode {
+    pub call_id: u32,
+    pub value: u64,
+    pub name: Option<String>,
+    pub children: Vec<FlameChartNode>,
 }
 
 #[derive(Serialize, Debug)]
@@ -129,6 +154,7 @@ pub struct TransactionSimulationResult {
     pub total_transactions_in_block: Option<usize>,
     pub l1_tx_hash: Option<String>,
     pub l2_tx_hash: Option<String>,
+    pub flamechart: Option<FlameChartNode>,
 }
 
 #[derive(Error, Debug)]

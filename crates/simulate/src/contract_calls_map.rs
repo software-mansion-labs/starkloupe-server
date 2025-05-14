@@ -1,9 +1,12 @@
 use crate::contract_call::ContractCall;
+use crate::FlameChartNode;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
 use cheatnet::state::CheatnetState;
 use serde::Serialize;
+use starknet_api::abi::abi_utils::selector_from_name;
+use starknet_api::transaction::constants;
 use std::cell::Ref;
 use std::collections::HashMap;
 
@@ -35,7 +38,10 @@ pub struct ContractCallsMapBuilder {
 }
 
 impl ContractCallsMapBuilder {
-    pub fn new_from_cheatnet_state(cheatnet_state: CheatnetState) -> Self {
+    pub fn new_from_cheatnet_state(
+        cheatnet_state: CheatnetState,
+        contract_flamechart: &mut Vec<FlameChartNode>,
+    ) -> Self {
         let mut contract_call_tree_builder = Self {
             contract_calls_map: ContractCallsMap::new(),
             next_call_id: 1,
@@ -66,6 +72,7 @@ impl ContractCallsMapBuilder {
         contract_call_tree_builder.traverse_cheatnet_state_calltrace(
             new_contract_call_id,
             call_trace_ref,
+            contract_flamechart,
             0,
         );
 
@@ -76,18 +83,21 @@ impl ContractCallsMapBuilder {
         &mut self,
         current_call_id: u32,
         call_trace_ref: Ref<CallTrace>,
+        contract_flamechart: &mut Vec<FlameChartNode>,
         nesting_level: u32,
     ) {
         for nested_call in &call_trace_ref.nested_calls {
             match nested_call {
                 CallTraceNode::EntryPointCall(call_trace) => {
                     let new_contract_call_id = self.next_call_id;
+                    let is_fee_transfer = call_trace.borrow().entry_point.entry_point_selector
+                        == selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME);
                     let contract_call = ContractCall::from_cheatnet_state_calltrace(
                         &call_trace.borrow(),
                         new_contract_call_id,
                         current_call_id,
                         nesting_level + 1,
-                        false,
+                        is_fee_transfer,
                     );
 
                     if contract_call.is_failed {
@@ -101,6 +111,15 @@ impl ContractCallsMapBuilder {
                         }
                     }
 
+                    let is_hidden = contract_call.is_hidden;
+
+                    let mut flamechart_node = FlameChartNode {
+                        call_id: contract_call.call_id,
+                        value: contract_call.sierra_gas,
+                        name: None,
+                        children: Vec::new(),
+                    };
+
                     self.next_call_id += 1;
                     self.contract_calls_map
                         .0
@@ -112,11 +131,23 @@ impl ContractCallsMapBuilder {
                         .children_call_ids
                         .push(new_contract_call_id);
 
-                    self.traverse_cheatnet_state_calltrace(
-                        new_contract_call_id,
-                        call_trace.borrow(),
-                        nesting_level + 1,
-                    );
+                    if !is_hidden {
+                        self.traverse_cheatnet_state_calltrace(
+                            new_contract_call_id,
+                            call_trace.borrow(),
+                            &mut flamechart_node.children,
+                            nesting_level + 1,
+                        );
+
+                        contract_flamechart.push(flamechart_node);
+                    } else {
+                        self.traverse_cheatnet_state_calltrace(
+                            new_contract_call_id,
+                            call_trace.borrow(),
+                            contract_flamechart,
+                            nesting_level + 1,
+                        );
+                    }
                 }
                 CallTraceNode::DeployWithoutConstructor => {
                     // TODO: explore

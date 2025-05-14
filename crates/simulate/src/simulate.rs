@@ -4,7 +4,7 @@ use crate::contract_names::ContractNamesFetcher;
 use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::events::EmittedEvent;
 use crate::execution::{
-    execute_transaction_flows, get_execution_result, handle_invoke_function_post_exec,
+    execute_transaction_flows, get_execution_result, handle_post_exec_and_collect_gas_vectors,
 };
 use crate::function_calls::create_function_calls_map;
 use crate::state::ForkStateReader;
@@ -16,8 +16,11 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
+use crate::utils::build_flamegraph;
 use crate::utils::{calldata_to_hex, transaction_type_to_string};
+use crate::DetailedTransactionReceipt;
 use crate::EStarknetEvent;
+use crate::FlameChartNode;
 use crate::FunctionCallsMap;
 use crate::SimulationArgs;
 use crate::SimulationInfo;
@@ -72,7 +75,16 @@ pub async fn simulate(
     s3_client: &aws_sdk_s3::Client,
     execution_result: Option<ExecutionResult>,
     args: SimulationArgs,
-) -> Result<(SimulationInfo, BlockTimestamp, usize, usize), TransactionSimulationError> {
+) -> Result<
+    (
+        SimulationInfo,
+        BlockTimestamp,
+        usize,
+        usize,
+        Option<FlameChartNode>,
+    ),
+    TransactionSimulationError,
+> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
     let block_number = if let Some(bn) = args.block_number {
@@ -103,16 +115,17 @@ pub async fn simulate(
     );
     let strkgate_event = args.strkgate_event.clone();
 
-    let (cheatnet_state, post_execution_report) =
+    let (cheatnet_state, post_execution_report, detailed_transaction_receipt) =
         run_simulation(block_info, args, &mut cached_fork_state)?;
 
+    let mut contract_flamechart: Vec<FlameChartNode> = Vec::new();
     let ContractCallsMapBuilder {
         mut contract_calls_map,
         mut next_call_id,
         deepest_failed_contract_call_id,
         cheatnet_state_detected_events,
         ..
-    } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state);
+    } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
 
     let class_hashes = contract_calls_map.collect_all_class_hashes();
 
@@ -210,6 +223,10 @@ pub async fn simulate(
         execution_result,
     )?;
 
+    let flamechart = detailed_transaction_receipt.as_ref().and_then(|receipt| {
+        build_flamegraph(receipt, &contract_calls_map, &mut contract_flamechart)
+    });
+
     if let ExecutionResult::Reverted { reason, .. } = &execution_result {
         if let Some(call) = contract_calls_map
             .0
@@ -241,6 +258,7 @@ pub async fn simulate(
         block_timestamp,
         transaction_index,
         total_txs_in_block,
+        flamechart,
     ))
 }
 
@@ -268,7 +286,14 @@ fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
-) -> Result<(CheatnetState, Option<PostExecutionReport>), TransactionSimulationError> {
+) -> Result<
+    (
+        CheatnetState,
+        Option<PostExecutionReport>,
+        Option<DetailedTransactionReceipt>,
+    ),
+    TransactionSimulationError,
+> {
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(
@@ -300,22 +325,31 @@ fn run_simulation(
         transaction_context.clone(),
     )?;
 
-    //Handle post-execution for InvokeFunction
-    let post_execution_report = if args.transaction_type == Some(TransactionType::InvokeFunction) {
-        Some(handle_invoke_function_post_exec(
-            &args,
-            cached_fork_state,
-            &transaction_context,
-            validate_call_info,
-            execute_call_info,
-            signature_len,
-            calldata_len,
-        )?)
-    } else {
-        None
+    //Handle post-execution for InvokeFunction and transaction version 3
+    let (post_execution_report, detailed_transaction_receipt) = match args.transaction_type {
+        Some(TransactionType::InvokeFunction)
+            if args.transaction_version == TransactionVersion::THREE =>
+        {
+            let (report, receipt) = handle_post_exec_and_collect_gas_vectors(
+                &args,
+                cached_fork_state,
+                &mut cheatnet_state,
+                transaction_context.clone(),
+                validate_call_info,
+                execute_call_info,
+                signature_len,
+                calldata_len,
+            )?;
+            (Some(report), Some(receipt))
+        }
+        _ => (None, None),
     };
 
-    Ok((cheatnet_state, post_execution_report))
+    Ok((
+        cheatnet_state,
+        post_execution_report,
+        detailed_transaction_receipt,
+    ))
 }
 
 pub async fn simulate_by_calldata(
@@ -348,6 +382,7 @@ pub async fn simulate_by_calldata(
         block_timestamp,
         transaction_index_in_block,
         total_transactions_in_block,
+        flamechart,
     ) = simulate(db_pool, s3_client, None, args).await?;
 
     Ok(TransactionSimulationResult {
@@ -364,6 +399,7 @@ pub async fn simulate_by_calldata(
         total_transactions_in_block: Some(total_transactions_in_block),
         l1_tx_hash: None,
         l2_tx_hash: None,
+        flamechart,
     })
 }
 
@@ -499,6 +535,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     total_transactions_in_block: None,
                                     l1_tx_hash: None,
                                     l2_tx_hash: Some(transaction_hash.to_hex_string()),
+                                    flamechart: None,
                                 });
                             }
                         }
@@ -511,6 +548,7 @@ async fn simulate_starknet_transaction_by_hash(
                             block_timestamp,
                             transaction_index_in_block,
                             total_transactions_in_block,
+                            flamechart,
                         ) = simulate(
                             db_pool,
                             s3_client,
@@ -549,6 +587,7 @@ async fn simulate_starknet_transaction_by_hash(
                             total_transactions_in_block: Some(total_transactions_in_block),
                             l1_tx_hash: None,
                             l2_tx_hash: Some(transaction_hash.to_hex_string()),
+                            flamechart,
                         });
                     }
                 }
@@ -608,6 +647,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
                         block_timestamp,
                         transaction_index_in_block,
                         total_transactions_in_block,
+                        _,
                     ) = simulate(
                         db_pool,
                         s3_client,
@@ -649,6 +689,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
                         total_transactions_in_block: Some(total_transactions_in_block),
                         l1_tx_hash: Some(transaction_hash.encode_hex()),
                         l2_tx_hash: l2_tx_hash_hex,
+                        flamechart: None,
                     });
                 }
             }
