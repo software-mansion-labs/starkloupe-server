@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 semver.workspace = true
 ethers.workspace = true
+tiny-keccak.workspace = true
 serde.workspace = true
 blockifier.workspace = true
 starknet.workspace = true
