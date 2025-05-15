@@ -19,7 +19,7 @@ use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
-use ethers::types::{Address, U256};
+use ethers::types::{Address, TransactionReceipt as EthTransactionReceipt, U256};
 use events::EmittedEvent;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
@@ -31,6 +31,7 @@ use starknet::core::types::{BlockId, Event, ExecutionResult, Felt};
 use starknet::providers::{ProviderError, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
+use starknet_api::core::EthAddress;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::fields::Calldata;
@@ -39,6 +40,8 @@ use starknet_api::transaction::fields::PaymasterData;
 use starknet_api::transaction::fields::TransactionSignature;
 use starknet_api::transaction::fields::ValidResourceBounds;
 use starknet_api::transaction::L1HandlerTransaction;
+use starknet_api::transaction::L2ToL1Payload;
+use starknet_api::transaction::MessageToL1;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::StarknetApiError;
@@ -140,7 +143,19 @@ pub struct FlameChartNode {
 }
 
 #[derive(Serialize, Debug)]
-pub struct TransactionSimulationResult {
+pub struct L1TransactionData {
+    pub chain_id: String,
+    pub block_number: Option<u64>,
+    pub sender_address: String,
+    pub receiver_address: Option<String>,
+    pub transaction_type: Option<String>,
+    pub status: Option<String>,
+    pub message_hashes: Vec<String>,
+    pub l1_tx_hash: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct L2TransactionData {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
     #[serde(serialize_with = "serialize_block_number")]
@@ -156,6 +171,12 @@ pub struct TransactionSimulationResult {
     pub l1_tx_hash: Option<String>,
     pub l2_tx_hash: Option<String>,
     pub flamechart: Option<FlameChartNode>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct TransactionSimulationResult {
+    pub l1_transaction_data: Option<L1TransactionData>,
+    pub l2_transaction_data: Option<L2TransactionData>,
 }
 
 #[derive(Error, Debug)]
@@ -198,6 +219,8 @@ pub enum TransactionSimulationError {
     FailedToDecodeChainId,
     #[error("Fee check error")]
     FeeCheckError(#[from] FeeCheckError),
+    #[error("Failed to convert to L1HandlerTransaction")]
+    ConversionError,
     #[error("Error occurred: {0}")]
     OtherError(String),
 }
@@ -233,12 +256,55 @@ pub struct ContractCallEvent {
 }
 
 #[derive(Debug)]
-pub enum EStarknetEvent {
+pub struct DecodedL2ToL1Message {
+    pub event: EStarknetL2L1Event,
+    pub message_hash: String,
+}
+
+#[derive(Debug)]
+pub enum EStarknetL2L1Event {
     LogMessageToL1 {
         from_address: String,
         to_address: String,
         payload: Vec<String>,
     },
+    ConsumedMessageToL1 {
+        from_address: U256,
+        to_address: Address,
+        payload: Vec<U256>,
+    },
+}
+
+impl TryFrom<EStarknetL2L1Event> for MessageToL1 {
+    type Error = StarknetApiError;
+
+    fn try_from(message: EStarknetL2L1Event) -> Result<Self, Self::Error> {
+        match message {
+            EStarknetL2L1Event::ConsumedMessageToL1 {
+                from_address,
+                to_address,
+                payload,
+            } => {
+                let from_felt = eth_u256_to_felt(from_address);
+                let from_address = ContractAddress::try_from(from_felt)?;
+
+                let payload_felts = payload.into_iter().map(eth_u256_to_felt).collect();
+
+                Ok(MessageToL1 {
+                    from_address,
+                    to_address: EthAddress(to_address),
+                    payload: L2ToL1Payload(payload_felts),
+                })
+            }
+            _ => Err(StarknetApiError::InvalidResourceMappingInitializer(
+                "Invalid event variant".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum EStarknetL1L2Event {
     LogMessageToL2 {
         from_address: Address,
         to_address: U256,
@@ -256,12 +322,12 @@ pub enum EStarknetEvent {
     },
 }
 
-impl TryFrom<EStarknetEvent> for L1HandlerTransaction {
+impl TryFrom<EStarknetL1L2Event> for L1HandlerTransaction {
     type Error = StarknetApiError;
 
-    fn try_from(event: EStarknetEvent) -> Result<Self, Self::Error> {
+    fn try_from(event: EStarknetL1L2Event) -> Result<Self, Self::Error> {
         match event {
-            EStarknetEvent::LogMessageToL2 {
+            EStarknetL1L2Event::LogMessageToL2 {
                 from_address,
                 to_address,
                 selector,

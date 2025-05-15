@@ -7486,6 +7486,7 @@ dependencies = [
  "starknet-types-core",
  "starknet_api",
  "thiserror 1.0.64",
+ "tiny-keccak",
  "tokio",
  "tracing",
  "universal-sierra-compiler-api",
