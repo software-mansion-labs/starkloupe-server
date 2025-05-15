@@ -1,5 +1,17 @@
 # Changelog
 
+### [0.0.76] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.76)
+
+- L2->L1 Consumed on L1 event support
+
+### [0.0.75] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.75)
+
+- Gas calculation for tx v3 and sierra >= 1.7.0
+
+### [0.0.74] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.74)
+
+- Max fee versus actual fee check
+
 ### [0.0.73] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.73)
 
 - Fix the usage of Sierra version from sierra program instead of LATEST constant
