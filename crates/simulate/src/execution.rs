@@ -1,3 +1,4 @@
+use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::ContractCall;
 use crate::DetailedTransactionReceipt;
@@ -50,6 +51,7 @@ pub fn execute_transaction_flows(
     args: &SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
     cheatnet_state: &mut CheatnetState,
+    remaining_gas: &mut GasCounter,
     transaction_context: Arc<TransactionContext>,
 ) -> Result<(Option<CallInfo>, Option<CallInfo>), TransactionSimulationError> {
     let validate_call_info = if should_validate(args) {
@@ -61,7 +63,7 @@ pub fn execute_transaction_flows(
             cached_fork_state,
             cheatnet_state,
             transaction_context.clone(),
-            u64::MAX,
+            remaining_gas,
         )
         .ok()
     } else {
@@ -74,12 +76,18 @@ pub fn execute_transaction_flows(
             "Transaction validate error".to_string(),
         ));
     }
-
     let mut execution_context = EntryPointExecutionContext::new(
         transaction_context.clone(),
         ExecutionMode::Execute,
         false,
-        SierraGasRevertTracker::new(GasAmount(u64::MAX)),
+        SierraGasRevertTracker::new(GasAmount(
+            remaining_gas.limit_usage(
+                transaction_context
+                    .block_context
+                    .versioned_constants()
+                    .sierra_gas_limit(&ExecutionMode::Execute),
+            ),
+        )),
     );
 
     if args.transaction_type.is_none() {
@@ -96,7 +104,7 @@ pub fn execute_transaction_flows(
             args.transaction_type,
             cached_fork_state,
             cheatnet_state,
-            u64::MAX,
+            remaining_gas,
             &mut execution_context,
         )
         .ok()
@@ -368,13 +376,20 @@ fn validate_call(
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,
     tx_context: Arc<TransactionContext>,
-    initial_gas: u64,
+    remaining_gas: &mut GasCounter,
 ) -> Result<CallInfo, TransactionSimulationError> {
+    let remaining_validation_gas = &mut remaining_gas.limit_usage(
+        tx_context
+            .block_context
+            .versioned_constants()
+            .os_constants
+            .validate_max_sierra_gas,
+    );
     let mut validation_context = EntryPointExecutionContext::new(
         tx_context.clone(),
         ExecutionMode::Validate,
         false,
-        SierraGasRevertTracker::new(GasAmount(initial_gas)),
+        SierraGasRevertTracker::new(GasAmount(*remaining_validation_gas)),
     );
 
     let class_hash = state.get_class_hash_at(storage_address)?;
@@ -388,7 +403,7 @@ fn validate_call(
         storage_address,
         caller_address: ContractAddress::default(),
         call_type: CallType::Call,
-        initial_gas,
+        initial_gas: *remaining_validation_gas,
     };
 
     let validate_call_info = execute_call_entry_point(
@@ -427,6 +442,7 @@ fn validate_call(
         }
     }
 
+    remaining_gas.subtract_used_gas(&validate_call_info);
     Ok(validate_call_info)
 }
 
@@ -437,10 +453,13 @@ fn execute_call(
     transaction_type: Option<TransactionType>,
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,
-    initial_gas: u64,
+    remaining_gas: &mut GasCounter,
     execution_context: &mut EntryPointExecutionContext,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
+
+    let remaining_execution_gas =
+        &mut remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
 
     let mut execute_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
@@ -451,9 +470,10 @@ fn execute_call(
         storage_address,
         caller_address: ContractAddress::default(),
         call_type: CallType::Call,
-        initial_gas,
+        initial_gas: *remaining_execution_gas,
     };
 
+    // TODO: Set the L1Handler initial_gas from version_constants
     if transaction_type.is_some()
         && transaction_type == Some(TransactionType::L1Handler)
         && entry_point_selector.is_some()
@@ -467,14 +487,15 @@ fn execute_call(
             storage_address,
             caller_address: ContractAddress::default(),
             call_type: CallType::Call,
-            initial_gas,
+            initial_gas: u64::MAX,
         }
     }
 
-    let execution_result =
+    let execution_call_info =
         execute_call_entry_point(&mut execute_call, state, cheatnet_state, execution_context)?;
 
-    Ok(execution_result)
+    remaining_gas.subtract_used_gas(&execution_call_info);
+    Ok(execution_call_info)
 }
 
 pub fn execute_fee_transfer(

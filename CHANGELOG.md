@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.77] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.77)
+
+- Initial gas fetch from versioned starknet constants
+
 ### [0.0.76] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.76)
 
 - L2->L1 Consumed on L1 event support

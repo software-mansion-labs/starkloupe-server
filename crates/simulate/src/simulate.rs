@@ -7,6 +7,7 @@ use crate::execution::{
     execute_transaction_flows, get_execution_result, handle_post_exec_and_collect_gas_vectors,
 };
 use crate::function_calls::create_function_calls_map;
+use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
 use crate::transaction_extraction::extract_block_timestamp;
@@ -314,7 +315,7 @@ fn run_simulation(
         args.chain_id.clone(),
         &block_info,
         args.max_fee,
-        args.resource_bounds.clone(),
+        args.resource_bounds,
         args.paymaster_data.clone(),
     );
 
@@ -325,11 +326,14 @@ fn run_simulation(
 
     cheatnet_state.trace_data.is_vm_trace_needed = true;
 
+    let initial_gas = transaction_context.initial_sierra_gas();
+    let mut initial_gas_counter = GasCounter::new(initial_gas);
     //Execute and validation and calls
     let (validate_call_info, execute_call_info) = execute_transaction_flows(
         &args,
         cached_fork_state,
         &mut cheatnet_state,
+        &mut initial_gas_counter,
         transaction_context.clone(),
     )?;
 

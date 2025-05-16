@@ -5,6 +5,7 @@ pub mod debugger_trace;
 pub mod events;
 pub mod execution;
 pub mod function_calls;
+pub mod gas_counter;
 pub mod simulate;
 pub mod state;
 pub mod storage_changes;
