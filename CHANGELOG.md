@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.78] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.78)
+
+- Resources bounds for the ALLResources set to MAX instead of 0
+
 ### [0.0.77] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.77)
 
 - Initial gas fetch from versioned starknet constants
