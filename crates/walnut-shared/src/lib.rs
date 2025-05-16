@@ -345,10 +345,16 @@ pub fn resource_bounds_mapping_to_valid_resource_bounds(
 }
 
 pub fn resource_bounds_mapping_to_default_valid_resource_bounds() -> ValidResourceBounds {
+    const MAX_GAS: u64 = u64::MAX;
+
+    let max_bounds = ResourceBounds {
+        max_amount: GasAmount(MAX_GAS),
+        max_price_per_unit: GasPrice(MAX_GAS.into()),
+    };
     ValidResourceBounds::AllResources(AllResourceBounds {
-        l1_gas: ResourceBounds::default(),
-        l2_gas: ResourceBounds::default(),
-        l1_data_gas: ResourceBounds::default(),
+        l1_gas: max_bounds,
+        l2_gas: max_bounds,
+        l1_data_gas: max_bounds,
     })
 }
 
