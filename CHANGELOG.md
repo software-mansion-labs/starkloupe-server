@@ -2,7 +2,7 @@
 
 ### [0.0.77] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.77)
 
-- Initial gass fetch from versioned starknet constants
+- Initial gas fetch from versioned starknet constants
 
 ### [0.0.76] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.76)
 
