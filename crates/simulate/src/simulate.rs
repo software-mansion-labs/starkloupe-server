@@ -44,7 +44,6 @@ use ethers::types::TransactionReceipt as EthTransactionReceipt;
 use ethers::types::H160;
 use ethers::types::H256;
 use ethers::types::U256;
-use ethers::types::U64;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
@@ -54,7 +53,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::TransactionReceipt as SnTransactionReceipt;
 use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };

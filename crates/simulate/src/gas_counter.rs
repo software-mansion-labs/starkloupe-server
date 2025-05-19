@@ -2,9 +2,9 @@ use blockifier::execution::call_info::CallInfo;
 use starknet_api::execution_resources::GasAmount;
 
 #[derive(Debug)]
-pub(crate) struct GasCounter {
-    pub(crate) spent_gas: GasAmount,
-    pub(crate) remaining_gas: GasAmount,
+pub struct GasCounter {
+    pub spent_gas: GasAmount,
+    pub remaining_gas: GasAmount,
 }
 
 impl GasCounter {
@@ -24,11 +24,11 @@ impl GasCounter {
     }
 
     /// Limits the amount of gas that can be used (in validate\execute) by the given global limit.
-    pub(crate) fn limit_usage(&self, amount: GasAmount) -> u64 {
+    pub fn limit_usage(&self, amount: GasAmount) -> u64 {
         self.remaining_gas.min(amount).0
     }
 
-    pub(crate) fn subtract_used_gas(&mut self, call_info: &CallInfo) {
+    pub fn subtract_used_gas(&mut self, call_info: &CallInfo) {
         self.spend(GasAmount(call_info.execution.gas_consumed));
     }
 }

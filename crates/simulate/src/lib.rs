@@ -19,7 +19,7 @@ use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::transaction_types::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
-use ethers::types::{Address, TransactionReceipt as EthTransactionReceipt, U256};
+use ethers::types::{Address, U256};
 use events::EmittedEvent;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
