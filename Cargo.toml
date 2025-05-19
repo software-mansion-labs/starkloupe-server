@@ -119,12 +119,6 @@ scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "a891d
 conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "a891d5881179e013bd3ccd8c346e9ecee0f93271" }
 universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "a891d5881179e013bd3ccd8c346e9ecee0f93271" }
 
-#cheatnet = { path = "../walnut-starknet-foundry/crates/cheatnet/" }
-#runtime = { path = "../walnut-starknet-foundry/crates/runtime/" }
-#scarb-api = { path = "../walnut-starknet-foundry/crates/scarb-api" }
-#conversions = { path = "../walnut-starknet-foundry/crates/conversions" }
-#universal-sierra-compiler-api = { path = "../walnut-starknet-foundry/crates/universal-sierra-compiler-api" }
-
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }
 regex = "1.11.1"
