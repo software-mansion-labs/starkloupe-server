@@ -17,6 +17,7 @@ use internal_tracing::event_calls_map::EventCallsMap;
 pub fn create_function_calls_map(
     contract_calls_map: &mut ContractCallsMap,
     next_call_id: &mut u32,
+    deepest_function_call_id_with_panic: &mut Option<u32>,
     classes_debugger_data: &HashMap<String, ClassDebuggerDataWithContractClass>,
     cached_fork_state: &CachedState<ForkStateReader>,
 ) -> (
@@ -28,6 +29,8 @@ pub fn create_function_calls_map(
     let mut event_calls_map = EventCallsMap::default();
     let mut storage_changes_map: HashMap<u32, HashMap<String, (Option<String>, String)>> =
         HashMap::new();
+
+    let mut prev_contract_call_nested_level = 0;
 
     for (id, call) in contract_calls_map.0.iter_mut() {
         let result = match (&call.class_hash, &call.vm_memory, &call.vm_trace) {
@@ -111,9 +114,15 @@ pub fn create_function_calls_map(
                             &call.children_call_ids,
                             casm_program,
                         ) {
-                            Ok((call_debugger_data, root_function_call_id)) => {
-                                Some((call_debugger_data, root_function_call_id))
-                            }
+                            Ok((
+                                call_debugger_data,
+                                root_function_call_id,
+                                deepest_failed_function_call_id,
+                            )) => Some((
+                                call_debugger_data,
+                                root_function_call_id,
+                                deepest_failed_function_call_id,
+                            )),
                             Err(e) => {
                                 error!(
                                     "Failed to get internal fn call trace for class hash {}: {:?}",
@@ -132,13 +141,28 @@ pub fn create_function_calls_map(
             }
         };
 
-        if let Some((call_debugger_data, root_function_call_id)) = result {
+        if let Some((call_debugger_data, root_function_call_id, deepest_failed_function_call_id)) =
+            result
+        {
             call.call_debugger_data = Some(call_debugger_data);
             call.function_call_id = Some(root_function_call_id);
             call.code_location = function_calls_map
                 .0
                 .get(&root_function_call_id)
                 .and_then(|call| call.code_location.clone());
+
+            //We need only one function call with panic, and the one that is from mosted nested
+            //contract call
+            if let Some(current_id) = deepest_failed_function_call_id {
+                let current_nested = call.contract_calls_nesting_level;
+                if deepest_function_call_id_with_panic
+                    .map(|_| current_nested > prev_contract_call_nested_level)
+                    .unwrap_or(true)
+                {
+                    *deepest_function_call_id_with_panic = Some(current_id);
+                    prev_contract_call_nested_level = current_nested;
+                }
+            }
         }
 
         call.vm_trace = None;

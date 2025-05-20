@@ -77,7 +77,7 @@ pub fn get_internal_call_trace(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
-) -> Result<(Vec<DebuggerTraceEntry>, u32)> {
+) -> Result<(Vec<DebuggerTraceEntry>, u32, Option<u32>)> {
     let first_vm_trace_entry = vm_trace.first().unwrap();
     let mut prev_fp = first_vm_trace_entry.fp;
 
@@ -97,6 +97,7 @@ pub fn get_internal_call_trace(
             _ => Vec::new(),
         };
 
+    let mut deepest_panic_function_call_id = None;
     let mut deepest_panic_result_level = -1;
     let mut deepest_panic_result_call_id: Option<u32> = None;
     let mut nesting_level = 0;
@@ -429,10 +430,15 @@ pub fn get_internal_call_trace(
             .0
             .get_mut(deepest_panic_result_call_id)
             .unwrap();
-        deepest_panic_call.is_deepest_panic_result = true;
+        let function_call_id_with_panic = deepest_panic_call.call_id;
+        deepest_panic_function_call_id = Some(function_call_id_with_panic);
     }
 
-    Ok((debugger_execution_trace, root_function_call_id))
+    Ok((
+        debugger_execution_trace,
+        root_function_call_id,
+        deepest_panic_function_call_id,
+    ))
 }
 
 #[derive(Debug, Clone, Serialize)]

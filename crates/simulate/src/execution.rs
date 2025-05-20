@@ -245,7 +245,7 @@ pub fn get_execution_result(
     post_execution_report: Option<PostExecutionReport>,
     execution_result: Option<ExecutionResult>,
 ) -> Result<ExecutionResult, TransactionSimulationError> {
-    if let Some(_post_execution_report) = post_execution_report {
+    if post_execution_report.is_some() && deepest_contract_call_id.is_none() {
         if let Some(ExecutionResult::Reverted { reason }) = execution_result {
             return Ok(ExecutionResult::Reverted { reason });
         }

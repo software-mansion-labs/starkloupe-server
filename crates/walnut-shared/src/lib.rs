@@ -4,6 +4,7 @@ pub mod felt252_serde;
 pub mod felt252_vec_compression;
 pub mod utils;
 use anyhow::{anyhow, Context, Result};
+use blockifier::execution::syscalls::hint_processor::ENTRYPOINT_FAILED_ERROR;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use ethers::providers::{Http, Provider as EthProvider};
 use ethers::types::H256;
@@ -246,6 +247,25 @@ pub fn felt_vec_to_hex_vec(felt_array: Vec<Felt>) -> Vec<String> {
 }
 
 pub fn felts_to_string(felts: &[Felt]) -> String {
+    //NOTE: The foundry push this string in case of execution revert, so we want to clean it from
+    //response error messagr
+    let entrypoint_failed = match Felt::from_hex(ENTRYPOINT_FAILED_ERROR) {
+        Ok(val) => val,
+        Err(_) => return String::from("ENTRYPOINT_FAILED"),
+    };
+    if felts.len() == 1 && felts[0] == entrypoint_failed {
+        return "Entrypoint failed".to_string();
+    }
+
+    if felts.contains(&entrypoint_failed) {
+        let filtered_felts: Vec<_> = felts
+            .iter()
+            .cloned()
+            .filter(|f| f != &entrypoint_failed)
+            .collect();
+        return felts_to_string(&filtered_felts);
+    }
+
     let mut result = String::new();
     let mut pending_text = String::new();
 
