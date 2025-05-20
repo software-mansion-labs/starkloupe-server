@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.79] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.79)
+
+- Reverted tx sierra gas support
+
 ### [0.0.78] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.78)
 
 - Resources bounds for the ALLResources set to MAX instead of 0

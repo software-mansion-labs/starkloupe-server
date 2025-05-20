@@ -35,7 +35,7 @@ pub fn build_contract_call_debugger_data(
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
     casm_program: CairoProgram,
-) -> Result<(ContractCallDebuggerData, u32)> {
+) -> Result<(ContractCallDebuggerData, u32, Option<u32>)> {
     let mappings = Mappings::new(
         vm_trace,
         vm_memory,
@@ -47,23 +47,25 @@ pub fn build_contract_call_debugger_data(
         e
     })?;
 
-    let (execution_trace, root_function_call_id) = get_internal_call_trace(
-        &mappings,
-        vm_memory,
-        vm_trace,
-        full_class_debugger_data
-            .class_debugger_data
-            .as_ref()
-            .map(|class_debugger_data| &class_debugger_data.sierra_statements_to_cairo_info),
-        function_calls_map,
-        event_calls_map,
-        next_call_id,
-        contract_call_id,
-        contract_call_children_ids,
-    )?;
+    let (execution_trace, root_function_call_id, contract_call_id_with_panic_function_call) =
+        get_internal_call_trace(
+            &mappings,
+            vm_memory,
+            vm_trace,
+            full_class_debugger_data
+                .class_debugger_data
+                .as_ref()
+                .map(|class_debugger_data| &class_debugger_data.sierra_statements_to_cairo_info),
+            function_calls_map,
+            event_calls_map,
+            next_call_id,
+            contract_call_id,
+            contract_call_children_ids,
+        )?;
 
     Ok((
         ContractCallDebuggerData { execution_trace },
         root_function_call_id,
+        contract_call_id_with_panic_function_call,
     ))
 }

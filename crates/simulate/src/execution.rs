@@ -43,6 +43,7 @@ use starknet_api::transaction::constants;
 use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::fields::Fee;
 use starknet_api::transaction::fields::GasVectorComputationMode;
+use starknet_api::transaction::TransactionVersion;
 use std::collections::HashMap;
 use std::sync::Arc;
 use walnut_shared::felts_to_string;
@@ -54,6 +55,15 @@ pub fn execute_transaction_flows(
     remaining_gas: &mut GasCounter,
     transaction_context: Arc<TransactionContext>,
 ) -> Result<(Option<CallInfo>, Option<CallInfo>), TransactionSimulationError> {
+    if args.transaction_type.is_none() {
+        return Err(TransactionSimulationError::OtherError(
+            "Transaction type must be known".to_string(),
+        ));
+    }
+
+    let is_revertable =
+        is_transaction_revertible(args.transaction_type.unwrap(), &args.transaction_version);
+
     let validate_call_info = if should_validate(args) {
         let selector = get_validate_selector(args.transaction_type);
         validate_call(
@@ -64,6 +74,7 @@ pub fn execute_transaction_flows(
             cheatnet_state,
             transaction_context.clone(),
             remaining_gas,
+            is_revertable,
         )
         .ok()
     } else {
@@ -90,12 +101,6 @@ pub fn execute_transaction_flows(
         )),
     );
 
-    if args.transaction_type.is_none() {
-        return Err(TransactionSimulationError::OtherError(
-            "Transaction type must be known".to_string(),
-        ));
-    }
-
     let execute_call_info = if should_execute(args) {
         execute_call(
             args.entry_point_selector,
@@ -106,6 +111,7 @@ pub fn execute_transaction_flows(
             cheatnet_state,
             remaining_gas,
             &mut execution_context,
+            is_revertable,
         )
         .ok()
     } else {
@@ -149,6 +155,9 @@ pub fn handle_post_exec_and_collect_gas_vectors(
     let post_exec_report =
         PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
 
+    let is_revertable =
+        is_transaction_revertible(args.transaction_type.unwrap(), &args.transaction_version);
+
     let _fee_call_info = if args.transaction_type == Some(TransactionType::InvokeFunction) {
         let fee = tx_receipt.fee;
         Some(execute_fee_transfer(
@@ -161,6 +170,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
                 .gas_costs
                 .base
                 .default_initial_gas_cost,
+            is_revertable,
         )?)
     } else {
         None
@@ -235,7 +245,7 @@ pub fn get_execution_result(
     post_execution_report: Option<PostExecutionReport>,
     execution_result: Option<ExecutionResult>,
 ) -> Result<ExecutionResult, TransactionSimulationError> {
-    if let Some(_post_execution_report) = post_execution_report {
+    if post_execution_report.is_some() && deepest_contract_call_id.is_none() {
         if let Some(ExecutionResult::Reverted { reason }) = execution_result {
             return Ok(ExecutionResult::Reverted { reason });
         }
@@ -369,6 +379,16 @@ fn get_validate_selector(tx_type: Option<TransactionType>) -> EntryPointSelector
     }
 }
 
+fn is_transaction_revertible(
+    transaction_type: TransactionType,
+    transaction_version: &TransactionVersion,
+) -> bool {
+    match transaction_type {
+        TransactionType::InvokeFunction => *transaction_version != TransactionVersion::ZERO,
+        _ => false,
+    }
+}
+
 fn validate_call(
     calldata: Calldata,
     storage_address: ContractAddress,
@@ -377,6 +397,7 @@ fn validate_call(
     cheatnet_state: &mut CheatnetState,
     tx_context: Arc<TransactionContext>,
     remaining_gas: &mut GasCounter,
+    is_revertable: bool,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let remaining_validation_gas = &mut remaining_gas.limit_usage(
         tx_context
@@ -411,6 +432,7 @@ fn validate_call(
         state,
         cheatnet_state,
         &mut validation_context,
+        is_revertable,
     );
 
     let validate_call_info = match validate_call_info {
@@ -455,6 +477,7 @@ fn execute_call(
     cheatnet_state: &mut CheatnetState,
     remaining_gas: &mut GasCounter,
     execution_context: &mut EntryPointExecutionContext,
+    is_revertable: bool,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let execute_entry_point_selector = selector_from_name(constants::EXECUTE_ENTRY_POINT_NAME);
 
@@ -491,8 +514,13 @@ fn execute_call(
         }
     }
 
-    let execution_call_info =
-        execute_call_entry_point(&mut execute_call, state, cheatnet_state, execution_context)?;
+    let execution_call_info = execute_call_entry_point(
+        &mut execute_call,
+        state,
+        cheatnet_state,
+        execution_context,
+        is_revertable,
+    )?;
 
     remaining_gas.subtract_used_gas(&execution_call_info);
     Ok(execution_call_info)
@@ -504,6 +532,7 @@ pub fn execute_fee_transfer(
     tx_context: Arc<TransactionContext>,
     actual_fee: Fee,
     initial_gas: u64,
+    is_revertable: bool,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let mut execution_context = EntryPointExecutionContext::new(
         tx_context.clone(),
@@ -542,6 +571,7 @@ pub fn execute_fee_transfer(
         state,
         cheatnet_state,
         &mut execution_context,
+        is_revertable,
     )?;
 
     Ok(execution_result)

@@ -44,7 +44,6 @@ use ethers::types::TransactionReceipt as EthTransactionReceipt;
 use ethers::types::H160;
 use ethers::types::H256;
 use ethers::types::U256;
-use ethers::types::U64;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
@@ -54,7 +53,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::TransactionReceipt as SnTransactionReceipt;
 use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
@@ -131,7 +129,7 @@ pub async fn simulate(
     let ContractCallsMapBuilder {
         mut contract_calls_map,
         mut next_call_id,
-        deepest_failed_contract_call_id,
+        mut deepest_failed_contract_call_id,
         cheatnet_state_detected_events,
         ..
     } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
@@ -141,13 +139,56 @@ pub async fn simulate(
     let classes_debugger_data =
         fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
 
+    let mut deepest_function_call_id_with_panic: Option<u32> = None;
+
     let (mut function_calls_map, event_calls_map, incomplete_storage_changes) =
         create_function_calls_map(
             &mut contract_calls_map,
             &mut next_call_id,
+            &mut deepest_function_call_id_with_panic,
             &classes_debugger_data,
             &cached_fork_state,
         );
+
+    // Set the deepest function call that panic to true
+    if let Some(deepest_func_call_id) = deepest_function_call_id_with_panic {
+        if let Some(deepest_func_call) = function_calls_map.0.get(&deepest_func_call_id) {
+            let contract_call_id = deepest_func_call.contract_call_id;
+
+            let current_nested = contract_calls_map
+                .0
+                .get(&contract_call_id)
+                .map(|c| c.contract_calls_nesting_level);
+
+            let prev_nested = deepest_failed_contract_call_id.and_then(|id| {
+                contract_calls_map
+                    .0
+                    .get(&id)
+                    .map(|c| c.contract_calls_nesting_level)
+            });
+
+            match (current_nested, prev_nested) {
+                (Some(curr), Some(prev)) => {
+                    if curr >= prev {
+                        deepest_failed_contract_call_id = Some(contract_call_id);
+                        if let Some(call) = function_calls_map.0.get_mut(&deepest_func_call_id) {
+                            call.is_deepest_panic_result = true;
+                        }
+                    } else if let Some(call) = function_calls_map.0.get_mut(&deepest_func_call_id) {
+                        call.is_deepest_panic_result = false;
+                    }
+                }
+                (Some(_), None) => {
+                    deepest_failed_contract_call_id = Some(contract_call_id);
+                }
+                _ => {
+                    if let Some(call) = function_calls_map.0.get_mut(&deepest_func_call_id) {
+                        call.is_deepest_panic_result = false;
+                    }
+                }
+            }
+        }
+    }
 
     let storage_changes = fetch_before_storage_changes(
         incomplete_storage_changes,
@@ -340,7 +381,7 @@ fn run_simulation(
     //Handle post-execution for InvokeFunction and transaction version 3
     let (post_execution_report, detailed_transaction_receipt) = match args.transaction_type {
         Some(TransactionType::InvokeFunction)
-            if args.transaction_version == TransactionVersion::THREE =>
+            if args.transaction_version != TransactionVersion::ZERO =>
         {
             let (report, receipt) = handle_post_exec_and_collect_gas_vectors(
                 &args,
