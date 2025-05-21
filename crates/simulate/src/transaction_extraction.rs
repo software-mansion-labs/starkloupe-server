@@ -314,18 +314,13 @@ fn match_transaction(tx: &Transaction, args: &SimulationArgs) -> bool {
 }
 
 pub fn extract_transaction_contex(
-    sender_address: &ContractAddress,
-    transaction_version: &TransactionVersion,
-    transaction_signature: Option<TransactionSignature>,
-    transaction_hash: &Option<TransactionHash>,
-    transaction_type: &Option<TransactionType>,
-    nonce: &Option<Nonce>,
-    chain_id: ChainId,
+    args: &SimulationArgs,
     block_info: &BlockInfo,
-    max_fee: Option<Fee>,
-    resource_bounds: Option<ValidResourceBounds>,
-    paymaster_data: Option<PaymasterData>,
 ) -> Arc<TransactionContext> {
+    let chain_id = args.chain_id.clone();
+    let transaction_version = args.transaction_version;
+    let transaction_type = args.transaction_type;
+
     let chain_info = ChainInfo {
         chain_id,
         fee_token_addresses: FeeTokenAddresses {
@@ -334,53 +329,14 @@ pub fn extract_transaction_contex(
         },
     };
 
-    let transaction_info = match (transaction_version, transaction_type) {
-        (_, Some(TransactionType::L1Handler)) => {
-            TransactionInfo::Deprecated(DeprecatedTransactionInfo {
-                common_fields: CommonAccountFields {
-                    transaction_hash: transaction_hash.unwrap_or_default(),
-                    version: *transaction_version,
-                    signature: TransactionSignature::default(),
-                    nonce: nonce.unwrap_or_default(),
-                    sender_address: *sender_address,
-                    only_query: false,
-                },
-                max_fee: max_fee.unwrap_or_default(),
-            })
-        }
+    let transaction_info = match (transaction_version, transaction_type.as_ref()) {
+        (_, Some(TransactionType::L1Handler)) => create_deprecated_info(args, None),
         (version, Some(TransactionType::InvokeFunction))
             if version.0 == Felt::ZERO || version.0 == Felt::ONE =>
         {
-            TransactionInfo::Deprecated(DeprecatedTransactionInfo {
-                common_fields: CommonAccountFields {
-                    transaction_hash: transaction_hash.unwrap_or_default(),
-                    version: *transaction_version,
-                    signature: transaction_signature.unwrap_or_default(),
-                    nonce: nonce.unwrap_or_default(),
-                    sender_address: *sender_address,
-                    only_query: false,
-                },
-                max_fee: max_fee.unwrap_or(Fee(u128::MAX)),
-            })
+            create_deprecated_info(args, Some(Fee(u128::MAX)))
         }
-        // All other to current
-        _ => TransactionInfo::Current(CurrentTransactionInfo {
-            common_fields: CommonAccountFields {
-                transaction_hash: transaction_hash.unwrap_or_default(),
-                version: *transaction_version,
-                signature: transaction_signature.unwrap_or_default(),
-                nonce: nonce.unwrap_or_default(),
-                sender_address: *sender_address,
-                only_query: false,
-            },
-            resource_bounds: resource_bounds
-                .unwrap_or_else(|| resource_bounds_mapping_to_default_valid_resource_bounds()),
-            tip: Default::default(),
-            nonce_data_availability_mode: DataAvailabilityMode::L1,
-            fee_data_availability_mode: DataAvailabilityMode::L1,
-            paymaster_data: paymaster_data.unwrap_or_default(),
-            account_deployment_data: Default::default(),
-        }),
+        _ => create_current_info(args),
     };
 
     Arc::new(TransactionContext {
@@ -393,6 +349,43 @@ pub fn extract_transaction_contex(
         tx_info: transaction_info,
     })
 }
+
+fn create_deprecated_info(args: &SimulationArgs, default_max_fee: Option<Fee>) -> TransactionInfo {
+    TransactionInfo::Deprecated(DeprecatedTransactionInfo {
+        common_fields: CommonAccountFields {
+            transaction_hash: args.transaction_hash.unwrap_or_default(),
+            version: args.transaction_version,
+            signature: args.transaction_signature.clone().unwrap_or_default(),
+            nonce: args.nonce.unwrap_or_default(),
+            sender_address: args.sender_address,
+            only_query: false,
+        },
+        max_fee: args.max_fee.or(default_max_fee).unwrap_or_default(),
+    })
+}
+
+fn create_current_info(args: &SimulationArgs) -> TransactionInfo {
+    TransactionInfo::Current(CurrentTransactionInfo {
+        common_fields: CommonAccountFields {
+            transaction_hash: args.transaction_hash.unwrap_or_default(),
+            version: args.transaction_version,
+            signature: args.transaction_signature.clone().unwrap_or_default(),
+            nonce: args.nonce.unwrap_or_default(),
+            sender_address: args.sender_address,
+            only_query: false,
+        },
+        resource_bounds: args
+            .resource_bounds
+            .clone()
+            .unwrap_or_else(resource_bounds_mapping_to_default_valid_resource_bounds),
+        tip: Default::default(),
+        nonce_data_availability_mode: DataAvailabilityMode::L1,
+        fee_data_availability_mode: DataAvailabilityMode::L1,
+        paymaster_data: args.paymaster_data.clone().unwrap_or_default(),
+        account_deployment_data: Default::default(),
+    })
+}
+
 pub fn extract_chain_id_from_felt(
     chain_id_felt: Felt,
 ) -> Result<ChainId, TransactionSimulationError> {

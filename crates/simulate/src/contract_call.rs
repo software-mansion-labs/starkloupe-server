@@ -63,6 +63,7 @@ impl ContractCall {
         call_id: u32,
         parent_call_id: u32,
         contract_calls_nesting_level: u32,
+        sierra_gas: u64,
         is_hidden: bool,
     ) -> Self {
         let entry_point_name =
@@ -96,7 +97,7 @@ impl ContractCall {
             is_failed: matches!(call_trace_ref.result, CallResult::Failure(_)),
             is_deepest_panic_result: false,
 
-            sierra_gas: call_trace_ref.gas_consumed,
+            sierra_gas,
             vm_resources: call_trace_ref.used_execution_resources.clone(),
 
             result_types: None,

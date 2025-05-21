@@ -1,5 +1,6 @@
 use crate::contract_call::ContractCall;
 use crate::FlameChartNode;
+use blockifier::execution::call_info::CallInfo;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
@@ -40,6 +41,7 @@ pub struct ContractCallsMapBuilder {
 impl ContractCallsMapBuilder {
     pub fn new_from_cheatnet_state(
         cheatnet_state: CheatnetState,
+        call_infos: Vec<CallInfo>,
         contract_flamechart: &mut Vec<FlameChartNode>,
     ) -> Self {
         let mut contract_call_tree_builder = Self {
@@ -61,6 +63,7 @@ impl ContractCallsMapBuilder {
             new_contract_call_id,
             0,
             0,
+            0,
             true, // Hide root contract call
         );
         contract_call_tree_builder.next_call_id += 1;
@@ -71,6 +74,7 @@ impl ContractCallsMapBuilder {
 
         contract_call_tree_builder.traverse_cheatnet_state_calltrace(
             new_contract_call_id,
+            &call_infos,
             call_trace_ref,
             contract_flamechart,
             0,
@@ -82,77 +86,116 @@ impl ContractCallsMapBuilder {
     fn traverse_cheatnet_state_calltrace(
         &mut self,
         current_call_id: u32,
+        call_infos: &[CallInfo],
         call_trace_ref: Ref<CallTrace>,
         contract_flamechart: &mut Vec<FlameChartNode>,
         nesting_level: u32,
     ) {
-        for nested_call in &call_trace_ref.nested_calls {
-            match nested_call {
-                CallTraceNode::EntryPointCall(call_trace) => {
-                    let new_contract_call_id = self.next_call_id;
-                    let is_fee_transfer = call_trace.borrow().entry_point.entry_point_selector
-                        == selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME);
-                    let contract_call = ContractCall::from_cheatnet_state_calltrace(
-                        &call_trace.borrow(),
-                        new_contract_call_id,
-                        current_call_id,
-                        nesting_level + 1,
-                        is_fee_transfer,
-                    );
+        if !call_infos.is_empty() && call_infos.len() == call_trace_ref.nested_calls.len() {
+            for (call_info, trace_call) in call_infos.iter().zip(call_trace_ref.nested_calls.iter())
+            {
+                self.process_call(
+                    current_call_id,
+                    Some(call_info),
+                    trace_call,
+                    contract_flamechart,
+                    nesting_level,
+                );
+            }
+        } else {
+            for trace_call in &call_trace_ref.nested_calls {
+                self.process_call(
+                    current_call_id,
+                    None,
+                    trace_call,
+                    contract_flamechart,
+                    nesting_level,
+                );
+            }
+        }
+    }
 
-                    if contract_call.is_failed {
-                        if self.deepest_failed_contract_call_id.is_some() {
-                            if nesting_level + 1 > self.deepest_failed_nesting_level {
-                                self.deepest_failed_contract_call_id = Some(new_contract_call_id);
-                            }
-                        } else {
+    fn process_call(
+        &mut self,
+        current_call_id: u32,
+        call_info: Option<&CallInfo>,
+        trace_call: &CallTraceNode,
+        contract_flamechart: &mut Vec<FlameChartNode>,
+        nesting_level: u32,
+    ) {
+        match trace_call {
+            CallTraceNode::EntryPointCall(call_trace) => {
+                let new_contract_call_id = self.next_call_id;
+                let is_fee_transfer = call_trace.borrow().entry_point.entry_point_selector
+                    == selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME);
+                let sierra_gas = call_info.map_or(0, |ci| ci.execution.gas_consumed);
+                let contract_call = ContractCall::from_cheatnet_state_calltrace(
+                    &call_trace.borrow(),
+                    new_contract_call_id,
+                    current_call_id,
+                    nesting_level + 1,
+                    sierra_gas,
+                    is_fee_transfer,
+                );
+
+                if contract_call.is_failed {
+                    if self.deepest_failed_contract_call_id.is_some() {
+                        if nesting_level + 1 > self.deepest_failed_nesting_level {
                             self.deepest_failed_contract_call_id = Some(new_contract_call_id);
-                            self.deepest_failed_nesting_level = nesting_level + 1;
                         }
+                    } else {
+                        self.deepest_failed_contract_call_id = Some(new_contract_call_id);
+                        self.deepest_failed_nesting_level = nesting_level + 1;
                     }
+                }
 
-                    let is_hidden = contract_call.is_hidden;
+                let is_hidden = contract_call.is_hidden;
 
-                    let mut flamechart_node = FlameChartNode {
-                        call_id: contract_call.call_id,
-                        raw_value: contract_call.sierra_gas,
-                        value: 0.0,
-                        name: None,
-                        children: Vec::new(),
-                    };
+                let mut flamechart_node = FlameChartNode {
+                    call_id: contract_call.call_id,
+                    raw_value: contract_call.sierra_gas,
+                    value: 0.0,
+                    name: None,
+                    children: Vec::new(),
+                };
 
-                    self.next_call_id += 1;
-                    self.contract_calls_map
-                        .0
-                        .insert(new_contract_call_id, contract_call);
+                self.next_call_id += 1;
+                self.contract_calls_map
+                    .0
+                    .insert(new_contract_call_id, contract_call);
+                if current_call_id != 0 {
                     self.contract_calls_map
                         .0
                         .get_mut(&current_call_id)
                         .unwrap()
                         .children_call_ids
                         .push(new_contract_call_id);
-
-                    if !is_hidden {
-                        self.traverse_cheatnet_state_calltrace(
-                            new_contract_call_id,
-                            call_trace.borrow(),
-                            &mut flamechart_node.children,
-                            nesting_level + 1,
-                        );
-
-                        contract_flamechart.push(flamechart_node);
-                    } else {
-                        self.traverse_cheatnet_state_calltrace(
-                            new_contract_call_id,
-                            call_trace.borrow(),
-                            contract_flamechart,
-                            nesting_level + 1,
-                        );
-                    }
                 }
-                CallTraceNode::DeployWithoutConstructor => {
-                    // TODO: explore
+
+                let inner_calls = call_info.map_or(Vec::new(), |ci| ci.inner_calls.clone());
+
+                if !is_hidden {
+                    self.traverse_cheatnet_state_calltrace(
+                        new_contract_call_id,
+                        &inner_calls,
+                        call_trace.borrow(),
+                        &mut flamechart_node.children,
+                        nesting_level + 1,
+                    );
+
+                    contract_flamechart.push(flamechart_node);
+                } else {
+                    self.traverse_cheatnet_state_calltrace(
+                        new_contract_call_id,
+                        &inner_calls,
+                        call_trace.borrow(),
+                        contract_flamechart,
+                        nesting_level + 1,
+                    );
                 }
+            }
+            CallTraceNode::DeployWithoutConstructor => {
+                // TODO: explore
             }
         }
     }

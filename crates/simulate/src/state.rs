@@ -173,6 +173,7 @@ pub struct ForkStateReader {
     client: JsonRpcClient<HttpTransport>,
     block_number: u64,
     adjusted_block_number: u64,
+    only_non_inlined_class: bool,
     pub in_memory_fork_cache: RefCell<InMemoryForkCache>, // Wrap in RefCell
     db_pool: Pool<Postgres>,
     s3_client: aws_sdk_s3::Client,
@@ -184,6 +185,7 @@ impl ForkStateReader {
         block_number: u64,
         transaction_index: usize,
         tx_number_in_block: usize,
+        only_non_inlined_class: bool,
         db_pool: &Pool<Postgres>,
         s3_client: &aws_sdk_s3::Client,
     ) -> anyhow::Result<Self> {
@@ -194,6 +196,7 @@ impl ForkStateReader {
             client,
             block_number,
             adjusted_block_number,
+            only_non_inlined_class,
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
             db_pool: db_pool.clone(),
             s3_client: s3_client.clone(),
@@ -202,7 +205,7 @@ impl ForkStateReader {
         if tx_number_in_block > 1 {
             fork_state_reader
                 .prepare_storage_view(block_id, transaction_index)
-                .map_err(|e| {
+                .map_err(|_| {
                     anyhow::anyhow!("Unable to get trace block transactions from node provider",)
                 })?;
         }
@@ -699,10 +702,17 @@ impl StateReader for ForkStateReader {
             Ok((class_hash, Some(contract_class))) => {
                 let class_hash_felt = Felt::from_hex(&class_hash).unwrap();
 
-                self.fetch_and_compile_verified_contract_class(
-                    ClassHash(class_hash_felt),
-                    contract_class,
-                )?;
+                if !self.only_non_inlined_class {
+                    self.fetch_and_compile_verified_contract_class(
+                        ClassHash(class_hash_felt),
+                        contract_class,
+                    )?;
+                } else {
+                    self.fetch_and_compile_contract_class(
+                        ClassHash(class_hash_felt),
+                        self.adjusted_block_id(),
+                    )?;
+                }
                 self.in_memory_fork_cache
                     .borrow()
                     .get_compiled_class(ClassHash(class_hash_felt))
