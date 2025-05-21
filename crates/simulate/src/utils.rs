@@ -133,28 +133,7 @@ pub fn eth_u256_to_felt(value: U256) -> Felt {
     Felt::from_bytes_be(&bytes)
 }
 
-fn update_flamechart_node_names_recursively(
-    node: &mut FlameChartNode,
-    contract_calls_map: &ContractCallsMap,
-) {
-    if let Some(contract_call) = contract_calls_map.0.get(&node.call_id) {
-        node.name = Some(format_flamechart_node_name(
-            &contract_call.contract_name,
-            &contract_call.erc20_token_name,
-            &contract_call.erc20_token_symbol,
-            &contract_call.entry_point_interface_name,
-            &contract_call.entry_point_name,
-            &contract_call.entry_point_selector,
-            &contract_call.entry_point.storage_address.0.to_hex_string(),
-        ));
-    }
-
-    for child in &mut node.children {
-        update_flamechart_node_names_recursively(child, contract_calls_map);
-    }
-}
-
-pub fn format_flamechart_node_name(
+fn format_flamechart_node_name(
     contract_name: &Option<String>,
     erc20_token_name: &Option<String>,
     erc20_token_symbol: &Option<String>,
@@ -190,6 +169,43 @@ pub fn format_flamechart_node_name(
     format!("{}.{}", contract_address, suffix)
 }
 
+fn normalize_with_sqrt(
+    node: &mut FlameChartNode,
+    contract_calls_map: &ContractCallsMap,
+    parent_value: f64,
+) {
+    if let Some(contract_call) = contract_calls_map.0.get(&node.call_id) {
+        node.name = Some(format_flamechart_node_name(
+            &contract_call.contract_name,
+            &contract_call.erc20_token_name,
+            &contract_call.erc20_token_symbol,
+            &contract_call.entry_point_interface_name,
+            &contract_call.entry_point_name,
+            &contract_call.entry_point_selector,
+            &contract_call.entry_point.storage_address.0.to_hex_string(),
+        ));
+    }
+
+    if !node.children.is_empty() {
+        let sqrt_sum: f64 = node
+            .children
+            .iter()
+            .map(|c| (c.raw_value as f64).sqrt())
+            .sum();
+
+        for child in &mut node.children {
+            let sqrt_val = (child.raw_value as f64).sqrt();
+            child.value = if sqrt_sum > 1e-8 {
+                parent_value * (sqrt_val / sqrt_sum)
+            } else {
+                0.0
+            };
+
+            normalize_with_sqrt(child, contract_calls_map, child.value);
+        }
+    }
+}
+
 pub fn build_flamegraph(
     detailed_tx_receipt: &DetailedTransactionReceipt,
     contract_calls_map: &ContractCallsMap,
@@ -203,44 +219,46 @@ pub fn build_flamegraph(
         return None;
     }
 
-    for node in contract_flamechart.iter_mut() {
-        update_flamechart_node_names_recursively(node, contract_calls_map);
-    }
-    Some(FlameChartNode {
+    let mut root = FlameChartNode {
         call_id: 0,
-        value: detailed_tx_receipt.gas.l2_gas.0,
+        raw_value: detailed_tx_receipt.gas.l2_gas.0,
+        value: 1.0,
         name: Some("Total resources".to_string()),
         children: vec![
             FlameChartNode {
                 call_id: 0,
                 name: Some("Starknet resources".to_string()),
-                value: detailed_tx_receipt.starknet_resources_gas_vector.l2_gas.0,
+                raw_value: detailed_tx_receipt.starknet_resources_gas_vector.l2_gas.0,
+                value: 0.0,
                 children: vec![
                     FlameChartNode {
                         call_id: 0,
                         name: Some("Archival resources".to_string()),
-                        value: detailed_tx_receipt
+                        raw_value: detailed_tx_receipt
                             .starknet_resources_archival_data_gas_vector
                             .l2_gas
                             .0,
+                        value: 0.0,
                         ..Default::default()
                     },
                     FlameChartNode {
                         call_id: 0,
                         name: Some("Messages resources".to_string()),
-                        value: detailed_tx_receipt
+                        raw_value: detailed_tx_receipt
                             .starknet_resources_message_gas_vector
                             .l2_gas
                             .0,
+                        value: 0.0,
                         ..Default::default()
                     },
                     FlameChartNode {
                         call_id: 0,
                         name: Some("State resources".to_string()),
-                        value: detailed_tx_receipt
+                        raw_value: detailed_tx_receipt
                             .starknet_resources_state_gas_vector
                             .l2_gas
                             .0,
+                        value: 0.0,
                         ..Default::default()
                     },
                 ],
@@ -248,33 +266,40 @@ pub fn build_flamegraph(
             FlameChartNode {
                 call_id: 0,
                 name: Some("Computation Resources".to_string()),
-                value: detailed_tx_receipt
+                raw_value: detailed_tx_receipt
                     .computation_resources_gas_vector
                     .l2_gas
                     .0,
+                value: 0.0,
                 children: vec![
                     FlameChartNode {
                         call_id: 0,
                         name: Some("VM Cost".to_string()),
-                        value: detailed_tx_receipt
+                        raw_value: detailed_tx_receipt
                             .computation_resources_vm_cost_gas_vector
                             .l2_gas
                             .0,
+                        value: 0.0,
                         ..Default::default()
                     },
                     FlameChartNode {
                         call_id: 0,
                         name: Some("Sierra Cost".to_string()),
-                        value: detailed_tx_receipt
+                        raw_value: detailed_tx_receipt
                             .computation_resources_sierra_gas_vector
                             .l2_gas
                             .0,
+                        value: 0.0,
                         children: contract_flamechart.to_vec(),
                     },
                 ],
             },
         ],
-    })
+    };
+
+    normalize_with_sqrt(&mut root, contract_calls_map, 1.0);
+
+    Some(root)
 }
 
 fn contains_old_sierra_version(

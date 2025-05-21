@@ -137,7 +137,8 @@ pub struct DetailedTransactionReceipt {
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct FlameChartNode {
     pub call_id: u32,
-    pub value: u64,
+    pub raw_value: u64,
+    pub value: f64,
     pub name: Option<String>,
     pub children: Vec<FlameChartNode>,
 }

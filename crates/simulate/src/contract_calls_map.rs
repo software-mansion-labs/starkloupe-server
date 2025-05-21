@@ -115,7 +115,8 @@ impl ContractCallsMapBuilder {
 
                     let mut flamechart_node = FlameChartNode {
                         call_id: contract_call.call_id,
-                        value: contract_call.sierra_gas,
+                        raw_value: contract_call.sierra_gas,
+                        value: 0.0,
                         name: None,
                         children: Vec::new(),
                     };
