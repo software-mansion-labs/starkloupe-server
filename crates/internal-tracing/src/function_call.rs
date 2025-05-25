@@ -20,6 +20,7 @@ pub struct FunctionCall {
     pub arguments: Vec<InternalFnCallIO>,
     pub arguments_decoded: Option<Vec<DecodedValue>>,
 
+    pub debugger_data_available: bool,
     pub debugger_trace_step_index: Option<usize>,
     pub code_location: Option<CodeLocation>,
 

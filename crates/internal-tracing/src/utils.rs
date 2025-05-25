@@ -17,8 +17,8 @@ use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
     metadata::{calc_metadata, MetadataComputationConfig},
 };
-use cairo_lang_starknet_classes::abi::EventKind;
 use cairo_lang_starknet_classes::abi::{Event, EventField};
+use cairo_lang_starknet_classes::{abi::EventKind, compiler_version::VersionId};
 use cairo_lang_starknet_classes::{
     casm_contract_class::ENTRY_POINT_COST, contract_class::ContractClass,
 };
@@ -41,11 +41,12 @@ use crate::{
 };
 
 pub fn compile_sierra_contract_class(
-    contract_class: ContractClass,
+    contract_class: &ContractClass,
     max_bytecode_size: usize,
-) -> Result<CairoProgram> {
-    let (sierra_version, _, program) = sierra_from_felt252s(&contract_class.sierra_program)
-        .map_err(|e| anyhow::anyhow!("Failed to parse Sierra program: {:?}", e))?;
+) -> Result<(CairoProgram, VersionId, VersionId)> {
+    let (sierra_version, compiler_version, program) =
+        sierra_from_felt252s(&contract_class.sierra_program)
+            .map_err(|e| anyhow::anyhow!("Failed to parse Sierra program: {:?}", e))?;
 
     let entrypoint_function_indices = chain!(
         &contract_class.entry_points_by_type.constructor,
@@ -84,7 +85,7 @@ pub fn compile_sierra_contract_class(
     )
     .map_err(|e| anyhow::anyhow!("Failed to compile Sierra to Casm: {:?}", e))?;
 
-    Ok(compiled_program)
+    Ok((compiled_program, sierra_version, compiler_version))
 }
 
 pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<usize, Vec<usize>> {
@@ -334,6 +335,90 @@ pub fn flatten_event_data_struct(decoded_values: Vec<DecodedValue>) -> Vec<Decod
 }
 
 pub fn get_system_call_at_trace_step(
+    pc_to_ptr_sys_calls: &HashMap<usize, CellExpression>,
+    relocated_memory: &[Option<Felt>],
+    trace_entry: &RelocatedTraceEntry,
+    type_declaration_map: Option<&HashMap<ConcreteTypeId, TypeDeclaration>>,
+    events: Option<&HashSet<Event>>,
+) -> Option<ESysCall> {
+    fn read_felt(memory: &[Option<Felt>], ptr: usize) -> Option<Felt> {
+        memory.get(ptr).and_then(|v| *v)
+    }
+
+    let pc = trace_entry.pc;
+    let ptr_sys_call = pc_to_ptr_sys_calls.get(&pc)?;
+
+    let value = get_value_from_cell_expression(
+        relocated_memory,
+        trace_entry,
+        ptr_sys_call,
+        &ApChange::Known(0),
+    )
+    .ok()?;
+    let ptr = value.to_string().parse::<usize>().ok()?;
+
+    let felt_value = read_felt(relocated_memory, ptr)?;
+    let selector = SyscallSelector::try_from(felt_value).ok()?;
+
+    match selector {
+        DeprecatedSyscallSelector::CallContract => {
+            let contract_address = read_felt(relocated_memory, ptr + 2)?.to_fixed_hex_string();
+            let function_selector = read_felt(relocated_memory, ptr + 3)?.to_fixed_hex_string();
+
+            Some(ESysCall::ContractCall(ContractCall {
+                contract_address,
+                function_selector,
+            }))
+        }
+
+        DeprecatedSyscallSelector::EmitEvent => {
+            let (type_declaration_map, events) = (type_declaration_map?, events?);
+
+            let id = read_felt(relocated_memory, ptr + 2)?
+                .to_string()
+                .parse::<usize>()
+                .ok()?;
+
+            let event_selector = read_felt(relocated_memory, id)?;
+            let (event_name, event_members) = find_event_by_selector(events, event_selector);
+
+            let concrete_type_id = type_declaration_map.keys().find_map(|concrete_id| {
+                match (concrete_id.debug_name.as_ref(), event_name.as_ref()) {
+                    (Some(name), Some(event_name)) if simplify_type_name(name) == *event_name => {
+                        Some(concrete_id.clone())
+                    }
+                    _ => None,
+                }
+            })?;
+
+            let values: Vec<Felt> = relocated_memory
+                .iter()
+                .skip(id + 1)
+                .filter_map(|x| *x)
+                .collect();
+
+            let decoded_event =
+                decode_event_datas(&concrete_type_id, type_declaration_map, &values, &mut 0)?;
+
+            Some(ESysCall::EventCall(EventSysCall {
+                event_selector,
+                event_name,
+                event_members,
+                event_datas: vec![decoded_event],
+            }))
+        }
+
+        DeprecatedSyscallSelector::StorageWrite => {
+            let address = read_felt(relocated_memory, ptr + 3)?;
+            let value = read_felt(relocated_memory, ptr + 4)?;
+            Some(ESysCall::StorageWrite(StorageWrite { address, value }))
+        }
+
+        _ => None,
+    }
+}
+
+pub fn get_system_call_at_trace_step_(
     pc_to_ptr_sys_calls: &HashMap<usize, CellExpression>,
     relocated_memory: &[Option<Felt>],
     trace_entry: &RelocatedTraceEntry,

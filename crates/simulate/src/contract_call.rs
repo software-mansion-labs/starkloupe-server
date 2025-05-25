@@ -9,6 +9,7 @@ use serde::Serialize;
 use starknet::core::types::Felt;
 use std::borrow::Cow;
 use std::cell::Ref;
+use std::fmt::Debug;
 use verification::CodeLocation;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::get_name_of_entry_point_selector;
@@ -33,6 +34,7 @@ pub struct ContractCall {
     pub erc20_token_name: Option<String>,
     pub erc20_token_symbol: Option<String>,
     pub error_message: Option<String>,
+    pub call_debugger_data_available: bool,
     pub call_debugger_data: Option<ContractCallDebuggerData>,
     pub class_hash: Option<String>,
     pub sierra_version: Option<String>,
@@ -63,7 +65,6 @@ impl ContractCall {
         call_id: u32,
         parent_call_id: u32,
         contract_calls_nesting_level: u32,
-        sierra_gas: u64,
         is_hidden: bool,
     ) -> Self {
         let entry_point_name =
@@ -87,6 +88,7 @@ impl ContractCall {
             erc20_token_name: None,
             erc20_token_symbol: None,
             error_message: None,
+            call_debugger_data_available: false,
             call_debugger_data: None,
             class_hash: call_trace_ref
                 .entry_point
@@ -97,7 +99,7 @@ impl ContractCall {
             is_failed: matches!(call_trace_ref.result, CallResult::Failure(_)),
             is_deepest_panic_result: false,
 
-            sierra_gas,
+            sierra_gas: call_trace_ref.gas_consumed,
             vm_resources: call_trace_ref.used_execution_resources.clone(),
 
             result_types: None,

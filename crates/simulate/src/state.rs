@@ -293,7 +293,7 @@ impl ForkStateReader {
                 ContractAddress::try_from(Felt::from(storage_diff.address)).unwrap();
             for storage_entry in storage_diff.storage_entries.iter() {
                 let key = StorageKey::try_from(Felt::from(storage_entry.key)).unwrap();
-                let value: Felt = storage_entry.value.into();
+                let value: Felt = storage_entry.value;
                 cache.cache_storage_at(contract_address, key, value);
             }
         }

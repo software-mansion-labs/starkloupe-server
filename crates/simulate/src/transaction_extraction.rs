@@ -157,6 +157,25 @@ pub fn extract_submitted_tx(
     }
 }
 
+pub fn extract_transaction_signature(transaction: Transaction) -> Option<TransactionSignature> {
+    match transaction {
+        Transaction::Invoke(invoke_tx) => match invoke_tx {
+            InvokeTransaction::V0(tx) => Some(TransactionSignature(tx.signature)),
+            InvokeTransaction::V1(tx) => Some(TransactionSignature(tx.signature)),
+            InvokeTransaction::V3(tx) => Some(TransactionSignature(tx.signature)),
+        },
+        Transaction::Declare(declare_tx) => match declare_tx {
+            DeclareTransaction::V0(tx) => Some(TransactionSignature(tx.signature)),
+            DeclareTransaction::V1(tx) => Some(TransactionSignature(tx.signature)),
+            DeclareTransaction::V2(tx) => Some(TransactionSignature(tx.signature)),
+            DeclareTransaction::V3(tx) => Some(TransactionSignature(tx.signature)),
+        },
+        // L1Handler transactions have no signature
+        Transaction::L1Handler(_) => Some(TransactionSignature::default()),
+        _ => None,
+    }
+}
+
 pub fn extract_execution_status_transaction_receipt(
     transaction_receipt: &TransactionReceipt,
 ) -> Option<ExecutionResult> {

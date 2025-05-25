@@ -84,8 +84,6 @@ fn validate_call_with_executor(
         SierraGasRevertTracker::new(GasAmount(*remaining_validation_gas)),
     );
 
-    let class_hash = state.get_class_hash_at(storage_address)?;
-
     let mut validate_call = CallEntryPoint {
         entry_point_type: EntryPointType::External,
         entry_point_selector: validate_selector,
@@ -105,83 +103,23 @@ fn validate_call_with_executor(
         &mut validation_context,
         is_revertable,
     )
-    .map_err(|err| {
+    .map_err(|_err| {
         TransactionSimulationError::EntryPointExecutionError(
             EntryPointExecutionError::InternalError("Validate call error".to_string()),
         )
     })?;
 
-    let contract_class = state.get_compiled_class(class_hash)?;
-    if matches!(
-        contract_class,
-        BlockifierContractClass::V0(_) | BlockifierContractClass::V1(_)
-    ) {
-        let expected_retdata = vec![*constants::VALIDATE_RETDATA];
-        if validate_call_info.execution.retdata.0 != expected_retdata {
-            return Err(TransactionSimulationError::TransactionExecutionError(
-                TransactionExecutionError::InvalidValidateReturnData {
-                    actual: validate_call_info.execution.retdata,
-                },
-            ));
-        }
+    let expected_retdata = vec![*constants::VALIDATE_RETDATA];
+    if validate_call_info.execution.retdata.0 != expected_retdata {
+        return Err(TransactionSimulationError::TransactionExecutionError(
+            TransactionExecutionError::InvalidValidateReturnData {
+                actual: validate_call_info.execution.retdata,
+            },
+        ));
     }
 
     remaining_gas.subtract_used_gas(&validate_call_info);
     Ok(validate_call_info)
-}
-
-fn execute_call_with_executor(
-    calldata: Calldata,
-    storage_address: ContractAddress,
-    execute_selector: EntryPointSelector,
-    state: &mut dyn State,
-    cheatnet_state: &mut CheatnetState,
-    tx_context: Arc<TransactionContext>,
-    remaining_gas: &mut GasCounter,
-    is_revertable: bool,
-    executor: &CallEntryPointExecutor,
-) -> Result<CallInfo, TransactionSimulationError> {
-    let remaining_execute_gas = &mut remaining_gas.limit_usage(
-        tx_context
-            .block_context
-            .versioned_constants()
-            .os_constants
-            .execute_max_sierra_gas,
-    );
-    let mut execute_context = EntryPointExecutionContext::new(
-        tx_context.clone(),
-        ExecutionMode::Execute,
-        false,
-        SierraGasRevertTracker::new(GasAmount(*remaining_execute_gas)),
-    );
-
-    let mut execute_call = CallEntryPoint {
-        entry_point_type: EntryPointType::External,
-        entry_point_selector: execute_selector,
-        calldata,
-        class_hash: None,
-        code_address: None,
-        storage_address,
-        caller_address: ContractAddress::default(),
-        call_type: CallType::Call,
-        initial_gas: *remaining_execute_gas,
-    };
-
-    let execute_call_info = executor(
-        &mut execute_call,
-        state,
-        cheatnet_state,
-        &mut execute_context,
-        is_revertable,
-    )
-    .map_err(|err| {
-        TransactionSimulationError::EntryPointExecutionError(
-            EntryPointExecutionError::InternalError("Execute call error".to_string()),
-        )
-    })?;
-
-    remaining_gas.subtract_used_gas(&execute_call_info);
-    Ok(execute_call_info)
 }
 
 pub fn execute_transaction_flows_with_executor<'a>(

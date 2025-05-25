@@ -1,4 +1,4 @@
-use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass};
+use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass, DataWithContractClass};
 use anyhow::Result;
 use cairo_annotations::annotations::coverage::VersionedCoverageAnnotations;
 use cairo_annotations::annotations::TryFromDebugInfo;
@@ -11,6 +11,7 @@ use verification::{
     db::fetch_verified_classes_with_inlining_classes, s3::key_for_class_hash, CodeLocation,
     SierraStatementToCairoDebugInfo, VerifiedClassData,
 };
+use walnut_shared::extract_cairo_version_from_program;
 
 async fn fetch_and_parse_file(
     client: &aws_sdk_s3::Client,
@@ -27,6 +28,51 @@ async fn fetch_and_parse_file(
     let body = resp.body.collect().await?;
     let parsed: VerifiedClassData = serde_json::from_slice(&body.into_bytes())?;
     Ok(parsed)
+}
+
+pub async fn fetch_classes_data(
+    db_pool: &Pool<Postgres>,
+    s3_client: &aws_sdk_s3::Client,
+    classes: &[String],
+) -> HashMap<String, DataWithContractClass> {
+    let mut classes_debugger_data: HashMap<String, DataWithContractClass> = HashMap::new();
+
+    let verified_classes =
+        match fetch_verified_classes_with_inlining_classes(db_pool, classes).await {
+            Ok(vc) => vc,
+            Err(e) => {
+                error!("Failed to fetch verified classes: {:?}", e);
+                HashMap::new()
+            }
+        };
+
+    let fetches = verified_classes.keys().map(|key| {
+        fetch_and_parse_file(
+            s3_client,
+            "walnutserver-east-1-classes-verification",
+            key_for_class_hash(key),
+        )
+    });
+
+    let results = match future::try_join_all(fetches).await {
+        Ok(results) => results,
+        Err(e) => {
+            error!("Failed to fetch and parse files: {:?}", e);
+            Vec::new()
+        }
+    };
+
+    for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
+        classes_debugger_data.insert(
+            verified_class_row.0.clone(),
+            DataWithContractClass {
+                inline_strategy_class_hash: verified_class_row.1.clone(),
+                contract_class: verified_class_data.contract_class.clone(),
+            },
+        );
+    }
+
+    classes_debugger_data
 }
 
 /// Fetches the debugger data for the given classes.

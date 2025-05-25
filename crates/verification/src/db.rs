@@ -450,3 +450,44 @@ pub async fn fetch_class_hash_profiles_by_id(
 
     Ok(class_hash_map)
 }
+
+pub async fn fetch_inline_class_hashes_for_class_hashes(
+    db_pool: &Pool<Postgres>,
+    class_hashes: &[String],
+) -> Result<HashMap<String, Option<String>>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT class_hash, inline_strategy_class_hash
+        FROM class_hash_profiles
+        WHERE class_hash = ANY($1)
+        "#,
+        class_hashes,
+    )
+    .fetch_all(db_pool)
+    .await?;
+
+    let map = rows
+        .into_iter()
+        .map(|row| (row.class_hash, row.inline_strategy_class_hash))
+        .collect();
+
+    Ok(map)
+}
+
+pub async fn fetch_inline_class_hash_profiles_by_class_hash(
+    db_pool: &Pool<Postgres>,
+    class_hash: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let inline_class_hash = sqlx::query!(
+        r#"
+        SELECT inline_strategy_class_hash
+        FROM class_hash_profiles
+        WHERE class_hash = $1
+        "#,
+        class_hash
+    )
+    .fetch_optional(db_pool)
+    .await?;
+
+    Ok(inline_class_hash.and_then(|r| r.inline_strategy_class_hash))
+}

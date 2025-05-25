@@ -1,11 +1,10 @@
 use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
-use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
 use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
-use crate::function_calls::create_function_calls_map;
+use crate::function_calls::create_simple_function_calls_map;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
@@ -29,7 +28,6 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
-use blockifier::execution::call_info::CallInfo;
 use blockifier::fee::fee_checks::PostExecutionReport;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
@@ -47,8 +45,7 @@ use ethers::types::H256;
 use ethers::types::U256;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
-use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
-use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
+use internal_tracing::debugger_data_fetcher::fetch_classes_data;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
@@ -62,19 +59,17 @@ use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::core::ChainId;
-use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::u64;
 use tracing::warn;
 use url::Url;
-use verification::db::fetch_verified_class_with_inlining_class;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
 use walnut_shared::fetch_tx_block_number_from_voyager;
 use walnut_shared::parse_transaction_hash_per_network;
+use walnut_shared::utils::extract_sierra_and_cairo_versions;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
     to_chain_id, ETransactionHashType,
@@ -126,29 +121,8 @@ pub async fn simulate(
         })?,
     );
 
-    let mut cached_fork_state = CachedState::new(
-        ForkStateReader::new(
-            args.rpc_url.clone(),
-            block_number,
-            transaction_index,
-            total_txs_in_block,
-            false,
-            db_pool,
-            s3_client,
-        )
-        .map_err(|e| {
-            TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
-        })?,
-    );
-    let strkgate_event = args.strkgate_event.clone();
-
-    let (cheatnet_state, call_infos, post_execution_report, detailed_transaction_receipt) =
-        run_simulation(
-            block_info,
-            args,
-            &mut cached_fork_state_non_inlined_class,
-            &mut cached_fork_state,
-        )?;
+    let (cheatnet_state, post_execution_report, detailed_transaction_receipt) =
+        run_simulation(block_info, args, &mut cached_fork_state_non_inlined_class)?;
 
     let mut contract_flamechart: Vec<FlameChartNode> = Vec::new();
     let ContractCallsMapBuilder {
@@ -157,26 +131,22 @@ pub async fn simulate(
         mut deepest_failed_contract_call_id,
         cheatnet_state_detected_events,
         ..
-    } = ContractCallsMapBuilder::new_from_cheatnet_state(
-        cheatnet_state,
-        call_infos,
-        &mut contract_flamechart,
-    );
+    } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
 
     let class_hashes = contract_calls_map.collect_all_class_hashes();
 
-    let classes_debugger_data =
-        fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
+    let classes_debugger_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
     let (mut function_calls_map, event_calls_map, incomplete_storage_changes) =
-        create_function_calls_map(
+        create_simple_function_calls_map(
             &mut contract_calls_map,
             &mut next_call_id,
             &mut deepest_function_call_id_with_panic,
             &classes_debugger_data,
-            &cached_fork_state,
+            &cached_fork_state_non_inlined_class,
+            true,
         );
 
     // Set the deepest function call that panic to true
@@ -235,7 +205,7 @@ pub async fn simulate(
 
     for call in contract_calls_map.0.values_mut() {
         if let Some(class_hash) = call.entry_point.class_hash {
-            let contract_class = cached_fork_state
+            let contract_class = cached_fork_state_non_inlined_class
                 .state
                 .in_memory_fork_cache
                 .borrow()
@@ -265,22 +235,22 @@ pub async fn simulate(
     }
 
     let mut contract_names_fetcher = ContractNamesFetcher::new(provider_client, &chain_id);
-    // The StarkNet transaction emits this `Transfer` event from the StarkGate ETH token contract.
-    // This event is present inside the transaction receipt but is not found in the Foundry-emitted
-    // events array.
-    // To maintain consistency with blockchain explorers, we need to manually append this event
-    // to the vector of all events.
-    let strkgate_emitted_event = if let Some(event) = strkgate_event {
-        let contract_address_felt = event.from_address;
-        let contract_address_str = contract_address_felt.to_fixed_hex_string();
-
-        let contract_name = contract_names_fetcher
-            .fetch_single_contract_name(contract_address_str)
-            .await;
-        EmittedEvent::convert_event_to_emitted_event(&event, &contract_name)
-    } else {
-        None
-    };
+    //    // The StarkNet transaction emits this `Transfer` event from the StarkGate ETH token contract.
+    //    // This event is present inside the transaction receipt but is not found in the Foundry-emitted
+    //    // events array.
+    //    // To maintain consistency with blockchain explorers, we need to manually append this event
+    //    // to the vector of all events.
+    //    let strkgate_emitted_event = if let Some(event) = strkgate_event {
+    //        let contract_address_felt = event.from_address;
+    //        let contract_address_str = contract_address_felt.to_fixed_hex_string();
+    //
+    //        let contract_name = contract_names_fetcher
+    //            .fetch_single_contract_name(contract_address_str)
+    //            .await;
+    //        EmittedEvent::convert_event_to_emitted_event(&event, &contract_name)
+    //    } else {
+    //        None
+    //    };
 
     let events = EmittedEvent::create_emitted_events_list(
         &mut contract_calls_map,
@@ -288,7 +258,7 @@ pub async fn simulate(
         &struct_abis,
         &enum_abis,
         &cheatnet_state_detected_events,
-        strkgate_emitted_event,
+        None,
     );
 
     contract_names_fetcher
@@ -316,19 +286,13 @@ pub async fn simulate(
         }
     }
 
-    let debugger_trace =
-        DebuggerTraceBuilder::build(&1, &mut function_calls_map, &mut contract_calls_map);
-
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
         event_calls_map,
         events,
         execution_result,
-        simulation_debugger_data: Some(SimulationDebuggerData {
-            classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
-            debugger_trace,
-        }),
+        simulation_debugger_data: None,
         storage_changes,
     };
 
@@ -365,11 +329,9 @@ fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
-    cached_fork_state: &mut CachedState<ForkStateReader>,
 ) -> Result<
     (
         CheatnetState,
-        Vec<CallInfo>,
         Option<PostExecutionReport>,
         Option<DetailedTransactionReceipt>,
     ),
@@ -379,13 +341,6 @@ fn run_simulation(
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);
 
-    let mut cheatnet_state = CheatnetState {
-        block_info: block_info.clone(),
-        ..Default::default()
-    };
-
-    cheatnet_state.trace_data.is_vm_trace_needed = true;
-
     let mut cheatnet_state_non_inlined = CheatnetState {
         block_info,
         ..Default::default()
@@ -393,84 +348,16 @@ fn run_simulation(
 
     cheatnet_state_non_inlined.trace_data.is_vm_trace_needed = true;
 
-    let (
-        validate_call_info,
-        execute_call_info,
-        post_execution_report,
-        detailed_transaction_receipt,
-    ) = if args.transaction_version == TransactionVersion::THREE {
-        // Only version 3 gets executed and gets detailed gas vectors
-        let initial_gas = transaction_context.initial_sierra_gas();
-        let mut initial_gas_counter = GasCounter::new(initial_gas);
+    let initial_gas = transaction_context.initial_sierra_gas();
+    let mut initial_gas_counter = GasCounter::new(initial_gas);
 
-        let (validate, execute) = execute_transaction_flows_with_executor(
-            &args,
-            cached_fork_state_non_inlined_class,
-            &mut cheatnet_state_non_inlined,
-            &mut initial_gas_counter,
-            transaction_context.clone(),
-            &|call, state, cheatnet_state, ctx, _| {
-                Ok(execute_call_entry_point(
-                    call,
-                    state,
-                    cheatnet_state,
-                    ctx,
-                    true,
-                )?)
-            },
-            &|call, state, cheatnet_state, ctx, _| {
-                Ok(execute_call_entry_point(
-                    call,
-                    state,
-                    cheatnet_state,
-                    ctx,
-                    true,
-                )?)
-            },
-        )?;
-
-        let (report, receipt) = handle_post_exec_and_collect_gas_vectors(
-            &args,
-            cached_fork_state_non_inlined_class,
-            &mut cheatnet_state_non_inlined,
-            transaction_context.clone(),
-            &validate,
-            &execute,
-            signature_len,
-            calldata_len,
-        )?;
-
-        (validate, execute, Some(report), Some(receipt))
-    } else if args.transaction_version != TransactionVersion::ZERO {
-        let (report, _) = handle_post_exec_and_collect_gas_vectors(
-            &args,
-            cached_fork_state_non_inlined_class,
-            &mut cheatnet_state_non_inlined,
-            transaction_context.clone(),
-            &None,
-            &None,
-            signature_len,
-            calldata_len,
-        )?;
-
-        (None, None, Some(report), None)
-    } else {
-        (None, None, None, None)
-    };
-
-    //
-    let call_infos = [validate_call_info, execute_call_info]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<CallInfo>>();
-
-    let (_, _) = execute_transaction_flows_with_executor(
+    let (validate, execute) = execute_transaction_flows_with_executor(
         &args,
-        cached_fork_state,
-        &mut cheatnet_state,
-        &mut GasCounter::new(GasAmount(u64::MAX)),
+        cached_fork_state_non_inlined_class,
+        &mut cheatnet_state_non_inlined,
+        &mut initial_gas_counter,
         transaction_context.clone(),
-        &|call, state, cheatnet_state, ctx, _revert| {
+        &|call, state, cheatnet_state, ctx, _| {
             Ok(execute_call_entry_point(
                 call,
                 state,
@@ -479,7 +366,7 @@ fn run_simulation(
                 true,
             )?)
         },
-        &|call, state, cheatnet_state, ctx, _revert| {
+        &|call, state, cheatnet_state, ctx, _| {
             Ok(execute_call_entry_point(
                 call,
                 state,
@@ -490,12 +377,23 @@ fn run_simulation(
         },
     )?;
 
-    Ok((
-        cheatnet_state,
-        call_infos,
-        post_execution_report,
-        detailed_transaction_receipt,
-    ))
+    let (report, receipt) = if args.transaction_version != TransactionVersion::ZERO {
+        let (report, receipt) = handle_post_exec_and_collect_gas_vectors(
+            &args,
+            cached_fork_state_non_inlined_class,
+            &mut cheatnet_state_non_inlined,
+            transaction_context.clone(),
+            &validate,
+            &execute,
+            signature_len,
+            calldata_len,
+        )?;
+        (Some(report), Some(receipt))
+    } else {
+        (None, None)
+    };
+
+    Ok((cheatnet_state_non_inlined, report, receipt))
 }
 
 pub async fn simulate_by_calldata(
@@ -872,7 +770,7 @@ async fn process_l1_handler_transaction(
         chain_id: chain_id_to_readable_string(&core_l2_chain_id),
         block_number: block_number.map_or_else(
             || starknet::core::types::BlockId::Tag(starknet::core::types::BlockTag::Latest),
-            |bn| BlockId::Number(bn),
+            BlockId::Number,
         ),
         block_timestamp: block_timestamp.0,
         nonce: l1_handler_tx.nonce.0.to_u64(),
@@ -1029,21 +927,4 @@ fn decode_l2_l1_event(log: &Log) -> Option<DecodedL2ToL1Message> {
 
         _ => None,
     }
-}
-
-fn extract_sierra_and_cairo_versions(sierra_program: &[Felt]) -> (Option<String>, Option<String>) {
-    if sierra_program.len() < 6 {
-        return (None, None);
-    }
-    let sierra_version = format!(
-        "{}.{}.{}",
-        sierra_program[0], sierra_program[1], sierra_program[2]
-    );
-
-    let cairo_version = format!(
-        "{}.{}.{}",
-        sierra_program[3], sierra_program[4], sierra_program[5]
-    );
-
-    (Some(sierra_version), Some(cairo_version))
 }

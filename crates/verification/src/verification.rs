@@ -1,11 +1,13 @@
 use crate::db::{
-    insert_contract_class, insert_verification_request, insert_verification_status,
-    update_verification_request, update_verification_status, update_verification_statuses,
+    fetch_inline_class_hashes_for_class_hashes, insert_contract_class, insert_verification_request,
+    insert_verification_status, update_verification_request, update_verification_status,
+    update_verification_statuses,
 };
 use crate::helpers::{
     fetch_class_from_blockchain, initialize_status_map, process_new_cairo_version_verification,
-    process_old_cairo_version_verification, update_status_from_verification_table,
-    update_status_from_verified_contract_classes,
+    process_old_cairo_version_verification,
+    update_status_from_verification_table_with_inline_class_hash,
+    update_status_from_verified_contract_classes_with_inline_class_hash,
 };
 use crate::manifest::Manifest;
 use crate::s3::upload_class_to_s3;
@@ -87,13 +89,54 @@ pub async fn initiate_verification(
     source_code: HashMap<String, String>,
     chain_id: Option<String>,
 ) -> Result<Uuid> {
+    let classes_from_blockchain = futures::future::join_all(
+        class_hashes
+            .iter()
+            .map(|class_hash| fetch_class_from_blockchain(&provider_client, class_hash)),
+    )
+    .await;
+
+    let class_hash_to_cairo_version: HashMap<String, (u32, u32, u32)> = class_hashes
+        .iter()
+        .zip(classes_from_blockchain.into_iter())
+        .filter_map(|(class_hash, result)| {
+            match result {
+                Ok((_, cairo_version)) => Some((class_hash.to_string(), cairo_version)),
+                Err(err) => {
+                    // po želji: loguj grešku
+                    error!("Failed to fetch class for hash {}: {:?}", class_hash, err);
+                    None
+                }
+            }
+        })
+        .collect();
     // Initializes a map with class hashes and their statuses.
     // class_hash -> (class_name, status, message)
     let mut class_status_map = initialize_status_map(&class_hashes, &class_names);
 
-    update_status_from_verification_table(db_pool, &class_hashes, &mut class_status_map).await?;
-    update_status_from_verified_contract_classes(db_pool, &class_hashes, &mut class_status_map)
-        .await?;
+    let class_hash_to_inline_class_hash_map =
+        fetch_inline_class_hashes_for_class_hashes(db_pool, &class_hashes).await?;
+
+    update_status_from_verification_table_with_inline_class_hash(
+        db_pool,
+        &class_hashes,
+        &class_hash_to_cairo_version,
+        &class_hash_to_inline_class_hash_map,
+        &mut class_status_map,
+    )
+    .await?;
+
+    update_status_from_verified_contract_classes_with_inline_class_hash(
+        db_pool,
+        &class_hashes,
+        &class_hash_to_cairo_version,
+        &class_hash_to_inline_class_hash_map,
+        &mut class_status_map,
+    )
+    .await?;
+
+    //update_status_from_verification_table(db_pool, &class_hashes, &mut class_status_map).await?;
+    //update_status_from_verified_contract_classes(db_pool, &class_hashes, &mut class_status_map).await?;
 
     // If there is only one class to verify, check if we already have a status for it
     if class_status_map.len() == 1 {
@@ -195,17 +238,32 @@ pub async fn initiate_verification(
         {
             Ok(s) => {
                 for (class_hash, (status, message)) in &s {
-                    if let Err(err) = update_verification_status(
-                        &db_pool_clone,
-                        verification_status_id,
-                        class_hash,
-                        status.as_str(),
-                        message,
-                    )
-                    .await
-                    {
-                        error!("Failed to update verification  status: {:?}", err)
-                    };
+                    if class_status_map.contains_key(class_hash) {
+                        if let Err(err) = update_verification_status(
+                            &db_pool_clone,
+                            verification_status_id,
+                            class_hash,
+                            status.as_str(),
+                            message,
+                        )
+                        .await
+                        {
+                            error!("Failed to update verification  status: {:?}", err)
+                        };
+                    } else {
+                        if let Err(e) = insert_verification_status(
+                            &db_pool_clone,
+                            verification_status_id,
+                            class_hash,
+                            status.as_str(),
+                            message.as_deref(),
+                            chain_id.as_deref(),
+                        )
+                        .await
+                        {
+                            error!("Failed to insert verification status entry: {:?}", e);
+                        }
+                    }
 
                     match status {
                         EVerificationStatus::Pending => {
@@ -306,49 +364,64 @@ pub async fn verify_by_class_hashes(
                     cairo_debug_info,
                 )) = class_result
                 {
-                    //We are uploading to s3 the related inline class hash if it exist, as this one we need to get the
+                    //We are uploading to s3 the related inline class hash and original class hash if it exist, as this one we need to get the
                     //inline denug information
                     remove_walnut_debug_from_scarb(&mut source_code);
-                    match inline_strategy_class_hash {
-                        Some(inline_strategy_class_hash) => {
-                            upload_class_to_s3(
-                                s3_client,
-                                inline_strategy_class_hash,
-                                contract_class,
-                                cairo_debug_info,
-                                &source_code,
-                            )
-                            .await?;
-                        }
-                        None => {
-                            upload_class_to_s3(
-                                s3_client,
-                                class_hash,
-                                contract_class,
-                                cairo_debug_info,
-                                &source_code,
-                            )
-                            .await?;
-                        }
-                    }
 
                     let is_cairo_debug_info = cairo_debug_info.is_some();
+
                     // In db for contract_class table, we are insert the class_hash, as this one is from
                     // user request for verification
-                    // We are not inserting the inline class hash here,as this one is not requested from
-                    // the user for the verification
-                    insert_contract_class(
-                        db_pool,
-                        class_hash,
-                        true,
-                        is_cairo_debug_info,
-                        true,
-                        chain_id.as_deref(),
-                    )
-                    .await?;
+                    // We are alos inserting the inline class hash here, as this one will need us to get debug info
+                    //
+                    // 1. Upload and insert for original class_hash
 
-                    class_status_map
-                        .insert(class_hash.clone(), (EVerificationStatus::Success, None));
+                    // 2. Upload and insert for inline_strategy_class_hash
+                    if let Some(_inline_class_hash) = inline_strategy_class_hash {
+                        upload_class_to_s3(
+                            s3_client,
+                            class_hash,
+                            contract_class,
+                            cairo_debug_info,
+                            &source_code,
+                        )
+                        .await?;
+
+                        insert_contract_class(
+                            db_pool,
+                            class_hash,
+                            true,
+                            is_cairo_debug_info,
+                            true,
+                            chain_id.as_deref(),
+                        )
+                        .await?;
+
+                        class_status_map
+                            .insert(class_hash.clone(), (EVerificationStatus::Success, None));
+                    } else {
+                        class_status_map
+                            .insert(class_hash.clone(), (EVerificationStatus::Success, None));
+
+                        upload_class_to_s3(
+                            s3_client,
+                            class_hash,
+                            contract_class,
+                            cairo_debug_info,
+                            &source_code,
+                        )
+                        .await?;
+
+                        insert_contract_class(
+                            db_pool,
+                            class_hash,
+                            true,
+                            is_cairo_debug_info,
+                            true,
+                            chain_id.as_deref(),
+                        )
+                        .await?;
+                    }
                 } else if let Err(e) = class_result {
                     class_status_map.insert(
                         class_hash.clone(),

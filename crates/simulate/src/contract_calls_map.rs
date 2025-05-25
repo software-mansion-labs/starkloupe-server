@@ -1,6 +1,5 @@
 use crate::contract_call::ContractCall;
 use crate::FlameChartNode;
-use blockifier::execution::call_info::CallInfo;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
@@ -41,7 +40,6 @@ pub struct ContractCallsMapBuilder {
 impl ContractCallsMapBuilder {
     pub fn new_from_cheatnet_state(
         cheatnet_state: CheatnetState,
-        call_infos: Vec<CallInfo>,
         contract_flamechart: &mut Vec<FlameChartNode>,
     ) -> Self {
         let mut contract_call_tree_builder = Self {
@@ -63,7 +61,6 @@ impl ContractCallsMapBuilder {
             new_contract_call_id,
             0,
             0,
-            0,
             true, // Hide root contract call
         );
         contract_call_tree_builder.next_call_id += 1;
@@ -74,7 +71,6 @@ impl ContractCallsMapBuilder {
 
         contract_call_tree_builder.traverse_cheatnet_state_calltrace(
             new_contract_call_id,
-            &call_infos,
             call_trace_ref,
             contract_flamechart,
             0,
@@ -86,39 +82,23 @@ impl ContractCallsMapBuilder {
     fn traverse_cheatnet_state_calltrace(
         &mut self,
         current_call_id: u32,
-        call_infos: &[CallInfo],
         call_trace_ref: Ref<CallTrace>,
         contract_flamechart: &mut Vec<FlameChartNode>,
         nesting_level: u32,
     ) {
-        if !call_infos.is_empty() && call_infos.len() == call_trace_ref.nested_calls.len() {
-            for (call_info, trace_call) in call_infos.iter().zip(call_trace_ref.nested_calls.iter())
-            {
-                self.process_call(
-                    current_call_id,
-                    Some(call_info),
-                    trace_call,
-                    contract_flamechart,
-                    nesting_level,
-                );
-            }
-        } else {
-            for trace_call in &call_trace_ref.nested_calls {
-                self.process_call(
-                    current_call_id,
-                    None,
-                    trace_call,
-                    contract_flamechart,
-                    nesting_level,
-                );
-            }
+        for trace_call in &call_trace_ref.nested_calls {
+            self.process_call(
+                current_call_id,
+                trace_call,
+                contract_flamechart,
+                nesting_level,
+            );
         }
     }
 
     fn process_call(
         &mut self,
         current_call_id: u32,
-        call_info: Option<&CallInfo>,
         trace_call: &CallTraceNode,
         contract_flamechart: &mut Vec<FlameChartNode>,
         nesting_level: u32,
@@ -128,13 +108,11 @@ impl ContractCallsMapBuilder {
                 let new_contract_call_id = self.next_call_id;
                 let is_fee_transfer = call_trace.borrow().entry_point.entry_point_selector
                     == selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME);
-                let sierra_gas = call_info.map_or(0, |ci| ci.execution.gas_consumed);
                 let contract_call = ContractCall::from_cheatnet_state_calltrace(
                     &call_trace.borrow(),
                     new_contract_call_id,
                     current_call_id,
                     nesting_level + 1,
-                    sierra_gas,
                     is_fee_transfer,
                 );
 
@@ -172,12 +150,9 @@ impl ContractCallsMapBuilder {
                         .push(new_contract_call_id);
                 }
 
-                let inner_calls = call_info.map_or(Vec::new(), |ci| ci.inner_calls.clone());
-
                 if !is_hidden {
                     self.traverse_cheatnet_state_calltrace(
                         new_contract_call_id,
-                        &inner_calls,
                         call_trace.borrow(),
                         &mut flamechart_node.children,
                         nesting_level + 1,
@@ -187,7 +162,6 @@ impl ContractCallsMapBuilder {
                 } else {
                     self.traverse_cheatnet_state_calltrace(
                         new_contract_call_id,
-                        &inner_calls,
                         call_trace.borrow(),
                         contract_flamechart,
                         nesting_level + 1,

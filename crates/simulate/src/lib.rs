@@ -1,6 +1,7 @@
 pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;
+pub mod debugger;
 pub mod debugger_trace;
 pub mod events;
 pub mod execution;
@@ -50,6 +51,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
+use utils::parse_chain_id_and_rpc_url_debug;
+use utils::parse_optional_tx_hash;
+use utils::parse_transaction_type;
 use utils::{
     eth_address_to_felt, eth_u256_to_felt, parse_block_number, parse_calldata,
     parse_chain_id_and_rpc_url, parse_contract_address, parse_nonce, parse_transaction_version,
@@ -116,6 +120,53 @@ impl SimulationArgs {
             strkgate_event: None,
         })
     }
+
+    pub async fn try_from_debug_payload(
+        raw: DebugPayload,
+    ) -> Result<Self, TransactionSimulationError> {
+        let (chain_id, rpc_url) = parse_chain_id_and_rpc_url_debug(&raw).await?;
+        let nonce = parse_nonce(raw.nonce);
+        let block_number = parse_block_number(raw.block_number);
+        let sender_address = parse_contract_address(&raw.sender_address)?;
+        let calldata = parse_calldata(&raw.calldata)?;
+        let transaction_version = parse_transaction_version(raw.transaction_version)?;
+        let transaction_hash = parse_optional_tx_hash(raw.transaction_hash.as_deref())?;
+        let transaction_type = Some(parse_transaction_type(&raw.transaction_type)?);
+
+        Ok(Self {
+            chain_id,
+            rpc_url,
+            block_number,
+            nonce,
+            sender_address,
+            entry_point_selector: None,
+            calldata,
+            transaction_signature: None,
+            transaction_version,
+            transaction_hash,
+            transaction_type,
+            max_fee: None,
+            resource_bounds: None,
+            paymaster_data: None,
+            strkgate_event: None,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DebugPayload {
+    pub chain_id: Option<String>,
+    pub rpc_url: Option<String>,
+    pub block_number: Option<u64>,
+    pub block_timestamp: Option<u64>,
+    pub nonce: Option<u64>,
+    pub sender_address: String,
+    pub calldata: Vec<String>,
+    pub transaction_version: usize,
+    pub transaction_type: String,
+    pub transaction_index_in_block: Option<u64>,
+    pub total_transactions_in_block: Option<u64>,
+    pub transaction_hash: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -235,6 +286,13 @@ where
         BlockId::Hash(hash) => serializer.serialize_str(&format!("{:?}", hash)),
         BlockId::Tag(tag) => serializer.serialize_str(&format!("{:?}", tag)),
     }
+}
+
+#[derive(Serialize, Debug)]
+pub struct DebuggerInfo {
+    pub contract_calls_map: ContractCallsMap,
+    pub function_calls_map: FunctionCallsMap,
+    pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }
 
 #[derive(Serialize, Debug)]

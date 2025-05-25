@@ -14,6 +14,13 @@ use serde::Serialize;
 use std::collections::HashMap;
 use verification::SierraStatementToCairoDebugInfo;
 
+/// Contains the debugger data for a class with the Sierra contract class
+#[derive(Debug)]
+pub struct DataWithContractClass {
+    pub inline_strategy_class_hash: Option<String>,
+    pub contract_class: ContractClass,
+}
+
 /// Contains the debugger data for all classes in a simulation
 #[derive(Debug, Serialize)]
 pub struct SimulationDebuggerData {
