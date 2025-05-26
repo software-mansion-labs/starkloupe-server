@@ -1,7 +1,7 @@
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::execution::execute_transaction_flows_with_executor;
-use crate::function_calls::create_function_calls_map;
+use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::transaction_extraction::extract_block_txs_info;
@@ -14,13 +14,13 @@ use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
 use cheatnet::state::CheatnetState;
+use internal_tracing::build_debugger_data::build_contract_call_debugger_data_adapter;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
 use internal_tracing::SimulationDebuggerData;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::Felt;
-
 use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
 use starknet_api::execution_resources::GasAmount;
@@ -90,14 +90,15 @@ pub async fn simulate_to_get_debug_info(
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
-    let mut function_calls_map = create_function_calls_map(
+    let (mut function_calls_map, _, _) = create_function_calls_map_generic(
         &mut contract_calls_map,
         &mut next_call_id,
         &mut deepest_function_call_id_with_panic,
         &classes_debugger_data,
         &cached_fork_state,
-        true,
-    );
+        false,
+        build_contract_call_debugger_data_adapter,
+    )?;
 
     let debugger_trace =
         DebuggerTraceBuilder::build(&1, &mut function_calls_map, &mut contract_calls_map);

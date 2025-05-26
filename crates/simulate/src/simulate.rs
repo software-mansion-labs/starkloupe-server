@@ -4,7 +4,7 @@ use crate::contract_names::ContractNamesFetcher;
 use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
 use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
-use crate::function_calls::create_simple_function_calls_map;
+use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
@@ -45,6 +45,7 @@ use ethers::types::H256;
 use ethers::types::U256;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
+use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_data_adapter;
 use internal_tracing::debugger_data_fetcher::fetch_classes_data;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::SimulationDebuggerData;
@@ -135,19 +136,20 @@ pub async fn simulate(
 
     let class_hashes = contract_calls_map.collect_all_class_hashes();
 
-    let classes_debugger_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+    let classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
     let (mut function_calls_map, event_calls_map, incomplete_storage_changes) =
-        create_simple_function_calls_map(
+        create_function_calls_map_generic(
             &mut contract_calls_map,
             &mut next_call_id,
             &mut deepest_function_call_id_with_panic,
-            &classes_debugger_data,
+            &classes_data,
             &cached_fork_state_non_inlined_class,
             true,
-        );
+            build_simple_contract_call_debugger_data_adapter,
+        )?;
 
     // Set the deepest function call that panic to true
     if let Some(deepest_func_call_id) = deepest_function_call_id_with_panic {
@@ -190,7 +192,7 @@ pub async fn simulate(
     }
 
     let storage_changes = fetch_before_storage_changes(
-        incomplete_storage_changes,
+        incomplete_storage_changes.unwrap_or_default(),
         &contract_calls_map,
         &provider_client,
         block_number,
@@ -289,7 +291,7 @@ pub async fn simulate(
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
-        event_calls_map,
+        event_calls_map: event_calls_map.unwrap_or_default(),
         events,
         execution_result,
         simulation_debugger_data: None,

@@ -273,8 +273,16 @@ pub enum TransactionSimulationError {
     FeeCheckError(#[from] FeeCheckError),
     #[error("Failed to convert to L1HandlerTransaction")]
     ConversionError,
+    #[error("Trace Error occurred: {0}")]
+    TraceError(String),
     #[error("Error occurred: {0}")]
     OtherError(String),
+}
+
+impl From<anyhow::Error> for TransactionSimulationError {
+    fn from(err: anyhow::Error) -> Self {
+        TransactionSimulationError::TraceError(err.to_string())
+    }
 }
 
 fn serialize_block_number<S>(block_id: &BlockId, serializer: S) -> Result<S::Ok, S::Error>

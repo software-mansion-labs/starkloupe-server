@@ -235,49 +235,6 @@ pub fn get_raw_function_name(fn_name: &str) -> Option<String> {
     Some(raw_fn_name)
 }
 
-/// Determines if a given function name corresponds to a high-level loop in Sierra.
-///
-/// High-level loops in Sierra are functions whose names include an `expr-id` enclosed in `[` and `]`.
-/// This pattern appears in debug information
-/// The function checks for the following:
-/// - The presence of `[` and `]` to identify brackets.
-/// - The inclusion of "expr" within the brackets.
-/// - The presence of digits following "expr" within the brackets.
-///
-/// # Arguments
-/// * `function_name` - A string slice representing the function name.
-///
-/// # Returns
-/// * `true` if the function name matches the pattern of a high-level loop.
-/// * `false` otherwise.
-pub fn is_loop(function_name: &str) -> bool {
-    let mut inside_brackets = false;
-    let mut found_expr = false;
-    let mut digits_found = false;
-
-    for c in function_name.chars() {
-        if c == '[' {
-            inside_brackets = true;
-            found_expr = false;
-            digits_found = false;
-        } else if c == ']' {
-            if inside_brackets && found_expr && digits_found {
-                return true;
-            }
-            inside_brackets = false;
-        } else if inside_brackets {
-            if !found_expr && function_name.contains("expr") {
-                found_expr = true;
-            }
-            if found_expr && c.is_ascii_digit() {
-                digits_found = true;
-            }
-        }
-    }
-
-    false
-}
-
 pub fn find_event_by_selector(
     events: &HashSet<Event>,
     selector: Felt,

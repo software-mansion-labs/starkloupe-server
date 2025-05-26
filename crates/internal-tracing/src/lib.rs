@@ -7,12 +7,54 @@ pub mod function_call;
 pub mod function_calls_map;
 pub mod mappings;
 pub mod utils;
-
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use call_trace::DebuggerTraceEntry;
 use serde::Serialize;
 use std::collections::HashMap;
+use thiserror::Error;
 use verification::SierraStatementToCairoDebugInfo;
+
+pub trait ClassDataProvider {
+    fn get_contract_class(&self) -> &ContractClass;
+    fn get_inline_strategy_class_hash(&self) -> Option<String>;
+    fn get_debug_info(&self) -> Option<&ClassDebuggerData>;
+}
+
+impl ClassDataProvider for DataWithContractClass {
+    fn get_contract_class(&self) -> &ContractClass {
+        &self.contract_class
+    }
+    fn get_inline_strategy_class_hash(&self) -> Option<String> {
+        self.inline_strategy_class_hash.clone()
+    }
+    fn get_debug_info(&self) -> Option<&ClassDebuggerData> {
+        None
+    }
+}
+
+impl ClassDataProvider for ClassDebuggerDataWithContractClass {
+    fn get_contract_class(&self) -> &ContractClass {
+        &self.contract_class
+    }
+    fn get_inline_strategy_class_hash(&self) -> Option<String> {
+        self.inline_strategy_class_hash.clone()
+    }
+    fn get_debug_info(&self) -> Option<&ClassDebuggerData> {
+        self.class_debugger_data.as_ref()
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum TraceError {
+    #[error("Mapping error {0}")]
+    MappingError(String),
+    #[error("Sotrage error {0}")]
+    StorageError(String),
+    #[error("Internal trace error {0}")]
+    InternalTraceError(String),
+    #[error("Compile contract class error {0}")]
+    CompilationError(String),
+}
 
 /// Contains the debugger data for a class with the Sierra contract class
 #[derive(Debug)]
