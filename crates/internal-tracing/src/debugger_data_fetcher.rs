@@ -8,6 +8,7 @@ use itertools::Itertools;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use tracing::error;
+use tracing::warn;
 use verification::{
     db::fetch_verified_classes_with_inlining_classes, s3::key_for_class_hash, CodeLocation,
     SierraStatementToCairoDebugInfo, VerifiedClassData,
@@ -41,7 +42,7 @@ pub async fn fetch_classes_data(
         match fetch_verified_classes_with_inlining_classes(db_pool, classes).await {
             Ok(vc) => vc,
             Err(e) => {
-                error!("Failed to fetch verified classes: {:?}", e);
+                warn!("Failed to fetch verified classes: {:?}", e);
                 HashMap::new()
             }
         };
@@ -58,7 +59,7 @@ pub async fn fetch_classes_data(
             {
                 Ok(parsed) => Some(parsed),
                 Err(err) => {
-                    error!("Failed to fetch or parse for key {}: {:?}", key, err);
+                    warn!("Failed to fetch or parse for key {}: {:?}", key, err);
                     None
                 }
             }
@@ -97,7 +98,7 @@ pub async fn fetch_classes_debugger_data(
         match fetch_verified_classes_with_inlining_classes(db_pool, classes).await {
             Ok(vc) => vc,
             Err(e) => {
-                error!("Failed to fetch verified classes: {:?}", e);
+                warn!("Failed to fetch verified classes: {:?}", e);
                 HashMap::new()
             }
         };
@@ -120,7 +121,7 @@ pub async fn fetch_classes_debugger_data(
             fetch.map(|res| match res {
                 Ok(data) => Some(data),
                 Err(e) => {
-                    error!("Failed to fetch file: {:?}", e);
+                    warn!("Failed to fetch file: {:?}", e);
                     None
                 }
             })
