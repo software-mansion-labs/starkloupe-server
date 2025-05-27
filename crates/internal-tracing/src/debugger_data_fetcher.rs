@@ -3,6 +3,7 @@ use anyhow::Result;
 use cairo_annotations::annotations::coverage::VersionedCoverageAnnotations;
 use cairo_annotations::annotations::TryFromDebugInfo;
 use futures::future;
+use futures::FutureExt;
 use itertools::Itertools;
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
@@ -11,7 +12,6 @@ use verification::{
     db::fetch_verified_classes_with_inlining_classes, s3::key_for_class_hash, CodeLocation,
     SierraStatementToCairoDebugInfo, VerifiedClassData,
 };
-use walnut_shared::extract_cairo_version_from_program;
 
 async fn fetch_and_parse_file(
     client: &aws_sdk_s3::Client,
@@ -47,20 +47,29 @@ pub async fn fetch_classes_data(
         };
 
     let fetches = verified_classes.keys().map(|key| {
-        fetch_and_parse_file(
-            s3_client,
-            "walnutserver-east-1-classes-verification",
-            key_for_class_hash(key),
-        )
+        let key = key.clone();
+        async move {
+            match fetch_and_parse_file(
+                s3_client,
+                "walnutserver-east-1-classes-verification",
+                key_for_class_hash(&key),
+            )
+            .await
+            {
+                Ok(parsed) => Some(parsed),
+                Err(err) => {
+                    error!("Failed to fetch or parse for key {}: {:?}", key, err);
+                    None
+                }
+            }
+        }
     });
 
-    let results = match future::try_join_all(fetches).await {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Failed to fetch and parse files: {:?}", e);
-            Vec::new()
-        }
-    };
+    let results: Vec<_> = future::join_all(fetches)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
         classes_debugger_data.insert(
@@ -93,26 +102,36 @@ pub async fn fetch_classes_debugger_data(
             }
         };
 
-    let fetches = verified_classes.iter().map(|(key, value)| match value {
-        Some(value) => fetch_and_parse_file(
-            s3_client,
-            "walnutserver-east-1-classes-verification",
-            key_for_class_hash(value),
-        ),
-        None => fetch_and_parse_file(
-            s3_client,
-            "walnutserver-east-1-classes-verification",
-            key_for_class_hash(key),
-        ),
-    });
+    let fetches = verified_classes
+        .iter()
+        .map(|(key, value)| {
+            let fetch = match value {
+                Some(value) => fetch_and_parse_file(
+                    s3_client,
+                    "walnutserver-east-1-classes-verification",
+                    key_for_class_hash(value),
+                ),
+                None => fetch_and_parse_file(
+                    s3_client,
+                    "walnutserver-east-1-classes-verification",
+                    key_for_class_hash(key),
+                ),
+            };
+            fetch.map(|res| match res {
+                Ok(data) => Some(data),
+                Err(e) => {
+                    error!("Failed to fetch file: {:?}", e);
+                    None
+                }
+            })
+        })
+        .collect::<Vec<_>>();
 
-    let results = match future::try_join_all(fetches).await {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Failed to fetch and parse files: {:?}", e);
-            Vec::new()
-        }
-    };
+    let results: Vec<VerifiedClassData> = future::join_all(fetches)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
 
     for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
         let class_debugger_data = if let Some(cairo_debug_info) =

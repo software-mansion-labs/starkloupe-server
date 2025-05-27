@@ -89,9 +89,29 @@ pub async fn fetch_verified_classes_with_inlining_classes(
         .fetch_all(db_pool)
         .await?;
 
+        let inline_hashes_to_check: Vec<String> = inline_class_hashes
+            .iter()
+            .filter_map(|row| row.inline_strategy_class_hash.clone())
+            .collect();
+
+        let existing_inline_hashes = sqlx::query!(
+            r#"SELECT hash FROM contract_classes WHERE hash = ANY($1)"#,
+            &inline_hashes_to_check
+        )
+        .fetch_all(db_pool)
+        .await?;
+
+        let existing_inline_hash_set: std::collections::HashSet<String> = existing_inline_hashes
+            .into_iter()
+            .map(|row| row.hash)
+            .collect();
         // Update the map only for entries that have an inline_strategy_class_hash
         for row in inline_class_hashes {
-            class_hash_map.insert(row.class_hash, row.inline_strategy_class_hash);
+            if let Some(inline_hash) = row.inline_strategy_class_hash {
+                if existing_inline_hash_set.contains(&inline_hash) {
+                    class_hash_map.insert(row.class_hash, Some(inline_hash));
+                }
+            }
         }
     }
     Ok(class_hash_map)
