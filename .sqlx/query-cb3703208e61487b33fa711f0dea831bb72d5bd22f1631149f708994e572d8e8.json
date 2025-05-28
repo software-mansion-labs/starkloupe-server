@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT inline_strategy_class_hash\n        FROM class_hash_profiles\n        WHERE class_hash = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inline_strategy_class_hash",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "cb3703208e61487b33fa711f0dea831bb72d5bd22f1631149f708994e572d8e8"
+}

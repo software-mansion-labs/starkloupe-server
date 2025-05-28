@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT class_hash, inline_strategy_class_hash, verification_id\n        FROM class_hash_profiles\n        WHERE verification_id = ANY($1) and class_hash = $2",
+  "query": "\n            SELECT class_hash, inline_strategy_class_hash, verification_id\n            FROM class_hash_profiles\n            WHERE verification_id = ANY($1) AND class_hash = ANY($2)\n            ",
   "describe": {
     "columns": [
       {
@@ -22,7 +22,7 @@
     "parameters": {
       "Left": [
         "UuidArray",
-        "Text"
+        "TextArray"
       ]
     },
     "nullable": [
@@ -31,5 +31,5 @@
       false
     ]
   },
-  "hash": "96fc8db1e8a55cc2e53098efdaca4f92526716d15ce07a361c1eb1b44fa2880c"
+  "hash": "707603f3880421c276dae7b57703a699a44cd478f2a828ead280641c0da8be69"
 }
