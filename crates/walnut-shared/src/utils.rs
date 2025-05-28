@@ -1,4 +1,6 @@
+use cairo_lang_starknet_classes::compiler_version::VersionId;
 use starknet::core::types::ContractClass as ContractClassStarknet;
+use starknet::core::types::Felt;
 
 pub fn simplify_type_name(type_str: &str) -> String {
     if let (Some(inner), Some(_)) = (type_str.strip_prefix('['), type_str.strip_suffix(']')) {
@@ -124,18 +126,17 @@ pub fn convert_contract_class(
 ) -> Option<cairo_lang_starknet_classes::contract_class::ContractClass> {
     match from {
         starknet::core::types::ContractClass::Sierra(ref class) => {
-            let cloned_class = class.clone();
             Some(cairo_lang_starknet_classes::contract_class::ContractClass {
-                sierra_program: cloned_class
+                sierra_program: class
                     .sierra_program
                     .iter()
                     .map(|felt| felt.to_biguint().into())
                     .collect(),
                 sierra_program_debug_info: None,
-                contract_class_version: cloned_class.contract_class_version,
+                contract_class_version: class.contract_class_version.clone(),
                 entry_points_by_type:
                     cairo_lang_starknet_classes::contract_class::ContractEntryPoints {
-                        external: cloned_class
+                        external: class
                             .entry_points_by_type
                             .external
                             .iter()
@@ -146,7 +147,7 @@ pub fn convert_contract_class(
                                 }
                             })
                             .collect(),
-                        l1_handler: cloned_class
+                        l1_handler: class
                             .entry_points_by_type
                             .l1_handler
                             .iter()
@@ -157,7 +158,7 @@ pub fn convert_contract_class(
                                 }
                             })
                             .collect(),
-                        constructor: cloned_class
+                        constructor: class
                             .entry_points_by_type
                             .constructor
                             .iter()
@@ -174,4 +175,27 @@ pub fn convert_contract_class(
         }
         _ => None,
     }
+}
+
+pub fn extract_sierra_and_cairo_versions(
+    sierra_program: &[Felt],
+) -> (Option<String>, Option<String>) {
+    if sierra_program.len() < 6 {
+        return (None, None);
+    }
+    let sierra_version = format!(
+        "{}.{}.{}",
+        sierra_program[0], sierra_program[1], sierra_program[2]
+    );
+
+    let cairo_version = format!(
+        "{}.{}.{}",
+        sierra_program[3], sierra_program[4], sierra_program[5]
+    );
+
+    (Some(sierra_version), Some(cairo_version))
+}
+
+pub fn is_version_gte(v: &VersionId, major: usize, minor: usize, patch: usize) -> bool {
+    (v.major, v.minor, v.patch) >= (major, minor, patch)
 }

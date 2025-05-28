@@ -4,9 +4,10 @@ use crate::{
     function_call::FunctionCall,
     function_calls_map::FunctionCallsMap,
     mappings::Mappings,
-    utils::{flatten_event_data_struct, get_raw_function_name, is_loop, is_panic_result},
+    utils::{flatten_event_data_struct, get_raw_function_name, is_panic_result},
 };
 use anyhow::Result;
+use cairo_lang_sierra::program::{GenFunction, StatementIdx};
 use cairo_lang_starknet_classes::abi::EventField;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::DecodedValue;
@@ -67,319 +68,586 @@ pub struct DebuggerTraceEntryWithLocation {
     pub function_call_id: u32,
 }
 
-pub fn get_internal_call_trace(
-    mappings: &Mappings,
-    relocated_memory: &[Option<Felt>],
-    vm_trace: &Vec<RelocatedTraceEntry>,
-    sierra_statements_to_cairo_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
-    function_calls_map: &mut FunctionCallsMap,
-    event_calls_map: &mut EventCallsMap,
-    next_call_id: &mut u32,
+#[derive(Debug, Clone, Serialize)]
+pub struct InternalFnCallIO {
+    pub type_name: Option<String>,
+    pub value: Vec<String>,
+}
+
+struct TraceState {
+    deepest_panic_function_call_id: Option<u32>,
+    deepest_panic_result_level: i32,
+    deepest_panic_result_call_id: Option<u32>,
+    nesting_level: i32,
+    current_call_id: u32,
+    root_function_call_id: u32,
+    prev_fp: usize,
+    prev_cairo_location: Option<CodeLocation>,
+    prev_cairo_locations: Vec<CodeLocation>,
+    contract_call_index: usize,
+    loop_parent_map: HashMap<String, u32>,
+    debugger_execution_trace: Option<Vec<DebuggerTraceEntry>>,
+}
+
+struct CallTraceBuilder<'a> {
+    mappings: &'a Mappings,
+    relocated_memory: &'a [Option<Felt>],
+    vm_trace: &'a Vec<RelocatedTraceEntry>,
+    sierra_statements_to_cairo_debug_info:
+        Option<&'a HashMap<usize, SierraStatementToCairoDebugInfo>>,
+    function_calls_map: &'a mut FunctionCallsMap,
+    event_calls_map: &'a mut EventCallsMap,
+    next_call_id: &'a mut u32,
     contract_call_id: u32,
-    contract_call_children_ids: &[u32],
-) -> Result<(Vec<DebuggerTraceEntry>, u32, Option<u32>)> {
-    let first_vm_trace_entry = vm_trace.first().unwrap();
-    let mut prev_fp = first_vm_trace_entry.fp;
+    contract_call_children_ids: &'a [u32],
+    debug_mode: bool,
+}
 
-    let entrypoint_sierra_indexes = mappings.get_sierra_indexes_at_pc(&first_vm_trace_entry.pc);
-    let entrypoint_function = entrypoint_sierra_indexes
-        .as_ref()
-        .and_then(|indexes| indexes.first())
-        .and_then(|i| mappings.get_sierra_function_at_sierra_index(i));
+impl<'a> CallTraceBuilder<'a> {
+    fn new(
+        mappings: &'a Mappings,
+        relocated_memory: &'a [Option<Felt>],
+        vm_trace: &'a Vec<RelocatedTraceEntry>,
+        sierra_statements_to_cairo_debug_info: Option<
+            &'a HashMap<usize, SierraStatementToCairoDebugInfo>,
+        >,
+        function_calls_map: &'a mut FunctionCallsMap,
+        event_calls_map: &'a mut EventCallsMap,
+        next_call_id: &'a mut u32,
+        contract_call_id: u32,
+        contract_call_children_ids: &'a [u32],
+        debug_mode: bool,
+    ) -> Self {
+        Self {
+            mappings,
+            relocated_memory,
+            vm_trace,
+            sierra_statements_to_cairo_debug_info,
+            function_calls_map,
+            event_calls_map,
+            next_call_id,
+            contract_call_id,
+            contract_call_children_ids,
+            debug_mode,
+        }
+    }
 
-    let entrypoint_cairo_locations =
-        match (sierra_statements_to_cairo_info, entrypoint_sierra_indexes) {
-            (Some(sierra_statements_to_cairo_info), Some(entrypoint_sierra_indexes)) => mappings
-                .get_cairo_locations_at_sierra_indexes(
-                    sierra_statements_to_cairo_info,
-                    &entrypoint_sierra_indexes,
-                ),
-            _ => Vec::new(),
+    fn build(&mut self) -> Result<(Option<Vec<DebuggerTraceEntry>>, u32, Option<u32>)> {
+        let first_vm_trace_entry = self.vm_trace.first().unwrap();
+        let prev_fp = first_vm_trace_entry.fp;
+
+        let entry_point_sierra_indexes = self
+            .mappings
+            .get_sierra_indexes_at_pc(&first_vm_trace_entry.pc);
+        let entry_point_function = entry_point_sierra_indexes
+            .as_ref()
+            .and_then(|indexes| indexes.first())
+            .and_then(|i| self.mappings.get_sierra_function_at_sierra_index(i));
+
+        let entry_point_cairo_locations = if self.debug_mode {
+            match (
+                self.sierra_statements_to_cairo_debug_info,
+                entry_point_sierra_indexes,
+            ) {
+                (Some(sierra_statements_to_cairo_info), Some(entrypoint_sierra_indexes)) => {
+                    self.mappings.get_cairo_locations_at_sierra_indexes(
+                        sierra_statements_to_cairo_info,
+                        &entrypoint_sierra_indexes,
+                    )
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
         };
 
-    let mut deepest_panic_function_call_id = None;
-    let mut deepest_panic_result_level = -1;
-    let mut deepest_panic_result_call_id: Option<u32> = None;
-    let mut nesting_level = 0;
+        let mut trace_state = TraceState {
+            deepest_panic_function_call_id: None,
+            deepest_panic_result_level: -1,
+            deepest_panic_result_call_id: None,
+            nesting_level: 0,
+            current_call_id: self.create_root_function_call(
+                prev_fp,
+                entry_point_function,
+                entry_point_cairo_locations.first().cloned(),
+            )?,
+            root_function_call_id: *self.next_call_id - 1,
+            prev_fp,
+            prev_cairo_location: None,
+            prev_cairo_locations: Vec::new(),
+            contract_call_index: 0,
+            loop_parent_map: HashMap::new(),
+            debugger_execution_trace: if self.debug_mode {
+                Some(Vec::new())
+            } else {
+                None
+            },
+        };
 
-    let root_function_call_id = *next_call_id;
-    let root_function_call = FunctionCall {
-        call_id: root_function_call_id,
-        parent_call_id: 0,
-        children_call_ids: Vec::new(),
-        contract_call_id,
-        event_call_ids: Vec::new(),
-        fn_name: entrypoint_function
-            .and_then(|f| f.id.debug_name.clone())
-            .and_then(|n| get_raw_function_name(n.as_str())),
-        fp: prev_fp,
-        is_deepest_panic_result: false,
-        arguments: Vec::new(),
-        arguments_decoded: None,
-        results: Vec::new(),
-        results_decoded: None,
-        code_location: entrypoint_cairo_locations.first().cloned(),
-        debugger_trace_step_index: None,
-        is_hidden: true, // Hide root function call
-    };
-    *next_call_id += 1;
-    function_calls_map
-        .0
-        .insert(root_function_call_id, root_function_call);
-    let mut current_call_id = root_function_call_id;
+        for (i, trace_entry) in self.vm_trace.iter().enumerate() {
+            self.process_trace_entry(&mut trace_state, i, trace_entry)?;
+            trace_state.prev_fp = trace_entry.fp;
+        }
 
-    // Execution trace of the current contract call that contains data for the debugger
-    let mut debugger_execution_trace: Vec<DebuggerTraceEntry> = Vec::new();
-    // Previous Cairo location: we update this variable only with a Some CodeLocation
-    let mut prev_cairo_location: Option<CodeLocation> = None;
+        self.check_root_panic_result(&mut trace_state)?;
 
-    let mut prev_cairo_locations: Vec<CodeLocation> = Vec::new();
+        Ok((
+            trace_state.debugger_execution_trace,
+            trace_state.root_function_call_id,
+            trace_state.deepest_panic_function_call_id,
+        ))
+    }
 
-    let mut contract_call_index = 0;
+    fn create_root_function_call(
+        &mut self,
+        fp: usize,
+        entry_point_function: Option<&GenFunction<StatementIdx>>,
+        code_location: Option<CodeLocation>,
+    ) -> Result<u32> {
+        let call_id = *self.next_call_id;
+        let root_function_call = FunctionCall {
+            call_id,
+            parent_call_id: 0,
+            children_call_ids: Vec::new(),
+            contract_call_id: self.contract_call_id,
+            event_call_ids: Vec::new(),
+            fn_name: entry_point_function
+                .and_then(|f| f.id.debug_name.clone())
+                .and_then(|n| get_raw_function_name(n.as_str())),
+            fp,
+            is_deepest_panic_result: false,
+            arguments: Vec::new(),
+            arguments_decoded: None,
+            results: Vec::new(),
+            results_decoded: None,
+            code_location, //TODO: will fail, need to set none if it is empty
+            debugger_data_available: true,
+            debugger_trace_step_index: None,
+            is_hidden: true,
+        };
+        *self.next_call_id += 1;
+        self.function_calls_map
+            .0
+            .insert(call_id, root_function_call);
 
-    let mut loop_parent_map: HashMap<String, u32> = HashMap::new();
-    for (i, trace_entry) in vm_trace.iter().enumerate() {
+        Ok(call_id)
+    }
+
+    fn process_trace_entry(
+        &mut self,
+        trace_state: &mut TraceState,
+        i: usize,
+        trace_entry: &RelocatedTraceEntry,
+    ) -> Result<()> {
         // Active Sierra indexes at the current step
-        let sierra_indexes = mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
+        let sierra_indexes = self.mappings.get_sierra_indexes_at_pc(&trace_entry.pc);
         let first_sierra_index = sierra_indexes
             .as_ref()
             .and_then(|indexes| indexes.first())
             .copied();
 
         // Active Cairo locations at the current step (can be empty)
-        let cairo_locations = match (sierra_statements_to_cairo_info, &sierra_indexes) {
-            (Some(sierra_statements_to_cairo_info), Some(sierra_indexes)) => mappings
-                .get_cairo_locations_at_sierra_indexes(
-                    sierra_statements_to_cairo_info,
-                    sierra_indexes,
-                ),
-            _ => Vec::new(),
+        let cairo_locations = if self.debug_mode {
+            match (self.sierra_statements_to_cairo_debug_info, &sierra_indexes) {
+                (Some(info), Some(indexes)) => self
+                    .mappings
+                    .get_cairo_locations_at_sierra_indexes(info, indexes),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
         };
 
-        // Arguments at the current step (can be empty)
-        let mut arguments: Vec<InternalFnCallIO> = Vec::new();
-        let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
-        // Results at the current step (can be empty)
-        let mut results: Vec<InternalFnCallIO> = Vec::new();
-        let mut results_decoded: Vec<DecodedValue> = Vec::new();
-
-        if trace_entry.fp > prev_fp {
-            // If the FP register increases, that means we have entered a nested function call
-            let function =
-                first_sierra_index.and_then(|si| mappings.get_sierra_function_at_sierra_index(&si));
-
-            let prev_trace_entry = &vm_trace[i - 1];
-            let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
+        // Initialize empty IO data
+        let mut arguments = Vec::new();
+        let mut arguments_decoded = Vec::new();
+        let mut results = Vec::new();
+        let mut results_decoded = Vec::new();
+        if trace_entry.fp > trace_state.prev_fp {
+            let prev_trace_entry = &self.vm_trace[i - 1];
+            let prev_sierra_index = self
+                .mappings
+                .get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
             // Get the arguments of the new function call
             (arguments, arguments_decoded) = match prev_sierra_index {
-                Some(prev_sierra_index) => mappings.get_arguments_at_trace_step(
-                    relocated_memory,
-                    prev_sierra_index,
+                Some(idx) => self.mappings.get_arguments_at_trace_step(
+                    self.relocated_memory,
+                    idx,
                     prev_trace_entry,
+                    self.debug_mode,
                 ),
                 None => (Vec::new(), Vec::new()),
             };
 
-            if let Some(function) = function {
-                let debug_fn_name = function.id.debug_name.clone();
-                let fn_name = get_raw_function_name(&debug_fn_name.unwrap_or_default());
+            self.handle_function_entry(
+                trace_state,
+                i,
+                trace_entry,
+                first_sierra_index,
+                &arguments,
+                &arguments_decoded,
+            )?;
+        } else if trace_entry.fp < trace_state.prev_fp {
+            let prev_trace_entry = &self.vm_trace[i - 1];
+            let prev_sierra_index = self
+                .mappings
+                .get_first_sierra_index_at_pc(&prev_trace_entry.pc);
 
-                if let Some(fn_name) = fn_name {
-                    if is_loop(&fn_name) {
-                        if let Some(parent_id) = loop_parent_map.get(&fn_name) {
-                            current_call_id = *parent_id;
-                        } else {
-                            loop_parent_map.insert(fn_name.clone(), current_call_id);
-                        }
-                    } else {
-                        let new_function_call_id = *next_call_id;
-
-                        let function_call = FunctionCall {
-                            call_id: new_function_call_id,
-                            parent_call_id: current_call_id,
-                            children_call_ids: Vec::new(),
-                            contract_call_id,
-                            event_call_ids: Vec::new(),
-                            fn_name: Some(fn_name),
-                            fp: trace_entry.fp,
-                            is_deepest_panic_result: false,
-                            arguments: arguments.clone(),
-                            arguments_decoded: Some(arguments_decoded.clone()),
-                            results: Vec::new(),
-                            results_decoded: None,
-                            code_location: cairo_locations.first().cloned(),
-                            debugger_trace_step_index: None,
-                            is_hidden: false,
-                        };
-                        *next_call_id += 1;
-                        function_calls_map
-                            .0
-                            .insert(new_function_call_id, function_call);
-                        function_calls_map
-                            .0
-                            .get_mut(&current_call_id)
-                            .unwrap()
-                            .children_call_ids
-                            .push(new_function_call_id);
-                        current_call_id = new_function_call_id;
-
-                        nesting_level += 1;
-                    }
-                }
-            }
-        } else if trace_entry.fp < prev_fp {
-            // If the FP register decreases, that means we have exited the function call
-            let prev_trace_entry = &vm_trace[i - 1];
-            let prev_sierra_index = mappings.get_first_sierra_index_at_pc(&prev_trace_entry.pc);
-
-            // Get the results of the function call from which we have just exited
+            // Get the results of the function call
             (results, results_decoded) = match prev_sierra_index {
-                Some(sierra_index) => mappings.get_results_at_trace_step(
-                    relocated_memory,
-                    sierra_index,
+                Some(idx) => self.mappings.get_results_at_trace_step(
+                    self.relocated_memory,
+                    idx,
                     prev_trace_entry,
+                    self.debug_mode,
                 ),
                 None => (Vec::new(), Vec::new()),
             };
-
-            let parent_call_id = function_calls_map
-                .0
-                .get(&current_call_id)
-                .unwrap()
-                .parent_call_id;
-
-            if parent_call_id != 0 {
-                let parent_call = function_calls_map.0.get(&parent_call_id).unwrap();
-
-                if parent_call.fp == trace_entry.fp {
-                    for result in results.iter() {
-                        if nesting_level > deepest_panic_result_level
-                            && is_panic_result(result.type_name.as_deref())
-                            && result.value[0] == "1"
-                        {
-                            deepest_panic_result_level = nesting_level;
-                            deepest_panic_result_call_id = Some(current_call_id);
-                            break;
-                        }
-                    }
-
-                    let current_function_call =
-                        function_calls_map.0.get_mut(&current_call_id).unwrap();
-                    current_function_call.results = results.clone();
-                    current_function_call.results_decoded = Some(results_decoded.clone());
-
-                    // Return to the parent function call
-                    current_call_id = parent_call_id;
-
-                    nesting_level -= 1;
-                }
-            }
-        } else {
-            let current_function_call = function_calls_map.0.get_mut(&current_call_id).unwrap();
-            if let Some(cairo_location) = cairo_locations.first() {
-                if current_function_call.code_location.is_none() {
-                    current_function_call.code_location = Some(cairo_location.clone());
-                }
-            }
+            self.handle_function_exit(trace_state, i, trace_entry, &results, &results_decoded)?;
+        } else if self.debug_mode {
+            self.update_current_call_code_location(trace_state, &cairo_locations);
         }
 
-        if let Some(sierra_indexes) = sierra_indexes {
-            for sierra_index in sierra_indexes {
-                let cairo_locations = match sierra_statements_to_cairo_info {
-                    Some(sierra_statements_to_cairo_info) => mappings
-                        .get_cairo_locations_at_sierra_index(
-                            sierra_statements_to_cairo_info,
-                            sierra_index,
-                        ),
-                    _ => Vec::new(),
-                };
-                for (location_index, cairo_location) in cairo_locations.iter().enumerate() {
-                    // If current step is the first step with Cairo location
-                    if prev_cairo_location.is_none() {
-                        debugger_execution_trace.push(DebuggerTraceEntry::WithLocation(
-                            DebuggerTraceEntryWithLocation {
-                                sierra_index,
-                                results: results.clone(),
-                                arguments: arguments.clone(),
-                                results_decoded: Some(results_decoded.clone()),
-                                arguments_decoded: Some(arguments_decoded.clone()),
-                                location_index,
-                                contract_call_id,
-                                fp: trace_entry.fp,
-                                function_call_id: current_call_id,
-                            },
-                        ));
-                        // If current step has the same Cairo location as the last step with Cairo location
-                    } else if cairo_location == &prev_cairo_location.unwrap()
-                        || cairo_locations == prev_cairo_locations
-                    {
-                        // If there are arguments or results
-                        if !results.is_empty() || !arguments.is_empty() {
-                            // Find the last step with Cairo location (not WithContractCall) and update it with the current results and arguments
-                            if let Some(DebuggerTraceEntry::WithLocation(last_with_location)) =
-                                debugger_execution_trace.iter_mut().rev().find(|entry| {
-                                    matches!(entry, DebuggerTraceEntry::WithLocation(_))
-                                })
-                            {
-                                last_with_location.results = results.clone();
-                                last_with_location.arguments = arguments.clone();
-                                last_with_location.results_decoded = Some(results_decoded.clone());
-                                last_with_location.arguments_decoded =
-                                    Some(arguments_decoded.clone());
-                            }
-                        }
-                    // If current step has a different Cairo location than the last step with Cairo location
+        if self.debug_mode {
+            self.process_debugger_trace(
+                trace_state,
+                trace_entry,
+                &sierra_indexes,
+                &cairo_locations,
+                &arguments,
+                &arguments_decoded,
+                &results,
+                &results_decoded,
+            )?;
+        }
+
+        self.handle_system_calls(trace_state, trace_entry)
+    }
+
+    fn handle_function_entry(
+        &mut self,
+        trace_state: &mut TraceState,
+        i: usize,
+        trace_entry: &RelocatedTraceEntry,
+        first_sierra_index: Option<usize>,
+        arguments: &Vec<InternalFnCallIO>,
+        arguments_decoded: &Vec<DecodedValue>,
+    ) -> Result<()> {
+        let function = first_sierra_index
+            .and_then(|si| self.mappings.get_sierra_function_at_sierra_index(&si));
+
+        if let Some(function) = function {
+            let debug_fn_name = function.id.debug_name.clone();
+            let fn_name = get_raw_function_name(&debug_fn_name.unwrap_or_default());
+            if let Some(fn_name) = fn_name {
+                if self.is_loop(&fn_name) {
+                    if let Some(parent_id) = trace_state.loop_parent_map.get(&fn_name) {
+                        trace_state.current_call_id = *parent_id;
                     } else {
-                        debugger_execution_trace.push(DebuggerTraceEntry::WithLocation(
-                            DebuggerTraceEntryWithLocation {
-                                sierra_index,
-                                results: results.clone(),
-                                arguments: arguments.clone(),
-                                results_decoded: Some(results_decoded.clone()),
-                                arguments_decoded: Some(arguments_decoded.clone()),
-                                location_index,
-                                contract_call_id,
-                                fp: trace_entry.fp,
-                                function_call_id: current_call_id,
-                            },
-                        ));
+                        trace_state
+                            .loop_parent_map
+                            .insert(fn_name.clone(), trace_state.current_call_id);
                     }
-
-                    prev_cairo_location = Some(cairo_location.clone());
+                } else {
+                    self.create_new_function_call(
+                        trace_state,
+                        &fn_name,
+                        trace_entry.fp,
+                        arguments,
+                        arguments_decoded,
+                    )?;
+                    trace_state.nesting_level += 1;
                 }
-                prev_cairo_locations = cairo_locations.clone();
+            }
+        }
+        Ok(())
+    }
+
+    /// Determines if a given function name corresponds to a high-level loop in Sierra.
+    ///
+    /// High-level loops in Sierra are functions whose names include an `expr-id` enclosed in `[` and `]`.
+    /// This pattern appears in debug information
+    /// The function checks for the following:
+    /// - The presence of `[` and `]` to identify brackets.
+    /// - The inclusion of "expr" within the brackets.
+    /// - The presence of digits following "expr" within the brackets.
+    ///
+    /// # Arguments
+    /// * `function_name` - A string slice representing the function name.
+    ///
+    /// # Returns
+    /// * `true` if the function name matches the pattern of a high-level loop.
+    /// * `false` otherwise.
+    fn is_loop(&mut self, function_name: &str) -> bool {
+        let mut inside_brackets = false;
+        let mut found_expr = false;
+        let mut digits_found = false;
+
+        for c in function_name.chars() {
+            if c == '[' {
+                inside_brackets = true;
+                found_expr = false;
+                digits_found = false;
+            } else if c == ']' {
+                if inside_brackets && found_expr && digits_found {
+                    return true;
+                }
+                inside_brackets = false;
+            } else if inside_brackets {
+                if !found_expr && function_name.contains("expr") {
+                    found_expr = true;
+                }
+                if found_expr && c.is_ascii_digit() {
+                    digits_found = true;
+                }
             }
         }
 
-        if let Some(system_call) =
-            mappings.mappings_get_system_call_at_trace_step(relocated_memory, trace_entry)
+        false
+    }
+
+    fn create_new_function_call(
+        &mut self,
+        trace_state: &mut TraceState,
+        fn_name: &str,
+        fp: usize,
+        arguments: &Vec<InternalFnCallIO>,
+        arguments_decoded: &Vec<DecodedValue>,
+    ) -> Result<()> {
+        let new_call_id = *self.next_call_id;
+        let code_location = if self.debug_mode {
+            self.function_calls_map
+                .0
+                .get(&trace_state.current_call_id)
+                .and_then(|call| call.code_location.clone())
+        } else {
+            None
+        };
+
+        let function_call = FunctionCall {
+            call_id: new_call_id,
+            parent_call_id: trace_state.current_call_id,
+            children_call_ids: Vec::new(),
+            contract_call_id: self.contract_call_id,
+            event_call_ids: Vec::new(),
+            fn_name: Some(fn_name.to_string()),
+            fp,
+            is_deepest_panic_result: false,
+            arguments: arguments.clone(),
+            arguments_decoded: if self.debug_mode {
+                Some(arguments_decoded.to_vec())
+            } else {
+                None
+            },
+            results: Vec::new(),
+            results_decoded: None,
+            code_location,
+            debugger_data_available: true,
+            debugger_trace_step_index: None,
+            is_hidden: false,
+        };
+
+        *self.next_call_id += 1;
+        self.function_calls_map.0.insert(new_call_id, function_call);
+        self.function_calls_map
+            .0
+            .get_mut(&trace_state.current_call_id)
+            .unwrap()
+            .children_call_ids
+            .push(new_call_id);
+
+        trace_state.current_call_id = new_call_id;
+
+        Ok(())
+    }
+
+    fn handle_function_exit(
+        &mut self,
+        trace_state: &mut TraceState,
+        i: usize,
+        trace_entry: &RelocatedTraceEntry,
+        results: &Vec<InternalFnCallIO>,
+        results_decoded: &Vec<DecodedValue>,
+    ) -> Result<()> {
+        let parent_call_id = self
+            .function_calls_map
+            .0
+            .get(&trace_state.current_call_id)
+            .unwrap()
+            .parent_call_id;
+
+        if parent_call_id != 0 {
+            let parent_call = self.function_calls_map.0.get(&parent_call_id).unwrap();
+            if parent_call.fp == trace_entry.fp {
+                self.check_for_panic_result(trace_state, results);
+                self.update_current_call_results(trace_state, results, results_decoded);
+                trace_state.current_call_id = parent_call_id;
+                trace_state.nesting_level -= 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_for_panic_result(
+        &mut self,
+        trace_state: &mut TraceState,
+        results: &[InternalFnCallIO],
+    ) {
+        for result in results {
+            if trace_state.nesting_level > trace_state.deepest_panic_result_level
+                && is_panic_result(result.type_name.as_deref())
+                && result.value[0] == "1"
+            {
+                trace_state.deepest_panic_result_level = trace_state.nesting_level;
+                trace_state.deepest_panic_result_call_id = Some(trace_state.current_call_id);
+                break;
+            }
+        }
+    }
+
+    fn update_current_call_results(
+        &mut self,
+        trace_state: &mut TraceState,
+        results: &[InternalFnCallIO],
+        results_decoded: &[DecodedValue],
+    ) {
+        let current_function_call = self
+            .function_calls_map
+            .0
+            .get_mut(&trace_state.current_call_id)
+            .unwrap();
+        current_function_call.results = results.to_vec();
+        current_function_call.results_decoded = if self.debug_mode {
+            Some(results_decoded.to_vec())
+        } else {
+            None
+        };
+    }
+
+    fn update_current_call_code_location(
+        &mut self,
+        trace_state: &mut TraceState,
+        cairo_locations: &[CodeLocation],
+    ) {
+        let current_function_call = self
+            .function_calls_map
+            .0
+            .get_mut(&trace_state.current_call_id)
+            .unwrap();
+        if let Some(location) = cairo_locations.first() {
+            if current_function_call.code_location.is_none() {
+                current_function_call.code_location = Some(location.clone());
+            }
+        }
+    }
+
+    fn process_debugger_trace(
+        &mut self,
+        trace_state: &mut TraceState,
+        trace_entry: &RelocatedTraceEntry,
+        sierra_indexes: &Option<Vec<usize>>,
+        cairo_locations: &[CodeLocation],
+        arguments: &[InternalFnCallIO],
+        arguments_decoded: &[DecodedValue],
+        results: &[InternalFnCallIO],
+        results_decoded: &[DecodedValue],
+    ) -> Result<()> {
+        if let Some(sierra_indexes) = sierra_indexes {
+            for &sierra_index in sierra_indexes {
+                let locations = match self.sierra_statements_to_cairo_debug_info {
+                    Some(info) => self
+                        .mappings
+                        .get_cairo_locations_at_sierra_index(info, sierra_index),
+                    None => Vec::new(),
+                };
+
+                for (location_index, cairo_location) in locations.iter().enumerate() {
+                    let should_add_entry = match trace_state.prev_cairo_location {
+                        None => true,
+                        Some(ref prev) => {
+                            cairo_location != prev && locations != trace_state.prev_cairo_locations
+                        }
+                    };
+
+                    if should_add_entry {
+                        if let Some(ref mut debugger_trace) = trace_state.debugger_execution_trace {
+                            debugger_trace.push(DebuggerTraceEntry::WithLocation(
+                                DebuggerTraceEntryWithLocation {
+                                    sierra_index,
+                                    results: results.to_vec(),
+                                    arguments: arguments.to_vec(),
+                                    results_decoded: if self.debug_mode {
+                                        Some(results_decoded.to_vec())
+                                    } else {
+                                        None
+                                    },
+                                    arguments_decoded: if self.debug_mode {
+                                        Some(arguments_decoded.to_vec())
+                                    } else {
+                                        None
+                                    },
+                                    location_index,
+                                    contract_call_id: self.contract_call_id,
+                                    fp: trace_entry.fp,
+                                    function_call_id: trace_state.current_call_id,
+                                },
+                            ));
+                        }
+                    }
+
+                    trace_state.prev_cairo_location = Some(cairo_location.clone());
+                }
+                trace_state.prev_cairo_locations = locations.clone();
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_system_calls(
+        &mut self,
+        trace_state: &mut TraceState,
+        trace_entry: &RelocatedTraceEntry,
+    ) -> Result<()> {
+        if let Some(system_call) = self
+            .mappings
+            .mappings_get_system_call_at_trace_step(self.relocated_memory, trace_entry)
         {
             match system_call {
-                ESysCall::ContractCall(_contract) => {
-                    function_calls_map
+                ESysCall::ContractCall(_) => {
+                    self.function_calls_map
                         .0
-                        .get_mut(&current_call_id)
+                        .get_mut(&trace_state.current_call_id)
                         .unwrap()
                         .children_call_ids
-                        .push(contract_call_children_ids[contract_call_index]);
-                    debugger_execution_trace.push(DebuggerTraceEntry::WithContractCall(
-                        DebuggerTraceEntryWithContractCall {
-                            contract_call_id: contract_call_children_ids[contract_call_index],
-                            reason: None,
-                        },
-                    ));
-                    contract_call_index += 1;
+                        .push(self.contract_call_children_ids[trace_state.contract_call_index]);
+                    if self.debug_mode {
+                        if let Some(ref mut debugger_trace) = trace_state.debugger_execution_trace {
+                            debugger_trace.push(DebuggerTraceEntry::WithContractCall(
+                                DebuggerTraceEntryWithContractCall {
+                                    contract_call_id: self.contract_call_children_ids
+                                        [trace_state.contract_call_index],
+                                    reason: None,
+                                },
+                            ));
+                        }
+                    }
+                    trace_state.contract_call_index += 1;
                 }
                 ESysCall::EventCall(event) => {
-                    let new_event_call_id = *next_call_id;
-
-                    // Get the current function call
                     if let (Some(current_function_call), Some(event_name)) = (
-                        function_calls_map.0.get_mut(&current_call_id),
+                        self.function_calls_map
+                            .0
+                            .get_mut(&trace_state.current_call_id),
                         event.event_name,
                     ) {
+                        let new_event_call_id = *self.next_call_id;
                         current_function_call.event_call_ids.push(new_event_call_id);
+                        current_function_call
+                            .children_call_ids
+                            .push(new_event_call_id);
+
                         let datas = flatten_event_data_struct(event.event_datas);
                         let event_call = EventCall {
                             call_id: new_event_call_id,
@@ -391,58 +659,103 @@ pub fn get_internal_call_trace(
                             datas: Some(datas),
                             is_hidden: false,
                         };
-                        current_function_call
-                            .children_call_ids
-                            .push(new_event_call_id);
-                        *next_call_id += 1;
-                        event_calls_map.0.insert(new_event_call_id, event_call);
+
+                        *self.next_call_id += 1;
+                        self.event_calls_map.0.insert(new_event_call_id, event_call);
                     }
                 }
                 _ => {}
             }
         }
-
-        prev_fp = trace_entry.fp;
+        Ok(())
     }
 
-    // If no panic result was found, check the root function call
-    if deepest_panic_result_call_id.is_none() {
-        let last_trace_entry = &vm_trace[vm_trace.len() - 1];
-        let last_sierra_index = mappings.get_first_sierra_index_at_pc(&last_trace_entry.pc);
+    fn check_root_panic_result(&mut self, trace_state: &mut TraceState) -> Result<()> {
+        if trace_state.deepest_panic_result_call_id.is_none() {
+            let last_trace_entry = self.vm_trace.last().unwrap();
+            let last_sierra_index = self
+                .mappings
+                .get_first_sierra_index_at_pc(&last_trace_entry.pc);
 
-        let root_call_results = match last_sierra_index {
-            Some(sierra_index) => {
-                mappings.get_results_at_trace_step(relocated_memory, sierra_index, last_trace_entry)
-            }
-            None => (Vec::new(), Vec::new()),
-        };
+            let root_call_results = match last_sierra_index {
+                Some(idx) => self.mappings.get_results_at_trace_step(
+                    self.relocated_memory,
+                    idx,
+                    last_trace_entry,
+                    self.debug_mode,
+                ),
+                None => (Vec::new(), Vec::new()),
+            };
 
-        for result in root_call_results.0.iter() {
-            if is_panic_result(result.type_name.as_deref()) && result.value[0] == "1" {
-                deepest_panic_result_call_id = Some(root_function_call_id);
-                break;
+            for result in root_call_results.0 {
+                if is_panic_result(result.type_name.as_deref()) && result.value[0] == "1" {
+                    trace_state.deepest_panic_result_call_id =
+                        Some(trace_state.root_function_call_id);
+                    break;
+                }
             }
         }
-    }
 
-    if let Some(deepest_panic_result_call_id) = &deepest_panic_result_call_id {
-        let deepest_panic_call = function_calls_map
-            .0
-            .get_mut(deepest_panic_result_call_id)
-            .unwrap();
-        let function_call_id_with_panic = deepest_panic_call.call_id;
-        deepest_panic_function_call_id = Some(function_call_id_with_panic);
-    }
+        if let Some(panic_call_id) = trace_state.deepest_panic_result_call_id {
+            let panic_call = self.function_calls_map.0.get_mut(&panic_call_id).unwrap();
+            trace_state.deepest_panic_function_call_id = Some(panic_call.call_id);
+        }
 
-    Ok((
-        debugger_execution_trace,
-        root_function_call_id,
-        deepest_panic_function_call_id,
-    ))
+        Ok(())
+    }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct InternalFnCallIO {
-    pub type_name: Option<String>,
-    pub value: Vec<String>,
+pub fn get_simple_internal_call_trace(
+    mappings: &Mappings,
+    relocated_memory: &[Option<Felt>],
+    vm_trace: &Vec<RelocatedTraceEntry>,
+    function_calls_map: &mut FunctionCallsMap,
+    event_calls_map: &mut EventCallsMap,
+    next_call_id: &mut u32,
+    contract_call_id: u32,
+    contract_call_children_ids: &[u32],
+) -> Result<(u32, Option<u32>)> {
+    let mut builder = CallTraceBuilder::new(
+        mappings,
+        relocated_memory,
+        vm_trace,
+        None,
+        function_calls_map,
+        event_calls_map,
+        next_call_id,
+        contract_call_id,
+        contract_call_children_ids,
+        false,
+    );
+
+    let (_, root_call_id, panic_call_id) = builder.build()?;
+    Ok((root_call_id, panic_call_id))
+}
+
+pub fn get_internal_call_trace(
+    mappings: &Mappings,
+    relocated_memory: &[Option<Felt>],
+    vm_trace: &Vec<RelocatedTraceEntry>,
+    sierra_statements_to_cairo_debug_info: Option<&HashMap<usize, SierraStatementToCairoDebugInfo>>,
+    function_calls_map: &mut FunctionCallsMap,
+    next_call_id: &mut u32,
+    contract_call_id: u32,
+    contract_call_children_ids: &[u32],
+) -> Result<(Vec<DebuggerTraceEntry>, u32, Option<u32>)> {
+    let mut events_calls_map = EventCallsMap::default();
+    let mut builder = CallTraceBuilder::new(
+        mappings,
+        relocated_memory,
+        vm_trace,
+        sierra_statements_to_cairo_debug_info,
+        function_calls_map,
+        &mut events_calls_map, // Pass a default if not used
+        next_call_id,
+        contract_call_id,
+        contract_call_children_ids,
+        true,
+    );
+
+    let (debug_trace, root_call_id, panic_call_id) = builder.build()?;
+    Ok((debug_trace.unwrap(), root_call_id, panic_call_id))
 }

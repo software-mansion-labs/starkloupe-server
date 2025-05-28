@@ -221,8 +221,8 @@ async fn verify(
                     };
 
                     verified_contract_classes.extend(verified_hashes);
-                    for (idx, (class_hash, _contract_class)) in classes.into_iter().enumerate() {
-                        if let Some((inline_class_hash, inline_contract_class)) =
+                    for (idx, (class_hash, contract_class)) in classes.into_iter().enumerate() {
+                        if let Some((inline_class_hash, _inline_contract_class)) =
                             inline_class_hashes.get(idx).cloned()
                         {
                             if let Err(err) = insert_class_hash_profiles(
@@ -240,7 +240,7 @@ async fn verify(
                             if !verified_contract_classes.contains(&class_hash) {
                                 classes_to_verify_map
                                     .entry(class_hash)
-                                    .or_insert((inline_contract_class, inline_class_hash));
+                                    .or_insert((contract_class, inline_class_hash));
                             }
                         }
                     }
@@ -264,18 +264,9 @@ async fn verify(
     }
     // Database and S3 operations are now performed after all class_hash values are collected.
     for class_hash in classes_to_verify_map.keys() {
-        if let Some((inline_contract_class, inline_class_hash)) =
-            classes_to_verify_map.get(class_hash)
-        {
+        if let Some((contract_class, _inline_class_hash)) = classes_to_verify_map.get(class_hash) {
             remove_walnut_debug_from_scarb(&mut source_code);
-            upload_class_to_s3(
-                s3_client,
-                inline_class_hash,
-                inline_contract_class,
-                &None,
-                &source_code,
-            )
-            .await?;
+            upload_class_to_s3(s3_client, class_hash, contract_class, &None, &source_code).await?;
             insert_contract_class(db_pool, class_hash, true, true, true, None).await?;
         };
     }

@@ -15,6 +15,7 @@ use dotenv::dotenv;
 use handlers::{
     classes::get_class_handler,
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
+    debugger::debug_transaction,
     openapi::ApiDoc,
     simulate::{simulate_transaction, simulate_transaction_by_hash_handler},
     verification::verify_handler,
@@ -123,6 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "/v1/verification/:verification_status_id/status",
                     get(get_verification_status_handler),
                 )
+                .route("/v1/debug-transaction", post(debug_transaction))
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))
                 .route_service(

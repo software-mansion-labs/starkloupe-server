@@ -5,7 +5,6 @@ pub mod felt252_vec_compression;
 pub mod utils;
 use anyhow::{anyhow, Context, Result};
 use blockifier::execution::syscalls::hint_processor::ENTRYPOINT_FAILED_ERROR;
-use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use ethers::providers::{Http, Provider as EthProvider};
 use ethers::types::H256;
 use num_bigint::BigInt;
@@ -178,7 +177,7 @@ pub fn is_valid_starknet_transaction_hash(tx_hash: &str) -> bool {
     tx_hash
         .strip_prefix("0x")
         .and_then(|trimmed| BigInt::from_str_radix(trimmed, 16).ok())
-        .map_or(false, |value| value < *CAIRO_PRIME_BIGINT)
+        .is_some_and(|value| value < *CAIRO_PRIME_BIGINT)
 }
 
 pub fn is_valid_transaction_hash_for_network(tx_hash: &str, network: &ENetwork) -> bool {
@@ -308,17 +307,6 @@ pub fn felts_to_string(felts: &[Felt]) -> String {
     result
 }
 
-pub fn clone_vm_trace(vm_trace: &Vec<RelocatedTraceEntry>) -> Vec<RelocatedTraceEntry> {
-    vm_trace
-        .iter()
-        .map(|trace_entry| RelocatedTraceEntry {
-            pc: trace_entry.pc,
-            fp: trace_entry.fp,
-            ap: trace_entry.ap,
-        })
-        .collect()
-}
-
 pub fn get_contract_call_id(
     parent_contract_call_id: Option<&str>,
     contract_call_index: usize,
@@ -380,11 +368,7 @@ pub fn resource_bounds_mapping_to_default_valid_resource_bounds() -> ValidResour
 
 pub fn get_name_of_entry_point_selector(entry_point_selector: &Felt) -> Option<String> {
     let entry_point_selector_str = entry_point_selector.to_fixed_hex_string();
-    let selector = get_selector(&entry_point_selector_str);
-    match selector {
-        Some(name) => Some(name.to_string()),
-        None => None,
-    }
+    get_selector(&entry_point_selector_str).map(|name| name.to_string())
 }
 
 pub fn parse_version_string_to_tuple(version: &str) -> Result<(u32, u32, u32)> {

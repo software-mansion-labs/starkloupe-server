@@ -1,5 +1,6 @@
 use crate::contract_calls_map::ContractCallsMap;
 use crate::transaction_extraction::extract_chain_id_from_felt;
+use crate::DebugPayload;
 use crate::DetailedTransactionReceipt;
 use crate::FlameChartNode;
 use crate::SimulationRawArgs;
@@ -13,6 +14,7 @@ use starknet::providers::{Provider, Url};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
 use starknet_api::transaction::fields::Calldata;
+use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionVersion;
 use starknet_types_core::felt::Felt;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
@@ -20,6 +22,32 @@ use std::sync::Arc;
 use walnut_shared::create_rpc_client_from_url;
 use walnut_shared::extract_chain_id;
 use walnut_shared::get_rpc_urls;
+
+pub async fn parse_chain_id_and_rpc_url_debug(
+    raw_args: &DebugPayload,
+) -> Result<(ChainId, Url), TransactionSimulationError> {
+    if let Some(chain_id_str) = &raw_args.chain_id {
+        let (e_chain_id, _network) = extract_chain_id(chain_id_str)
+            .map_err(|_| TransactionSimulationError::InvalidChainId)?;
+        let rpc_url = get_rpc_urls(&e_chain_id)
+            .0
+            .ok_or(TransactionSimulationError::InvalidRpcUrl)?;
+        let core_chain_id = ChainId::from(e_chain_id);
+        Ok((core_chain_id, rpc_url))
+    } else if let Some(rpc_url_str) = &raw_args.rpc_url {
+        let rpc_url =
+            Url::parse(rpc_url_str).map_err(|_| TransactionSimulationError::InvalidRpcUrl)?;
+        let provider_client = create_rpc_client_from_url(rpc_url.clone());
+        let chain_id_felt = provider_client
+            .chain_id()
+            .await
+            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?;
+        let core_chain_id = extract_chain_id_from_felt(chain_id_felt)?;
+        Ok((core_chain_id, rpc_url))
+    } else {
+        Err(TransactionSimulationError::MissingChainIdOrRpcUrl)
+    }
+}
 
 pub async fn parse_chain_id_and_rpc_url(
     raw_args: &SimulationRawArgs,
@@ -44,6 +72,32 @@ pub async fn parse_chain_id_and_rpc_url(
         Ok((core_chain_id, rpc_url))
     } else {
         Err(TransactionSimulationError::MissingChainIdOrRpcUrl)
+    }
+}
+
+pub fn parse_optional_tx_hash(
+    hash_str_opt: Option<&str>,
+) -> Result<Option<TransactionHash>, TransactionSimulationError> {
+    match hash_str_opt {
+        Some(s) => {
+            let felt =
+                parse_felt(s).map_err(|_| TransactionSimulationError::InvalidTransactionHash)?;
+            Ok(Some(TransactionHash(felt)))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_felt(value: &str) -> Result<Felt, ()> {
+    Felt::from_hex(value).map_err(|_| ())
+}
+
+pub fn parse_transaction_type(value: &str) -> Result<TransactionType, TransactionSimulationError> {
+    match value.to_uppercase().as_str() {
+        "INVOKE" => Ok(TransactionType::InvokeFunction),
+        "DECLARE" => Ok(TransactionType::Declare),
+        "L1HANDLER" => Ok(TransactionType::L1Handler),
+        _ => Err(TransactionSimulationError::TransactionTypeNotSupported),
     }
 }
 

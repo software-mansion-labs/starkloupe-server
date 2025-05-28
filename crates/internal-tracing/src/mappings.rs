@@ -61,7 +61,7 @@ impl Mappings {
     pub fn new(
         relocated_trace_entry: &[RelocatedTraceEntry],
         relocated_memory: &[Option<Felt>],
-        contract_class: ContractClass,
+        contract_class: &ContractClass,
         casm_program: CairoProgram,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
@@ -216,6 +216,7 @@ impl Mappings {
         relocated_memory: &[Option<Felt>],
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
+        calculate: bool,
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
         let mut arguments: Vec<InternalFnCallIO> = vec![];
         let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
@@ -242,17 +243,19 @@ impl Mappings {
                             value: values.iter().map(|v| v.to_string()).collect(),
                         });
                     }
-                    let type_id = &invoke_ref.ty;
-                    let mut data_index: usize = 0;
-                    if let Some(argument_decoded) = decode_internal_datas(
-                        &values,
-                        type_id,
-                        &self.type_declaration_map,
-                        &self.type_sizes,
-                        relocated_memory,
-                        &mut data_index,
-                    ) {
-                        arguments_decoded.push(argument_decoded);
+                    if calculate {
+                        let type_id = &invoke_ref.ty;
+                        let mut data_index: usize = 0;
+                        if let Some(argument_decoded) = decode_internal_datas(
+                            &values,
+                            type_id,
+                            &self.type_declaration_map,
+                            &self.type_sizes,
+                            relocated_memory,
+                            &mut data_index,
+                        ) {
+                            arguments_decoded.push(argument_decoded);
+                        }
                     }
                 }
 
@@ -300,6 +303,7 @@ impl Mappings {
         relocated_memory: &[Option<Felt>],
         sierra_index: usize,
         trace_entry: &RelocatedTraceEntry,
+        calculate: bool,
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
         let mut results: Vec<InternalFnCallIO> = vec![];
         let mut results_decoded: Vec<DecodedValue> = Vec::new();
@@ -341,11 +345,13 @@ impl Mappings {
                                     value: vec!["1".to_string(), panic_str.clone()],
                                 });
 
-                                results_decoded.push(create_decoded_value_by_type(
-                                    None,
-                                    "Panic",
-                                    DecodedValueType::String(panic_str),
-                                ));
+                                if calculate {
+                                    results_decoded.push(create_decoded_value_by_type(
+                                        None,
+                                        "Panic",
+                                        DecodedValueType::String(panic_str),
+                                    ));
+                                }
                             }
                             None => {
                                 error!(
@@ -356,19 +362,22 @@ impl Mappings {
                             }
                         }
                     } else {
-                        let type_id = &return_ref.ty;
-                        let mut data_index: usize = 0;
-                        if let Some(decoded_element) = decode_internal_datas(
-                            &values,
-                            type_id,
-                            &self.type_declaration_map,
-                            &self.type_sizes,
-                            relocated_memory,
-                            &mut data_index,
-                        ) {
-                            if let Some(adjusted_element) = adjust_decoded_element(decoded_element)
-                            {
-                                results_decoded.push(adjusted_element);
+                        if calculate {
+                            let type_id = &return_ref.ty;
+                            let mut data_index: usize = 0;
+                            if let Some(decoded_element) = decode_internal_datas(
+                                &values,
+                                type_id,
+                                &self.type_declaration_map,
+                                &self.type_sizes,
+                                relocated_memory,
+                                &mut data_index,
+                            ) {
+                                if let Some(adjusted_element) =
+                                    adjust_decoded_element(decoded_element)
+                                {
+                                    results_decoded.push(adjusted_element);
+                                }
                             }
                         }
                         if !skip_builtin_type_declaration(simplified_type_name.as_str()) {
