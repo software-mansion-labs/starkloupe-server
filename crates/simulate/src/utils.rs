@@ -319,7 +319,7 @@ pub fn build_flamegraph(
             },
             FlameChartNode {
                 call_id: 0,
-                name: Some("Computation Resources".to_string()),
+                name: Some("Computation resources".to_string()),
                 raw_value: detailed_tx_receipt
                     .computation_resources_gas_vector
                     .l2_gas
@@ -328,7 +328,7 @@ pub fn build_flamegraph(
                 children: vec![
                     FlameChartNode {
                         call_id: 0,
-                        name: Some("VM Cost".to_string()),
+                        name: Some("VM cost".to_string()),
                         raw_value: detailed_tx_receipt
                             .computation_resources_vm_cost_gas_vector
                             .l2_gas
@@ -338,7 +338,7 @@ pub fn build_flamegraph(
                     },
                     FlameChartNode {
                         call_id: 0,
-                        name: Some("Sierra Cost".to_string()),
+                        name: Some("Sierra cost".to_string()),
                         raw_value: detailed_tx_receipt
                             .computation_resources_sierra_gas_vector
                             .l2_gas
