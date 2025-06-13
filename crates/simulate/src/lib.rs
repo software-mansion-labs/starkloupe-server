@@ -245,8 +245,8 @@ pub enum TransactionSimulationError {
     TransactionExecutionError(#[from] TransactionExecutionError),
     #[error("Invalid Felt string conversion: {0}")]
     FeltConversionError(#[from] FromStrError),
-    #[error("Transaction hash not found")]
-    TransactionHashNotFound,
+    #[error("Transaction hash {0} not found on {1}")]
+    TransactionHashNotFound(String, String),
     #[error("Invalid chain id")]
     InvalidChainId,
     #[error("Invalid RPC URL")]

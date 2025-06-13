@@ -52,6 +52,7 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
+use starknet::core::chain_id;
 use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
@@ -69,6 +70,7 @@ use url::Url;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
 use walnut_shared::fetch_tx_block_number_from_voyager;
+use walnut_shared::mask_private_token_in_url;
 use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::utils::extract_sierra_and_cairo_versions;
 use walnut_shared::{
@@ -489,7 +491,10 @@ pub async fn simulate_transaction_by_hash(
         };
         Ok(result)
     } else {
-        Err(TransactionSimulationError::TransactionHashNotFound)
+        Err(TransactionSimulationError::TransactionHashNotFound(
+            tx_hash.to_string(),
+            network.to_string(),
+        ))
     }
 }
 
@@ -652,7 +657,17 @@ async fn simulate_starknet_transaction_by_hash(
             }
         }
     }
-    Err(TransactionSimulationError::TransactionHashNotFound)
+    let tx_hash_str = transaction_hash.to_hex_string();
+    let network = if let Some(chain_id) = chain_id {
+        let chain_id = ChainId::from(chain_id);
+        chain_id_to_readable_string(&chain_id)
+    } else {
+        mask_private_token_in_url(&starknet_rpc_url)
+    };
+    Err(TransactionSimulationError::TransactionHashNotFound(
+        tx_hash_str,
+        network,
+    ))
 }
 
 pub async fn simulate_ethereum_transaction_by_hash(
@@ -668,12 +683,20 @@ pub async fn simulate_ethereum_transaction_by_hash(
     let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
 
     // Fetch the tx from L1HandlerTransaction
-    let provider_eth_client = create_eth_provider_from_url(ethereum_rpc_url);
+    let provider_eth_client = create_eth_provider_from_url(ethereum_rpc_url.clone());
     let transaction_receipt = provider_eth_client
         .get_transaction_receipt(transaction_hash)
         .await
-        .map_err(|_| TransactionSimulationError::TransactionHashNotFound)?
-        .ok_or(TransactionSimulationError::TransactionHashNotFound)?;
+        .map_err(|_| {
+            TransactionSimulationError::TransactionHashNotFound(
+                transaction_hash.to_string(),
+                mask_private_token_in_url(&ethereum_rpc_url),
+            )
+        })?
+        .ok_or(TransactionSimulationError::TransactionHashNotFound(
+            transaction_hash.to_string(),
+            mask_private_token_in_url(&ethereum_rpc_url),
+        ))?;
 
     // Process logs - collect all L1 and L2 events
     let mut l1_l2_events = Vec::new();

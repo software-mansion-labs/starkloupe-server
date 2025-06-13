@@ -22,6 +22,7 @@ use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::{AllResourceBounds, ResourceBounds, ValidResourceBounds};
 use starknet_selector_decoder::get_selector;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
+use std::fmt;
 use std::str::FromStr;
 
 #[derive(Serialize, Debug, Clone)]
@@ -42,6 +43,16 @@ pub const ETH_FEE_TOKEN_ADDRESS: &str =
 pub enum ENetwork {
     Starknet,
     Ethereum,
+}
+
+impl fmt::Display for ENetwork {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let network_str = match self {
+            ENetwork::Starknet => "starknet",
+            ENetwork::Ethereum => "ethereum",
+        };
+        write!(f, "{}", network_str)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,6 +154,39 @@ pub fn get_rpc_urls(chain_id: &EChainId) -> (Option<Url>, Option<String>) {
             ),
         ),
     }
+}
+
+pub fn mask_private_token_in_url<T: AsRef<str>>(raw_url: T) -> String {
+    let raw_url_str = raw_url.as_ref();
+
+    // If url contains "public" no changes
+    if raw_url_str.contains("public") {
+        return raw_url_str.to_string();
+    }
+
+    let mut url = match Url::parse(raw_url_str) {
+        Ok(u) => u,
+        Err(_) => return raw_url_str.to_string(),
+    };
+
+    if let Some(host) = url.host_str() {
+        if host.contains("alchemy") || host.contains("infura") || host.contains("blast") {
+            let parts: Vec<_> = url
+                .path_segments()
+                .map(|segments| segments.collect::<Vec<_>>())
+                .unwrap_or_default();
+
+            if !parts.is_empty() {
+                let mut new_parts = parts[..parts.len() - 1].to_vec();
+                new_parts.push("PRIVATE_TOKEN");
+                url.set_path(&new_parts.join("/"));
+            }
+
+            url.set_query(None);
+        }
+    }
+
+    url.to_string()
 }
 
 #[derive(Debug, Clone, Copy)]
