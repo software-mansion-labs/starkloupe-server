@@ -12,8 +12,9 @@ use num_traits::Num;
 use semver::Version;
 use starknet::providers::{Provider, Url};
 use starknet_api::block::BlockNumber;
+use starknet_api::block::FeeType;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
-use starknet_api::transaction::fields::Calldata;
+use starknet_api::transaction::fields::{Calldata, Fee};
 use starknet_api::transaction::TransactionHash;
 use starknet_api::transaction::TransactionVersion;
 use starknet_types_core::felt::Felt;
@@ -377,4 +378,26 @@ fn is_version_less_than(version: &str, threshold: &str) -> bool {
     Version::parse(version)
         .and_then(|v| Version::parse(threshold).map(|t| v < t))
         .unwrap_or(false)
+}
+
+pub fn format_fee_string(fee: Fee, fee_type: FeeType) -> Option<String> {
+    if fee.0 == 0 {
+        return None;
+    }
+
+    let decimals = 10u128.pow(18);
+    let whole = fee.0 / decimals;
+    let fraction = fee.0 % decimals;
+
+    let formatted = format!(
+        "{}.{:018} {}",
+        whole,
+        fraction,
+        match fee_type {
+            FeeType::Strk => "STRK",
+            FeeType::Eth => "ETH",
+        }
+    );
+
+    Some(formatted)
 }

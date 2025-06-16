@@ -54,7 +54,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::chain_id;
 use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
@@ -300,6 +299,9 @@ pub async fn simulate(
         execution_result,
         simulation_debugger_data: None,
         storage_changes,
+        estimated_fee: detailed_transaction_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.estimated_fee.clone()),
     };
 
     Ok((
@@ -536,7 +538,6 @@ async fn simulate_starknet_transaction_by_hash(
                 .await;
             if let Ok(transaction_receipt_with_block_info) = transaction_receipt_with_block_info {
                 let transaction_receipt = transaction_receipt_with_block_info.receipt;
-                dbg!(&transaction_receipt);
                 let block_info = transaction_receipt_with_block_info.block;
 
                 match block_info {
@@ -579,6 +580,7 @@ async fn simulate_starknet_transaction_by_hash(
                                         debugger_trace: Vec::new(),
                                     }),
                                     storage_changes: HashMap::new(),
+                                    estimated_fee: None,
                                 };
                                 let l2_transaction_data = L2TransactionData {
                                     simulation_result: simulation_info,

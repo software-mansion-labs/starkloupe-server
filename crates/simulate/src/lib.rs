@@ -173,6 +173,8 @@ pub struct DebugPayload {
 #[derive(Serialize, Debug)]
 pub struct DetailedTransactionReceipt {
     pub fee: Fee,
+    pub estimated_fee: Option<String>,
+
     pub gas: GasVector,
     pub da_gas: GasVector,
 
@@ -315,6 +317,7 @@ pub struct SimulationInfo {
     pub execution_result: ExecutionResult,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
     pub storage_changes: HashMap<u32, HashMap<String, (String, String)>>,
+    pub estimated_fee: Option<String>,
 }
 
 #[derive(Serialize, Debug)]

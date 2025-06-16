@@ -24,7 +24,7 @@ use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::transaction::fields::{
     Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
 };
-use starknet_api::transaction::{TransactionHash, TransactionVersion};
+use starknet_api::transaction::TransactionVersion;
 use std::sync::Arc;
 use walnut_shared::{felts_to_string, format_fee_payment};
 use walnut_shared::{
@@ -297,6 +297,8 @@ pub async fn extract_block_txs_info(
             .unwrap_or_default(),
         block_timestamp: BlockTimestamp(block_txs.timestamp),
         gas_prices,
+        // A field which indicates if EIP-4844 blobs are used for publishing state diffs to l1
+        // This has influence on the cost of publishing the data on l1
         use_kzg_da: true,
     };
     let total_txs_in_block = block_txs.transactions.len();
