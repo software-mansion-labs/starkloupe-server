@@ -28,6 +28,7 @@ use internal_tracing::SimulationDebuggerData;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::Serializer;
+use starknet::core::types::ExecutionResources;
 use starknet::core::types::{BlockId, Event, ExecutionResult, Felt};
 use starknet::providers::{ProviderError, Url};
 use starknet_api::block::BlockNumber;
@@ -223,6 +224,8 @@ pub struct L2TransactionData {
     pub l1_tx_hash: Option<String>,
     pub l2_tx_hash: Option<String>,
     pub flamechart: Option<FlameChartNode>,
+    pub actual_fee: Option<String>,
+    pub execution_resources: Option<ExecutionResources>,
 }
 
 #[derive(Serialize, Debug)]
@@ -313,6 +316,7 @@ pub struct SimulationInfo {
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
     pub storage_changes: HashMap<u32, HashMap<String, (String, String)>>,
 }
+
 #[derive(Serialize, Debug)]
 pub struct ContractCallEvent {
     pub contract_call_id: u32,

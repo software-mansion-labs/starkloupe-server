@@ -8,8 +8,8 @@ use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
 use num_traits::ToPrimitive;
 use starknet::core::types::{
-    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResult, Felt, InvokeTransaction,
-    MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
+    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResources, ExecutionResult, Felt,
+    InvokeTransaction, MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -26,7 +26,7 @@ use starknet_api::transaction::fields::{
 };
 use starknet_api::transaction::{TransactionHash, TransactionVersion};
 use std::sync::Arc;
-use walnut_shared::felts_to_string;
+use walnut_shared::{felts_to_string, format_fee_payment};
 use walnut_shared::{
     resource_bounds_mapping_to_default_valid_resource_bounds,
     resource_bounds_mapping_to_valid_resource_bounds,
@@ -195,6 +195,28 @@ pub fn extract_starkgate_event_transaction_receipt(
         TransactionReceipt::Invoke(receipt) => receipt.events.last().cloned(),
         TransactionReceipt::Declare(receipt) => receipt.events.last().cloned(),
         TransactionReceipt::L1Handler(receipt) => receipt.events.last().cloned(),
+        _ => None,
+    }
+}
+
+pub fn extract_actual_fee_transaction_receipt(
+    transaction_receipt: &TransactionReceipt,
+) -> Option<String> {
+    match transaction_receipt {
+        TransactionReceipt::Invoke(receipt) => format_fee_payment(&receipt.actual_fee),
+        TransactionReceipt::Declare(receipt) => format_fee_payment(&receipt.actual_fee),
+        TransactionReceipt::L1Handler(receipt) => format_fee_payment(&receipt.actual_fee),
+        _ => None,
+    }
+}
+
+pub fn extract_execution_resources_transaction_receipt(
+    transaction_receipt: &TransactionReceipt,
+) -> Option<ExecutionResources> {
+    match transaction_receipt {
+        TransactionReceipt::Invoke(receipt) => Some(receipt.execution_resources.clone()),
+        TransactionReceipt::Declare(receipt) => Some(receipt.execution_resources.clone()),
+        TransactionReceipt::L1Handler(receipt) => Some(receipt.execution_resources.clone()),
         _ => None,
     }
 }
