@@ -278,7 +278,7 @@ pub fn build_flamegraph(
         call_id: 0,
         raw_value: detailed_tx_receipt.gas.l2_gas.0,
         value: 1.0,
-        name: Some("Total resources".to_string()),
+        name: Some("L2 Gas".to_string()),
         children: vec![
             FlameChartNode {
                 call_id: 0,
