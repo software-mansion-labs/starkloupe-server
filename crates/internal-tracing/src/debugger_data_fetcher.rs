@@ -57,29 +57,31 @@ pub async fn fetch_classes_data(
             )
             .await
             {
-                Ok(parsed) => Some(parsed),
+                Ok(parsed) => (key, Some(parsed)),
                 Err(err) => {
                     warn!("Failed to fetch or parse for key {}: {:?}", key, err);
-                    None
+                    (key, None)
                 }
             }
         }
     });
 
-    let results: Vec<_> = future::join_all(fetches)
+    let results: HashMap<String, VerifiedClassData> = future::join_all(fetches)
         .await
         .into_iter()
-        .flatten()
+        .filter_map(|(key, data)| data.map(|d| (key, d)))
         .collect();
 
-    for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
-        classes_debugger_data.insert(
-            verified_class_row.0.clone(),
-            DataWithContractClass {
-                inline_strategy_class_hash: verified_class_row.1.clone(),
-                contract_class: verified_class_data.contract_class.clone(),
-            },
-        );
+    for (class_hash, inline_strategy_class_hash) in verified_classes.iter() {
+        if let Some(verified_class_data) = results.get(class_hash) {
+            classes_debugger_data.insert(
+                class_hash.clone(),
+                DataWithContractClass {
+                    inline_strategy_class_hash: inline_strategy_class_hash.clone(),
+                    contract_class: verified_class_data.contract_class.clone(),
+                },
+            );
+        }
     }
 
     classes_debugger_data
@@ -118,103 +120,107 @@ pub async fn fetch_classes_debugger_data(
                     key_for_class_hash(key),
                 ),
             };
+            let key = key.clone();
             fetch.map(|res| match res {
-                Ok(data) => Some(data),
+                Ok(data) => (key, Some(data)),
                 Err(e) => {
                     warn!("Failed to fetch file: {:?}", e);
-                    None
+                    (key, None)
                 }
             })
         })
         .collect::<Vec<_>>();
 
-    let results: Vec<VerifiedClassData> = future::join_all(fetches)
+    let results: HashMap<String, VerifiedClassData> = future::join_all(fetches)
         .await
         .into_iter()
-        .flatten()
+        .filter_map(|(key, data)| data.map(|d| (key, d)))
         .collect();
 
-    for (verified_class_row, verified_class_data) in verified_classes.iter().zip(results.iter()) {
-        let class_debugger_data = if let Some(cairo_debug_info) =
-            &verified_class_data.cairo_debug_info
-        {
-            Some(ClassDebuggerData {
-                sierra_statements_to_cairo_info: cairo_debug_info
-                    .sierra_statements_to_cairo_info
-                    .clone(),
-                source_code: verified_class_data.source_code.clone(),
-            })
-        } else {
-            if let Some(debug_info) = &verified_class_data.contract_class.sierra_program_debug_info
+    for (class_hash, inline_class_hash) in verified_classes.iter() {
+        if let Some(verified_class_data) = results.get(class_hash) {
+            let class_debugger_data = if let Some(cairo_debug_info) =
+                &verified_class_data.cairo_debug_info
             {
-                match VersionedCoverageAnnotations::try_from_debug_info(debug_info) {
-                    Ok(annotations) => match annotations {
-                        VersionedCoverageAnnotations::V1(annotations) => {
-                            let mut sierra_statements_to_cairo_info: HashMap<
-                                usize,
-                                SierraStatementToCairoDebugInfo,
-                            > = HashMap::new();
-                            for (id, code_locations) in annotations.statements_code_locations {
-                                sierra_statements_to_cairo_info.insert(
-                                    id.0,
-                                    SierraStatementToCairoDebugInfo {
-                                        cairo_locations: code_locations
-                                            .into_iter()
-                                            .filter_map(|c| {
-                                                let mut code_location =
-                                                    CodeLocation::from_coverage(c);
-                                                if code_location
-                                                    .file_path
-                                                    .contains("tmp/verification")
-                                                {
+                Some(ClassDebuggerData {
+                    sierra_statements_to_cairo_info: cairo_debug_info
+                        .sierra_statements_to_cairo_info
+                        .clone(),
+                    source_code: verified_class_data.source_code.clone(),
+                })
+            } else {
+                if let Some(debug_info) =
+                    &verified_class_data.contract_class.sierra_program_debug_info
+                {
+                    match VersionedCoverageAnnotations::try_from_debug_info(debug_info) {
+                        Ok(annotations) => match annotations {
+                            VersionedCoverageAnnotations::V1(annotations) => {
+                                let mut sierra_statements_to_cairo_info: HashMap<
+                                    usize,
+                                    SierraStatementToCairoDebugInfo,
+                                > = HashMap::new();
+                                for (id, code_locations) in annotations.statements_code_locations {
+                                    sierra_statements_to_cairo_info.insert(
+                                        id.0,
+                                        SierraStatementToCairoDebugInfo {
+                                            cairo_locations: code_locations
+                                                .into_iter()
+                                                .filter_map(|c| {
+                                                    let mut code_location =
+                                                        CodeLocation::from_coverage(c);
                                                     if code_location
                                                         .file_path
-                                                        .ends_with("[contract]")
+                                                        .contains("tmp/verification")
                                                     {
-                                                        code_location.file_path = code_location
+                                                        if code_location
                                                             .file_path
-                                                            .replace("[contract]", "");
+                                                            .ends_with("[contract]")
+                                                        {
+                                                            code_location.file_path = code_location
+                                                                .file_path
+                                                                .replace("[contract]", "");
+                                                        }
+                                                        if let Some(pos) =
+                                                            code_location.file_path.find("/src/")
+                                                        {
+                                                            code_location.file_path = code_location
+                                                                .file_path[(pos + 1)..]
+                                                                .to_string();
+                                                        }
+                                                        Some(code_location)
+                                                    } else {
+                                                        None
                                                     }
-                                                    if let Some(pos) =
-                                                        code_location.file_path.find("/src/")
-                                                    {
-                                                        code_location.file_path = code_location
-                                                            .file_path[(pos + 1)..]
-                                                            .to_string();
-                                                    }
-                                                    Some(code_location)
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect_vec(),
-                                    },
-                                );
+                                                })
+                                                .collect_vec(),
+                                        },
+                                    );
+                                }
+                                Some(ClassDebuggerData {
+                                    sierra_statements_to_cairo_info,
+                                    source_code: verified_class_data.source_code.clone(),
+                                })
                             }
-                            Some(ClassDebuggerData {
-                                sierra_statements_to_cairo_info,
-                                source_code: verified_class_data.source_code.clone(),
-                            })
+                        },
+                        Err(e) => {
+                            error!("Failed to parse coverage info: {:?}", e);
+                            None
                         }
-                    },
-                    Err(e) => {
-                        error!("Failed to parse coverage info: {:?}", e);
-                        None
                     }
+                } else {
+                    None
                 }
-            } else {
-                None
-            }
-        };
+            };
 
-        classes_debugger_data.insert(
-            verified_class_row.0.clone(),
-            ClassDebuggerDataWithContractClass {
-                inline_strategy_class_hash: verified_class_row.1.clone(),
-                class_debugger_data,
-                contract_class: verified_class_data.contract_class.clone(),
-            },
-        );
+            classes_debugger_data.insert(
+                class_hash.clone(),
+                ClassDebuggerDataWithContractClass {
+                    inline_strategy_class_hash: inline_class_hash.clone(),
+                    class_debugger_data,
+                    contract_class: verified_class_data.contract_class.clone(),
+                },
+            );
+        }
     }
 
     classes_debugger_data
