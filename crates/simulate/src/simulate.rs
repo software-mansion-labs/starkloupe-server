@@ -8,9 +8,11 @@ use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::storage_changes::fetch_before_storage_changes;
+use crate::transaction_extraction::extract_actual_fee_transaction_receipt;
 use crate::transaction_extraction::extract_block_timestamp;
 use crate::transaction_extraction::extract_block_txs_info;
 use crate::transaction_extraction::extract_chain_id_from_felt;
+use crate::transaction_extraction::extract_execution_resources_transaction_receipt;
 use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
@@ -52,7 +54,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::chain_id;
 use starknet::core::types::{
     BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
@@ -298,6 +299,9 @@ pub async fn simulate(
         execution_result,
         simulation_debugger_data: None,
         storage_changes,
+        estimated_fee: detailed_transaction_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.estimated_fee.clone()),
     };
 
     Ok((
@@ -448,6 +452,8 @@ pub async fn simulate_by_calldata(
         l1_tx_hash: None,
         l2_tx_hash: None,
         flamechart,
+        actual_fee: None,
+        execution_resources: None,
     };
     Ok(TransactionSimulationResult {
         l1_transaction_data: None,
@@ -574,6 +580,7 @@ async fn simulate_starknet_transaction_by_hash(
                                         debugger_trace: Vec::new(),
                                     }),
                                     storage_changes: HashMap::new(),
+                                    estimated_fee: None,
                                 };
                                 let l2_transaction_data = L2TransactionData {
                                     simulation_result: simulation_info,
@@ -591,6 +598,8 @@ async fn simulate_starknet_transaction_by_hash(
                                     l1_tx_hash: None,
                                     l2_tx_hash: Some(transaction_hash.to_hex_string()),
                                     flamechart: None,
+                                    actual_fee: None,
+                                    execution_resources: None,
                                 };
                                 return Ok(TransactionSimulationResult {
                                     l1_transaction_data: None,
@@ -601,6 +610,10 @@ async fn simulate_starknet_transaction_by_hash(
 
                         let strkgate_event =
                             extract_starkgate_event_transaction_receipt(&transaction_receipt);
+                        let actual_fee =
+                            extract_actual_fee_transaction_receipt(&transaction_receipt);
+                        let execution_resources =
+                            extract_execution_resources_transaction_receipt(&transaction_receipt);
                         // Perform transaction simulation
                         let (
                             simulation_result,
@@ -647,6 +660,8 @@ async fn simulate_starknet_transaction_by_hash(
                             l1_tx_hash: None,
                             l2_tx_hash: Some(transaction_hash.to_hex_string()),
                             flamechart,
+                            actual_fee,
+                            execution_resources,
                         };
                         return Ok(TransactionSimulationResult {
                             l1_transaction_data: None,
@@ -808,6 +823,8 @@ async fn process_l1_handler_transaction(
         l1_tx_hash: Some(transaction_hash.encode_hex()),
         l2_tx_hash: l2_tx_hash_hex,
         flamechart: None,
+        actual_fee: None,
+        execution_resources: None,
     };
 
     Ok(TransactionSimulationResult {

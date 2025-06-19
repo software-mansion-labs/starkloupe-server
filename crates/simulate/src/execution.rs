@@ -1,5 +1,6 @@
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
+use crate::utils::format_fee_string;
 use crate::ContractCall;
 use crate::DetailedTransactionReceipt;
 use crate::SimulationArgs;
@@ -8,7 +9,6 @@ use blockifier::context::TransactionContext;
 use blockifier::execution::call_info::CallInfo;
 use blockifier::execution::call_info::ExecutionSummary;
 use blockifier::execution::common_hints::ExecutionMode;
-use blockifier::execution::contract_class::RunnableCompiledClass as BlockifierContractClass;
 use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
@@ -301,8 +301,12 @@ pub fn handle_post_exec_and_collect_gas_vectors(
         use_kzg_da,
     );
 
+    let estimated_fee = format_fee_string(tx_receipt.fee, transaction_context.tx_info.fee_type());
+
     let detailed_receipt = DetailedTransactionReceipt {
         fee: tx_receipt.fee,
+        estimated_fee,
+
         gas: tx_receipt.gas,
         da_gas: tx_receipt.da_gas,
 

@@ -7,11 +7,14 @@ use anyhow::{anyhow, Context, Result};
 use blockifier::execution::syscalls::hint_processor::ENTRYPOINT_FAILED_ERROR;
 use ethers::providers::{Http, Provider as EthProvider};
 use ethers::types::H256;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
 use num_traits::Num;
 use serde::Serialize;
 use serde_json::Value;
-use starknet::core::types::{BlockId, Felt, MaybePendingBlockWithTxHashes, ResourceBoundsMapping};
+use starknet::core::types::{
+    BlockId, FeePayment, Felt, MaybePendingBlockWithTxHashes, PriceUnit, ResourceBoundsMapping,
+};
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider, Url,
@@ -559,4 +562,18 @@ async fn get_block_timestamp(
         MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),
         MaybePendingBlockWithTxHashes::PendingBlock(pending_block) => Ok(pending_block.timestamp),
     }
+}
+
+pub fn format_fee_payment(fee: &FeePayment) -> Option<String> {
+    let amount = BigUint::from_bytes_be(&fee.amount.to_bytes_be());
+    let decimals = BigUint::from(10u32).pow(18);
+    let (whole, fraction) = amount.div_mod_floor(&decimals);
+
+    let fraction_str = format!("{:018}", fraction); // uvek 18 decimala
+    let unit_str = match fee.unit {
+        PriceUnit::Wei => "ETH",
+        PriceUnit::Fri => "STRK",
+    };
+
+    Some(format!("{}.{} {}", whole, fraction_str, unit_str))
 }

@@ -8,8 +8,8 @@ use blockifier::transaction::transaction_types::TransactionType;
 use blockifier::versioned_constants::VersionedConstants;
 use num_traits::ToPrimitive;
 use starknet::core::types::{
-    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResult, Felt, InvokeTransaction,
-    MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
+    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResources, ExecutionResult, Felt,
+    InvokeTransaction, MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -24,9 +24,9 @@ use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::transaction::fields::{
     Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
 };
-use starknet_api::transaction::{TransactionHash, TransactionVersion};
+use starknet_api::transaction::TransactionVersion;
 use std::sync::Arc;
-use walnut_shared::felts_to_string;
+use walnut_shared::{felts_to_string, format_fee_payment};
 use walnut_shared::{
     resource_bounds_mapping_to_default_valid_resource_bounds,
     resource_bounds_mapping_to_valid_resource_bounds,
@@ -199,6 +199,28 @@ pub fn extract_starkgate_event_transaction_receipt(
     }
 }
 
+pub fn extract_actual_fee_transaction_receipt(
+    transaction_receipt: &TransactionReceipt,
+) -> Option<String> {
+    match transaction_receipt {
+        TransactionReceipt::Invoke(receipt) => format_fee_payment(&receipt.actual_fee),
+        TransactionReceipt::Declare(receipt) => format_fee_payment(&receipt.actual_fee),
+        TransactionReceipt::L1Handler(receipt) => format_fee_payment(&receipt.actual_fee),
+        _ => None,
+    }
+}
+
+pub fn extract_execution_resources_transaction_receipt(
+    transaction_receipt: &TransactionReceipt,
+) -> Option<ExecutionResources> {
+    match transaction_receipt {
+        TransactionReceipt::Invoke(receipt) => Some(receipt.execution_resources.clone()),
+        TransactionReceipt::Declare(receipt) => Some(receipt.execution_resources.clone()),
+        TransactionReceipt::L1Handler(receipt) => Some(receipt.execution_resources.clone()),
+        _ => None,
+    }
+}
+
 async fn fetch_block_with_txs(
     provider_client: &JsonRpcClient<HttpTransport>,
     block_number: u64,
@@ -275,6 +297,8 @@ pub async fn extract_block_txs_info(
             .unwrap_or_default(),
         block_timestamp: BlockTimestamp(block_txs.timestamp),
         gas_prices,
+        // A field which indicates if EIP-4844 blobs are used for publishing state diffs to l1
+        // This has influence on the cost of publishing the data on l1
         use_kzg_da: true,
     };
     let total_txs_in_block = block_txs.transactions.len();
