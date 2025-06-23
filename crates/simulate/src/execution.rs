@@ -154,12 +154,6 @@ pub fn execute_transaction_flows_with_executor<'a>(
         None
     };
 
-    if should_validate(args) && validate_call_info.is_none() {
-        return Err(TransactionSimulationError::OtherError(
-            "Transaction validate error".to_string(),
-        ));
-    }
-
     let mut execution_context = EntryPointExecutionContext::new(
         transaction_context.clone(),
         ExecutionMode::Execute,
