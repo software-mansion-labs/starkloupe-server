@@ -1,22 +1,18 @@
 use crate::app_state::AppState;
-use axum::extract::Query;
 use axum::{
     debug_handler,
-    extract::{Path, State},
+    extract::{ State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
 use simulate::DebugPayload;
-use simulate::{debugger::debug_by_calldata, SimulationArgs, SimulationRawArgs};
-use starknet::core::types::{BlockId, Event, ExecutionResult, Felt};
+use simulate::{debugger::debug_by_calldata, SimulationArgs};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::error;
-use walnut_shared::{extract_chain_id, get_rpc_urls, ENetwork};
 
 #[debug_handler]
 pub async fn debug_transaction(
