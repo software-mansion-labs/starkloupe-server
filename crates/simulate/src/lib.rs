@@ -225,7 +225,7 @@ pub struct L2TransactionData {
     pub total_transactions_in_block: Option<usize>,
     pub l1_tx_hash: Option<String>,
     pub l2_tx_hash: Option<String>,
-    pub l2_flamechart: Option<FlameChartNode>,
+    pub flamechart: Option<FlameChartNode>,
     pub l1_data_flamechart: Option<FlameChartNode>,
     pub actual_fee: Option<String>,
     pub execution_resources: Option<ExecutionResources>,
