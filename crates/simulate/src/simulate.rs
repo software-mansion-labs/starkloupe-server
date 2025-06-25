@@ -3,8 +3,8 @@ use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
-use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
 use crate::execution::PostExecStateData;
+use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
 use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
@@ -18,9 +18,10 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::utils::{build_flamegraph, build_l1_data_flamegraph, calldata_to_hex, transaction_type_to_string};
+use crate::utils::{
+    build_flamegraph, build_l1_data_flamegraph, calldata_to_hex, transaction_type_to_string,
+};
 use crate::DecodedL2ToL1Message;
-use crate::DetailedTransactionReceipt;
 use crate::EStarknetL1L2Event;
 use crate::EStarknetL2L1Event;
 use crate::FlameChartNode;
@@ -126,7 +127,7 @@ pub async fn simulate(
         })?,
     );
 
-    let (cheatnet_state, post_exec_state_data, _detailed_transaction_receipt) =
+    let (cheatnet_state, post_exec_state_data) =
         run_simulation(block_info, args, &mut cached_fork_state_non_inlined_class)?;
 
     let mut contract_flamechart: Vec<FlameChartNode> = Vec::new();
@@ -274,17 +275,27 @@ pub async fn simulate(
     let execution_result = get_execution_result(
         &contract_calls_map.0,
         deepest_failed_contract_call_id,
-        post_exec_state_data.as_ref().map(|post_exec_state_data| &post_exec_state_data.post_exec_report),
+        post_exec_state_data
+            .as_ref()
+            .map(|post_exec_state_data| &post_exec_state_data.post_exec_report),
         execution_result,
     )?;
 
-    let l2_flamechart = post_exec_state_data.as_ref().and_then(|post_exec_state_data| {
-        build_flamegraph(&post_exec_state_data.detailed_receipt, &contract_calls_map, &mut contract_flamechart)
-    });
+    let l2_flamechart = post_exec_state_data
+        .as_ref()
+        .and_then(|post_exec_state_data| {
+            build_flamegraph(
+                &post_exec_state_data.detailed_receipt,
+                &contract_calls_map,
+                &mut contract_flamechart,
+            )
+        });
 
-    let l1_data_flamechart = post_exec_state_data.as_ref().and_then(|post_exec_state_data| {
-        build_l1_data_flamegraph(post_exec_state_data, &post_exec_state_data.detailed_receipt)
-    });
+    let l1_data_flamechart = post_exec_state_data
+        .as_ref()
+        .and_then(|post_exec_state_data| {
+            build_l1_data_flamegraph(post_exec_state_data, &post_exec_state_data.detailed_receipt)
+        });
 
     if let ExecutionResult::Reverted { reason, .. } = &execution_result {
         if let Some(call) = contract_calls_map
@@ -304,7 +315,11 @@ pub async fn simulate(
         execution_result,
         simulation_debugger_data: None,
         storage_changes,
-        estimated_fee: post_exec_state_data.as_ref().and_then(|post_exec_state_data| post_exec_state_data.detailed_receipt.estimated_fee.clone()),
+        estimated_fee: post_exec_state_data
+            .as_ref()
+            .and_then(|post_exec_state_data| {
+                post_exec_state_data.detailed_receipt.estimated_fee.clone()
+            }),
     };
 
     Ok((
@@ -313,7 +328,7 @@ pub async fn simulate(
         transaction_index,
         total_txs_in_block,
         l2_flamechart,
-        l1_data_flamechart
+        l1_data_flamechart,
     ))
 }
 
@@ -341,14 +356,7 @@ fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
-) -> Result<
-    (
-        CheatnetState,
-        Option<PostExecStateData>,
-        Option<DetailedTransactionReceipt>,
-    ),
-    TransactionSimulationError,
-> {
+) -> Result<(CheatnetState, Option<PostExecStateData>), TransactionSimulationError> {
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);
@@ -405,7 +413,7 @@ fn run_simulation(
         None
     };
 
-    Ok((cheatnet_state_non_inlined, post_exec_state_data, None))
+    Ok((cheatnet_state_non_inlined, post_exec_state_data))
 }
 
 pub async fn simulate_by_calldata(
