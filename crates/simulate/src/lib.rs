@@ -13,6 +13,7 @@ pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
+pub mod flamegraph;
 use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
@@ -188,12 +189,22 @@ pub struct DetailedTransactionReceipt {
     pub computation_resources_sierra_gas_vector: GasVector,
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub enum FlameChartNodeType {
+    Root,
+    Category,
+    ContractAddress,
+    StorageKey,
+    ClassHash,
+}
+
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct FlameChartNode {
     pub call_id: u32,
     pub raw_value: u64,
     pub value: f64,
     pub name: Option<String>,
+    pub node_type: Option<FlameChartNodeType>,
     pub children: Vec<FlameChartNode>,
 }
 
