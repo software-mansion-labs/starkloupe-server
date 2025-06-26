@@ -1,5 +1,6 @@
 use crate::contract_call::ContractCall;
 use crate::FlameChartNode;
+use crate::FlameChartNodeType;
 use cheatnet::runtime_extensions::forge_runtime_extension::cheatcodes::spy_events::Event;
 use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
@@ -134,7 +135,7 @@ impl ContractCallsMapBuilder {
                     raw_value: contract_call.sierra_gas,
                     value: 0.0,
                     name: None,
-                    node_type: None,
+                    node_type: Some(FlameChartNodeType::ContractAddress),
                     children: Vec::new(),
                 };
 
