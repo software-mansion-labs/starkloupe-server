@@ -18,9 +18,8 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::utils::{
-    build_flamegraph, build_l1_data_flamegraph, calldata_to_hex, transaction_type_to_string,
-};
+use crate::flamegraph::{build_flamegraph, build_l1_data_flamegraph};
+use crate::utils::{calldata_to_hex, transaction_type_to_string};
 use crate::DecodedL2ToL1Message;
 use crate::EStarknetL1L2Event;
 use crate::EStarknetL2L1Event;

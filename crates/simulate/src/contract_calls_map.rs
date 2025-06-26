@@ -134,6 +134,7 @@ impl ContractCallsMapBuilder {
                     raw_value: contract_call.sierra_gas,
                     value: 0.0,
                     name: None,
+                    node_type: None,
                     children: Vec::new(),
                 };
 
