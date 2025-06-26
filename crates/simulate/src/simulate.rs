@@ -3,6 +3,7 @@ use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
 use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
+use crate::execution::PostExecStateData;
 use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
 use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
@@ -17,9 +18,10 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::utils::{build_flamegraph, calldata_to_hex, transaction_type_to_string};
+use crate::utils::{
+    build_flamegraph, build_l1_data_flamegraph, calldata_to_hex, transaction_type_to_string,
+};
 use crate::DecodedL2ToL1Message;
-use crate::DetailedTransactionReceipt;
 use crate::EStarknetL1L2Event;
 use crate::EStarknetL2L1Event;
 use crate::FlameChartNode;
@@ -30,7 +32,6 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
-use blockifier::fee::fee_checks::PostExecutionReport;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::transaction_types::TransactionType;
@@ -92,6 +93,7 @@ pub async fn simulate(
         usize,
         usize,
         Option<FlameChartNode>,
+        Option<FlameChartNode>,
     ),
     TransactionSimulationError,
 > {
@@ -125,7 +127,7 @@ pub async fn simulate(
         })?,
     );
 
-    let (cheatnet_state, post_execution_report, detailed_transaction_receipt) =
+    let (cheatnet_state, post_exec_state_data) =
         run_simulation(block_info, args, &mut cached_fork_state_non_inlined_class)?;
 
     let mut contract_flamechart: Vec<FlameChartNode> = Vec::new();
@@ -273,13 +275,27 @@ pub async fn simulate(
     let execution_result = get_execution_result(
         &contract_calls_map.0,
         deepest_failed_contract_call_id,
-        post_execution_report,
+        post_exec_state_data
+            .as_ref()
+            .map(|post_exec_state_data| &post_exec_state_data.post_exec_report),
         execution_result,
     )?;
 
-    let flamechart = detailed_transaction_receipt.as_ref().and_then(|receipt| {
-        build_flamegraph(receipt, &contract_calls_map, &mut contract_flamechart)
-    });
+    let l2_flamechart = post_exec_state_data
+        .as_ref()
+        .and_then(|post_exec_state_data| {
+            build_flamegraph(
+                &post_exec_state_data.detailed_receipt,
+                &contract_calls_map,
+                &mut contract_flamechart,
+            )
+        });
+
+    let l1_data_flamechart = post_exec_state_data
+        .as_ref()
+        .and_then(|post_exec_state_data| {
+            build_l1_data_flamegraph(post_exec_state_data, &post_exec_state_data.detailed_receipt)
+        });
 
     if let ExecutionResult::Reverted { reason, .. } = &execution_result {
         if let Some(call) = contract_calls_map
@@ -299,9 +315,11 @@ pub async fn simulate(
         execution_result,
         simulation_debugger_data: None,
         storage_changes,
-        estimated_fee: detailed_transaction_receipt
+        estimated_fee: post_exec_state_data
             .as_ref()
-            .and_then(|receipt| receipt.estimated_fee.clone()),
+            .and_then(|post_exec_state_data| {
+                post_exec_state_data.detailed_receipt.estimated_fee.clone()
+            }),
     };
 
     Ok((
@@ -309,7 +327,8 @@ pub async fn simulate(
         block_timestamp,
         transaction_index,
         total_txs_in_block,
-        flamechart,
+        l2_flamechart,
+        l1_data_flamechart,
     ))
 }
 
@@ -337,14 +356,7 @@ fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
-) -> Result<
-    (
-        CheatnetState,
-        Option<PostExecutionReport>,
-        Option<DetailedTransactionReceipt>,
-    ),
-    TransactionSimulationError,
-> {
+) -> Result<(CheatnetState, Option<PostExecStateData>), TransactionSimulationError> {
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);
@@ -385,8 +397,8 @@ fn run_simulation(
         },
     )?;
 
-    let (report, receipt) = if args.transaction_version != TransactionVersion::ZERO {
-        let (report, receipt) = handle_post_exec_and_collect_gas_vectors(
+    let post_exec_state_data = if args.transaction_version == TransactionVersion::THREE {
+        let post_exec_state_data = handle_post_exec_and_collect_gas_vectors(
             &args,
             cached_fork_state_non_inlined_class,
             &mut cheatnet_state_non_inlined,
@@ -396,12 +408,12 @@ fn run_simulation(
             signature_len,
             calldata_len,
         )?;
-        (Some(report), Some(receipt))
+        Some(post_exec_state_data)
     } else {
-        (None, None)
+        None
     };
 
-    Ok((cheatnet_state_non_inlined, report, receipt))
+    Ok((cheatnet_state_non_inlined, post_exec_state_data))
 }
 
 pub async fn simulate_by_calldata(
@@ -434,7 +446,8 @@ pub async fn simulate_by_calldata(
         block_timestamp,
         transaction_index_in_block,
         total_transactions_in_block,
-        flamechart,
+        l2_flamechart,
+        l1_data_flamechart,
     ) = simulate(db_pool, s3_client, None, args).await?;
 
     let l2_transaction_data = L2TransactionData {
@@ -451,7 +464,8 @@ pub async fn simulate_by_calldata(
         total_transactions_in_block: Some(total_transactions_in_block),
         l1_tx_hash: None,
         l2_tx_hash: None,
-        flamechart,
+        flamechart: l2_flamechart,
+        l1_data_flamechart,
         actual_fee: None,
         execution_resources: None,
     };
@@ -598,6 +612,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     l1_tx_hash: None,
                                     l2_tx_hash: Some(transaction_hash.to_hex_string()),
                                     flamechart: None,
+                                    l1_data_flamechart: None,
                                     actual_fee: None,
                                     execution_resources: None,
                                 };
@@ -620,7 +635,8 @@ async fn simulate_starknet_transaction_by_hash(
                             block_timestamp,
                             transaction_index_in_block,
                             total_transactions_in_block,
-                            flamechart,
+                            l2_flamechart,
+                            l1_data_flamechart,
                         ) = simulate(
                             db_pool,
                             s3_client,
@@ -659,7 +675,8 @@ async fn simulate_starknet_transaction_by_hash(
                             total_transactions_in_block: Some(total_transactions_in_block),
                             l1_tx_hash: None,
                             l2_tx_hash: Some(transaction_hash.to_hex_string()),
-                            flamechart,
+                            flamechart: l2_flamechart,
+                            l1_data_flamechart,
                             actual_fee,
                             execution_resources,
                         };
@@ -781,6 +798,7 @@ async fn process_l1_handler_transaction(
         transaction_index_in_block,
         total_transactions_in_block,
         _,
+        _,
     ) = simulate(
         db_pool,
         s3_client,
@@ -823,6 +841,7 @@ async fn process_l1_handler_transaction(
         l1_tx_hash: Some(transaction_hash.encode_hex()),
         l2_tx_hash: l2_tx_hash_hex,
         flamechart: None,
+        l1_data_flamechart: None,
         actual_fee: None,
         execution_resources: None,
     };

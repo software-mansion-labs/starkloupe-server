@@ -59,6 +59,13 @@ type CallEntryPointExecutor<'a> = dyn Fn(
     ) -> Result<CallInfo, TransactionSimulationError>
     + 'a;
 
+pub struct PostExecStateData {
+    pub state_changes: StateChanges,
+    pub starknet_resources_state: StateResources,
+    pub post_exec_report: PostExecutionReport,
+    pub detailed_receipt: DetailedTransactionReceipt,
+}
+
 fn validate_call_with_executor(
     calldata: Calldata,
     storage_address: ContractAddress,
@@ -219,8 +226,8 @@ pub fn handle_post_exec_and_collect_gas_vectors(
     execute_call_info: &Option<CallInfo>,
     signature_len: usize,
     calldata_len: usize,
-) -> Result<(PostExecutionReport, DetailedTransactionReceipt), TransactionSimulationError> {
-    let state_changes = cached_fork_state.get_actual_state_changes()?;
+) -> Result<PostExecStateData, TransactionSimulationError> {
+    let mut state_changes = cached_fork_state.get_actual_state_changes()?;
 
     let versioned_constants = transaction_context.block_context.versioned_constants();
     let use_kzg_da = transaction_context.block_context.block_info().use_kzg_da;
@@ -241,8 +248,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
 
     let mut tx_receipt = create_transaction_receipt(&transaction_context, &tx_resources);
 
-    let post_exec_report =
-        PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
+    let post_exec_report = PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
 
     let is_revertable =
         is_transaction_revertible(args.transaction_type.unwrap(), &args.transaction_version);
@@ -274,6 +280,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
         );
 
         tx_receipt = create_transaction_receipt(&transaction_context, &tx_resources);
+        state_changes = fee_state_changes;
     }
 
     let starknet_resources = tx_receipt.resources.starknet_resources;
@@ -314,7 +321,14 @@ pub fn handle_post_exec_and_collect_gas_vectors(
         computation_resources_gas_vector,
     };
 
-    Ok((post_exec_report, detailed_receipt))
+    let post_exec_state_data = PostExecStateData {
+        state_changes,
+        starknet_resources_state: starknet_resources.state.clone(),
+        post_exec_report,
+        detailed_receipt,
+    };
+
+    Ok(post_exec_state_data)
 }
 
 fn extract_gas_vectors(
@@ -490,7 +504,7 @@ fn is_transaction_revertible(
 pub fn get_execution_result(
     contract_calls_map: &HashMap<u32, ContractCall>,
     deepest_contract_call_id: Option<u32>,
-    post_execution_report: Option<PostExecutionReport>,
+    post_execution_report: Option<&PostExecutionReport>,
     execution_result: Option<ExecutionResult>,
 ) -> Result<ExecutionResult, TransactionSimulationError> {
     if post_execution_report.is_some() && deepest_contract_call_id.is_none() {
