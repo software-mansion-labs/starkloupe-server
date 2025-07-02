@@ -275,7 +275,6 @@ impl<'a> CallTraceBuilder<'a> {
                     self.relocated_memory,
                     idx,
                     prev_trace_entry,
-                    self.debug_mode,
                 ),
                 None => (Vec::new(), Vec::new()),
             };
@@ -300,7 +299,6 @@ impl<'a> CallTraceBuilder<'a> {
                     self.relocated_memory,
                     idx,
                     prev_trace_entry,
-                    self.debug_mode,
                 ),
                 None => (Vec::new(), Vec::new()),
             };
@@ -435,11 +433,7 @@ impl<'a> CallTraceBuilder<'a> {
             fp,
             is_deepest_panic_result: false,
             arguments: arguments.clone(),
-            arguments_decoded: if self.debug_mode {
-                Some(arguments_decoded.to_vec())
-            } else {
-                None
-            },
+            arguments_decoded: Some(arguments_decoded.clone()),
             results: Vec::new(),
             results_decoded: None,
             code_location,
@@ -519,11 +513,7 @@ impl<'a> CallTraceBuilder<'a> {
             .get_mut(&trace_state.current_call_id)
             .unwrap();
         current_function_call.results = results.to_vec();
-        current_function_call.results_decoded = if self.debug_mode {
-            Some(results_decoded.to_vec())
-        } else {
-            None
-        };
+        current_function_call.results_decoded = Some(results_decoded.to_vec())
     }
 
     fn update_current_call_code_location(
@@ -682,7 +672,6 @@ impl<'a> CallTraceBuilder<'a> {
                     self.relocated_memory,
                     idx,
                     last_trace_entry,
-                    self.debug_mode,
                 ),
                 None => (Vec::new(), Vec::new()),
             };
