@@ -1,5 +1,53 @@
 # Changelog
 
+### [0.0.91] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.91)
+
+- Update the starknet-foundry - fix no trace case
+
+### [0.0.90] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.90)
+
+- Add contract type for l2 flamegraph
+
+### [0.0.89] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.89)
+
+- Refactore flamegraph code - move to separate module
+
+### [0.0.88] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.88)
+
+- L1 Data Flamegraph support
+
+### [0.0.87] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.87)
+
+- Fix failed to simulate class that have __validate__ delegate call
+
+### [0.0.86] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.86)
+
+- Fix not showing funcuntion calls, remove zip usage when filter for verified class
+
+### [0.0.85] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.85)
+
+- Actual fee support 
+
+### [0.0.84] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.84)
+
+- New tx hash not found message - Transaction hash {0} not found on {1}
+
+### [0.0.83] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.83)
+
+- Fix mixing loweer and upper cas in Flamegraph nodes
+
+### [0.0.82] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.82)
+
+- Move deubber data to new endpoint
+  
+### [0.0.81] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.81)
+
+- Normalize gas value for the flamegraph
+  
+### [0.0.80] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.80)
+
+- Reverted tx gas calculation
+
 ### [0.0.79] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.79)
 
 - Reverted tx sierra gas support
