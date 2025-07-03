@@ -1,4 +1,7 @@
 o# Changelog
+### [0.0.93] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.93)
+
+- New verification error message in case of SIGKILL
 
 ### [0.0.92] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.92)
 
