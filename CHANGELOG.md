@@ -1,4 +1,8 @@
-# Changelog
+o# Changelog
+
+### [0.0.92] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.92)
+
+- Add decoded values(args and results) to the function call trace
 
 ### [0.0.91] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.91)
 
