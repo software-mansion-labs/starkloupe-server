@@ -5,6 +5,7 @@ pub mod debugger;
 pub mod debugger_trace;
 pub mod events;
 pub mod execution;
+pub mod flamegraph;
 pub mod function_calls;
 pub mod gas_counter;
 pub mod simulate;
@@ -13,7 +14,6 @@ pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
-pub mod flamegraph;
 use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
@@ -228,7 +228,7 @@ pub struct L2TransactionData {
     pub block_number: BlockId,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
-    pub sender_address: String,
+    pub sender_address: ContractAddress,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
     pub transaction_type: String,
