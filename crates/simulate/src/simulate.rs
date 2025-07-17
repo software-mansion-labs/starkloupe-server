@@ -5,6 +5,7 @@ use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
 use crate::execution::PostExecStateData;
 use crate::execution::{get_execution_result, handle_post_exec_and_collect_gas_vectors};
+use crate::flamegraph::{build_flamegraph, build_l1_data_flamegraph};
 use crate::function_calls::create_function_calls_map_generic;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
@@ -18,7 +19,6 @@ use crate::transaction_extraction::extract_execution_status_transaction_receipt;
 use crate::transaction_extraction::extract_starkgate_event_transaction_receipt;
 use crate::transaction_extraction::extract_submitted_tx;
 use crate::transaction_extraction::extract_transaction_contex;
-use crate::flamegraph::{build_flamegraph, build_l1_data_flamegraph};
 use crate::utils::{calldata_to_hex, transaction_type_to_string};
 use crate::DecodedL2ToL1Message;
 use crate::EStarknetL1L2Event;
@@ -431,7 +431,7 @@ pub async fn simulate_by_calldata(
         BlockId::Tag(BlockTag::Latest)
     };
 
-    let sender_address = args.sender_address.0.to_string();
+    let sender_address = args.sender_address;
     let calldata = args
         .calldata
         .0
@@ -601,7 +601,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     block_number: BlockId::Number(block_number),
                                     block_timestamp: block_timestamp.0,
                                     nonce: nonce.0.to_u64(),
-                                    sender_address: sender_address.0.to_string(),
+                                    sender_address,
                                     calldata: calldata_to_hex(&calldata),
                                     transaction_version: transaction_version.0.to_u64().unwrap()
                                         as usize,
@@ -666,7 +666,7 @@ async fn simulate_starknet_transaction_by_hash(
                             block_number: BlockId::Number(block_number),
                             block_timestamp: block_timestamp.0,
                             nonce: nonce.0.to_u64(),
-                            sender_address: sender_address.0.to_string(),
+                            sender_address,
                             calldata: calldata_to_hex(&calldata),
                             transaction_version: transaction_version.0.to_u64().unwrap() as usize,
                             transaction_type: transaction_type_to_string(transaction_type),
@@ -831,7 +831,7 @@ async fn process_l1_handler_transaction(
         ),
         block_timestamp: block_timestamp.0,
         nonce: l1_handler_tx.nonce.0.to_u64(),
-        sender_address: l1_handler_tx.contract_address.to_string(),
+        sender_address: l1_handler_tx.contract_address,
         calldata: calldata_to_hex(&l1_handler_tx.calldata),
         transaction_version: TransactionVersion::ZERO.0.to_u64().unwrap() as usize,
         transaction_type: transaction_type_to_string(TransactionType::L1Handler),
