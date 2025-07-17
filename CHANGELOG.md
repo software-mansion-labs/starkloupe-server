@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.95] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.95)
+
+- Remove expresion [\d-\d] from call trace
+  
 ### [0.0.94] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.94)
 
 - Change sender_address type to ContractAddress

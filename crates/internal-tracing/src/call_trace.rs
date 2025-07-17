@@ -378,30 +378,43 @@ impl<'a> CallTraceBuilder<'a> {
     /// * `true` if the function name matches the pattern of a high-level loop.
     /// * `false` otherwise.
     fn is_loop(&mut self, function_name: &str) -> bool {
-        let mut inside_brackets = false;
-        let mut found_expr = false;
-        let mut digits_found = false;
+        let mut inside = false;
+        let mut buffer = String::new();
 
         for c in function_name.chars() {
             if c == '[' {
-                inside_brackets = true;
-                found_expr = false;
-                digits_found = false;
-            } else if c == ']' {
-                if inside_brackets && found_expr && digits_found {
+                inside = true;
+                buffer.clear();
+            } else if c == ']' && inside {
+                inside = false;
+                if self.is_number_range(&buffer) || self.is_expr_number(&buffer) {
                     return true;
                 }
-                inside_brackets = false;
-            } else if inside_brackets {
-                if !found_expr && function_name.contains("expr") {
-                    found_expr = true;
-                }
-                if found_expr && c.is_ascii_digit() {
-                    digits_found = true;
-                }
+            } else if inside {
+                buffer.push(c);
             }
         }
 
+        false
+    }
+
+    // Helper: exactly one '-' and numbers on both sides (can be negative, whitespace allowed)
+    fn is_number_range(&mut self, s: &str) -> bool {
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() == 2 {
+            let left = parts[0].trim().parse::<i64>();
+            let right = parts[1].trim().parse::<i64>();
+            return left.is_ok() && right.is_ok();
+        }
+        false
+    }
+
+    // Helper: exprN where N is a number
+    fn is_expr_number(&mut self, s: &str) -> bool {
+        let s = s.trim();
+        if let Some(rest) = s.strip_prefix("expr") {
+            return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
+        }
         false
     }
 
