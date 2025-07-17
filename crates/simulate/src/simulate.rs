@@ -601,7 +601,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     block_number: BlockId::Number(block_number),
                                     block_timestamp: block_timestamp.0,
                                     nonce: nonce.0.to_u64(),
-                                    sender_address: sender_address,
+                                    sender_address,
                                     calldata: calldata_to_hex(&calldata),
                                     transaction_version: transaction_version.0.to_u64().unwrap()
                                         as usize,
@@ -666,7 +666,7 @@ async fn simulate_starknet_transaction_by_hash(
                             block_number: BlockId::Number(block_number),
                             block_timestamp: block_timestamp.0,
                             nonce: nonce.0.to_u64(),
-                            sender_address: sender_address,
+                            sender_address,
                             calldata: calldata_to_hex(&calldata),
                             transaction_version: transaction_version.0.to_u64().unwrap() as usize,
                             transaction_type: transaction_type_to_string(transaction_type),

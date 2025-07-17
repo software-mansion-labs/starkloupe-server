@@ -1,4 +1,9 @@
-o# Changelog
+# Changelog
+
+### [0.0.94] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.94)
+
+- Change sender_address type to ContractAddress
+  
 ### [0.0.93] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.93)
 
 - New verification error message in case of SIGKILL
