@@ -136,7 +136,7 @@ fn decode_enum(
         return Some(create_decoded_value_by_type(
             None,
             debug_name,
-            DecodedValueType::Enum(debug_name.to_string(), Box::new(decoded_value)),
+            decoded_value.value,
         ));
     } else {
         None

@@ -252,7 +252,9 @@ impl Mappings {
                         relocated_memory,
                         &mut data_index,
                     ) {
-                        arguments_decoded.push(argument_decoded);
+                        if let Some(adjusted_element) = adjust_decoded_element(argument_decoded) {
+                            arguments_decoded.push(adjusted_element);
+                        }
                     }
                 }
 

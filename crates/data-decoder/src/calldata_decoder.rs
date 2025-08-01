@@ -117,14 +117,16 @@ fn decode_type(
             let enum_def = enums.iter().find(|e| e.name == ty)?;
             let variant = enum_def.variants.get(variant_idx)?;
 
-            let value = if variant.ty.is_empty() {
-                DecodedValueType::String(variant.name.clone())
+            if variant.ty.is_empty() {
+                Some(create_decoded_value_by_type(name, ty, DecodedValueType::String(variant.name.clone())))
             } else {
                 let decoded = decode_type(data, &variant.ty, None, structs, enums)?;
-                decoded.value
-            };
-
-            Some(create_decoded_value_by_type(name, ty, value))
+                Some(create_decoded_value_by_type(
+                    name,
+                    ty,
+                    DecodedValueType::Enum(variant.name.clone(), Box::new(decoded)),
+                ))
+            }
         }
         EDataType::Tuple(inners) => {
             let mut elements = Vec::with_capacity(inners.len());
