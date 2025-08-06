@@ -77,8 +77,9 @@ fn format_generic_type(main_type: &str, inner_type: &str) -> String {
     if !main_type_name.contains("PanicResult") {
         format!("{}<{}>", main_type_name, parsed_inner_type)
     } else {
+        // Remove PanicResult wrapper and return only the inner type
         let cleaned_inner = remove_unwanted_types(&parsed_inner_type);
-        format!("PanicResult<{}>", cleaned_inner)
+        cleaned_inner
     }
 }
 
