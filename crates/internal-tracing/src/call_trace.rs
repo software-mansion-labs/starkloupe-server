@@ -426,6 +426,52 @@ impl<'a> CallTraceBuilder<'a> {
         arguments: &Vec<InternalFnCallIO>,
         arguments_decoded: &Vec<DecodedValue>,
     ) -> Result<()> {
+        // Skip core library functions completely - don't add them to function_calls_map
+        if fn_name.starts_with("core::") {
+            // For core functions, we need to create a hidden function call to maintain parent tracking
+            // but mark it as hidden so it won't be displayed in the UI
+            let new_call_id = *self.next_call_id;
+            let code_location = if self.debug_mode {
+                self.function_calls_map
+                    .0
+                    .get(&trace_state.current_call_id)
+                    .and_then(|call| call.code_location.clone())
+            } else {
+                None
+            };
+
+            let function_call = FunctionCall {
+                call_id: new_call_id,
+                parent_call_id: trace_state.current_call_id,
+                children_call_ids: Vec::new(),
+                contract_call_id: self.contract_call_id,
+                event_call_ids: Vec::new(),
+                fn_name: Some(fn_name.to_string()),
+                fp,
+                is_deepest_panic_result: false,
+                arguments: arguments.clone(),
+                arguments_decoded: Some(arguments_decoded.clone()),
+                results: Vec::new(),
+                results_decoded: None,
+                code_location,
+                debugger_data_available: false,
+                debugger_trace_step_index: None,
+                is_hidden: true, // Mark as hidden so it won't be displayed
+            };
+
+            *self.next_call_id += 1;
+            self.function_calls_map.0.insert(new_call_id, function_call);
+            self.function_calls_map
+                .0
+                .get_mut(&trace_state.current_call_id)
+                .unwrap()
+                .children_call_ids
+                .push(new_call_id);
+
+            trace_state.current_call_id = new_call_id;
+            return Ok(());
+        }
+
         let new_call_id = *self.next_call_id;
         let code_location = if self.debug_mode {
             self.function_calls_map
