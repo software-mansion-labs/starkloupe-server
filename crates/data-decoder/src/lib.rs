@@ -160,9 +160,9 @@ impl Serialize for DecodedValueType {
                 map.end()
             }
             DecodedValueType::Enum(variant_name, value) => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry(variant_name, value)?;
-                map.end()
+                // For compact enum format, serialize the inner value directly
+                // The variant name will be combined with type_name as "EnumType::Variant"
+                value.serialize(serializer)
             }
             DecodedValueType::None => serializer.serialize_none(),
         }
@@ -535,5 +535,110 @@ mod integration_tests {
         // The JSON should contain the "0" wrapper since it's a struct field
         assert!(json.contains("\"0\":"));
         assert!(json.contains("\"type_name\":\"Array<Call>\""));
+    }
+
+    #[test]
+    fn test_layout_enum_compact_format() {
+        // Test Layout enum with Struct variant
+        let field_layout_1 = DecodedValue {
+            name: Some("selector".to_string()),
+            type_name: "felt252".to_string(),
+            value: DecodedValueType::String("0x8bf0013e10cffa31b02b9fd12fd75dcec27382ecae9021abca59f6c1bb2c5a".to_string()),
+        };
+
+        let field_layout_2 = DecodedValue {
+            name: Some("layout".to_string()),
+            type_name: "Layout".to_string(),
+            value: DecodedValueType::Struct({
+                let mut map = HashMap::new();
+                map.insert(0, DecodedValue {
+                    name: Some("selector".to_string()),
+                    type_name: "felt252".to_string(),
+                    value: DecodedValueType::String("0x121d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83".to_string()),
+                });
+                map.insert(1, DecodedValue {
+                    name: Some("layout".to_string()),
+                    type_name: "Layout".to_string(),
+                    value: DecodedValueType::Struct({
+                        let mut inner_map = HashMap::new();
+                        inner_map.insert(0, DecodedValue {
+                            name: Some("Fixed".to_string()),
+                            type_name: "Span<u8>".to_string(),
+                            value: DecodedValueType::Array(vec![DecodedValueType::String("32".to_string())]),
+                        });
+                        inner_map
+                    }),
+                });
+                map
+            }),
+        };
+
+        let layout_struct_variant = create_compact_enum(
+            Some("layout"),
+            "Layout",
+            "Struct",
+            DecodedValue {
+                name: None,
+                type_name: "Span<FieldLayout>".to_string(),
+                value: DecodedValueType::Array(vec![
+                    DecodedValueType::Struct({
+                        let mut map = HashMap::new();
+                        map.insert(0, field_layout_1);
+                        map.insert(1, field_layout_2);
+                        map
+                    })
+                ]),
+            }
+        );
+
+        let json = serde_json::to_string(&layout_struct_variant).unwrap();
+        println!("Layout::Struct compact format: {}", json);
+
+        // Should have compact format: type_name = "Layout::Struct"
+        assert!(json.contains("\"type_name\":\"Layout::Struct\""));
+        // Should not have wrapper object with "Struct" key
+        assert!(!json.contains("\"Struct\":"));
+        // Should contain the inner data directly
+        assert!(json.contains("0x8bf0013e10cffa31b02b9fd12fd75dcec27382ecae9021abca59f6c1bb2c5a"));
+    }
+
+    #[test]
+    fn test_layout_enum_fixed_variant_compact_format() {
+        // Test Layout enum with Fixed variant
+        let layout_fixed_variant = create_compact_enum(
+            Some("layout"),
+            "Layout",
+            "Fixed",
+            DecodedValue {
+                name: None,
+                type_name: "Span<u8>".to_string(),
+                value: DecodedValueType::Array(vec![DecodedValueType::String("32".to_string())]),
+            }
+        );
+
+        let json = serde_json::to_string(&layout_fixed_variant).unwrap();
+        println!("Layout::Fixed compact format: {}", json);
+
+        // Should have compact format: type_name = "Layout::Fixed"
+        assert!(json.contains("\"type_name\":\"Layout::Fixed\""));
+        // Should not have wrapper object with "Fixed" key
+        assert!(!json.contains("\"Fixed\":"));
+        // Should contain the inner data directly
+        assert!(json.contains("32"));
+    }
+}
+
+
+/// Helper function to create a compact enum value
+pub fn create_compact_enum(
+    name: Option<&str>,
+    enum_type_name: &str,
+    variant: &str,
+    inner_value: DecodedValue,
+) -> DecodedValue {
+    DecodedValue {
+        name: name.map(|s| s.to_string()),
+        type_name: format!("{}::{}", enum_type_name, variant),
+        value: inner_value.value,
     }
 }

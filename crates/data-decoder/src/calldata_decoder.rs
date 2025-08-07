@@ -1,6 +1,6 @@
 use crate::starknet_types::EDataType;
 use crate::utils::is_allocation_safe;
-use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
+use crate::{create_decoded_value_by_type, create_compact_enum, DecodedValue, DecodedValueType};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::borrow::Cow;
@@ -118,14 +118,16 @@ fn decode_type(
             let variant = enum_def.variants.get(variant_idx)?;
 
             if variant.ty.is_empty() {
-                Some(create_decoded_value_by_type(name, ty, DecodedValueType::String(variant.name.clone())))
+                // For unit variants, use compact format
+                Some(create_compact_enum(name, ty, &variant.name, DecodedValue {
+                    name: None,
+                    type_name: "Unit".to_string(),
+                    value: DecodedValueType::String(variant.name.clone()),
+                }))
             } else {
                 let decoded = decode_type(data, &variant.ty, None, structs, enums)?;
-                Some(create_decoded_value_by_type(
-                    name,
-                    ty,
-                    DecodedValueType::Enum(variant.name.clone(), Box::new(decoded)),
-                ))
+                // For variants with data, use compact format
+                Some(create_compact_enum(name, ty, &variant.name, decoded))
             }
         }
         EDataType::Tuple(inners) => {
