@@ -91,7 +91,13 @@ fn decode_enum(
                 DecodedValueType::Single(Felt::from(variant_index)),
             ));
         }
-        decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)
+        
+        let decoded_value = decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)?;
+        return Some(create_decoded_value_by_type(
+            None,
+            debug_name,
+            DecodedValueType::Enum(debug_name.to_string(), Box::new(decoded_value)),
+        ));
     } else {
         None
     }
