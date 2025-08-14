@@ -426,7 +426,6 @@ impl<'a> CallTraceBuilder<'a> {
         arguments: &Vec<InternalFnCallIO>,
         arguments_decoded: &Vec<DecodedValue>,
     ) -> Result<()> {
-        // Skip core library functions completely - don't add them to function_calls_map
         if fn_name.starts_with("core::") {
             // For core functions, we need to create a hidden function call to maintain parent tracking
             // but mark it as hidden so it won't be displayed in the UI
