@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::services::CacheKey;
 use axum::{
     debug_handler,
     extract::{ State},
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
-use tracing::error;
+use tracing::{error, info};
 
 #[debug_handler]
 pub async fn debug_transaction(
@@ -21,24 +22,47 @@ pub async fn debug_transaction(
 ) -> Response {
     let db_pool = state.db_pool.clone();
     let s3_client = state.s3_client.clone();
+    let cache = state.simulation_cache.clone();
     let payload = payload.clone();
 
     let simulation_task = task::spawn_blocking(move || {
         tokio::runtime::Handle::current().block_on(async move {
             // Parse debugger payload
             let debug_args = match SimulationArgs::try_from_debug_payload(payload).await {
-                Ok(args) => args,
-                Err(e) => return Err((StatusCode::BAD_REQUEST, e.to_string())),
+                Ok(args) => {
+                    args
+                },
+                Err(e) => {
+                    return Err((StatusCode::BAD_REQUEST, e.to_string()));
+                }
             };
 
+            // Check debug cache first
+            let cache_key = CacheKey::from_debug_args(&debug_args);
+            
+            if let Some(cached_result) = cache.get_debug(&cache_key).await {
+                info!("Debug cache hit! Returning cached result");
+                return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
+            }
+            info!("Debug cache miss, proceeding with debug simulation");
+
+            // Run debug simulation
             match debug_by_calldata(&db_pool, &s3_client, debug_args).await {
-                Ok(sim_info) => Ok((StatusCode::OK, sim_info)),
-                Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+                Ok(debug_info) => {
+                    // Wrap in Arc and cache the debug result
+                    let debug_info_arc = Arc::new(debug_info);
+                    cache.set_debug(&cache_key, debug_info_arc.clone()).await;
+                    Ok((StatusCode::OK, debug_info_arc))
+                },
+                Err(e) => {
+                    info!("Debug simulation failed after: {}", e);
+                    Err((StatusCode::BAD_REQUEST, e.to_string()))
+                }
             }
         })
     });
 
-    match timeout(Duration::from_secs(600), simulation_task).await {
+    match timeout(Duration::from_secs(900), simulation_task).await {
         Ok(Ok(Ok((status, sim_info)))) => (status, Json(sim_info)).into_response(),
         Ok(Ok(Err((status, message)))) => (status, Json(message)).into_response(),
         Ok(Err(join_err)) => {

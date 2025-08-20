@@ -177,30 +177,33 @@ pub fn execute_transaction_flows_with_executor<'a>(
 
     let execute_call_info = if should_execute(args) {
         let ep_selector = args.entry_point_selector;
-        let calldata = args.calldata.clone();
         let storage_address = args.sender_address;
         let tx_type = args.transaction_type;
-
-        let remaining_execution_gas =
-            &mut remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
+        let remaining_execution_gas = remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
 
         let mut execute_call = CallEntryPoint {
-            entry_point_type: EntryPointType::External,
-            entry_point_selector: get_entrypoint_selector(),
-            calldata: calldata.clone(),
+            entry_point_type: if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
+                EntryPointType::L1Handler
+            } else {
+                EntryPointType::External
+            },
+            entry_point_selector: if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
+                ep_selector.unwrap()
+            } else {
+                get_entrypoint_selector()
+            },
+            calldata: args.calldata.clone(),
             class_hash: None,
             code_address: None,
             storage_address,
             caller_address: ContractAddress::default(),
             call_type: CallType::Call,
-            initial_gas: *remaining_execution_gas,
+            initial_gas: if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
+                u64::MAX
+            } else {
+                remaining_execution_gas
+            },
         };
-
-        if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
-            execute_call.entry_point_type = EntryPointType::L1Handler;
-            execute_call.entry_point_selector = ep_selector.unwrap();
-            execute_call.initial_gas = u64::MAX;
-        }
 
         execute_executor(
             &mut execute_call,

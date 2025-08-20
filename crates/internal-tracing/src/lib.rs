@@ -64,7 +64,7 @@ pub struct DataWithContractClass {
 }
 
 /// Contains the debugger data for all classes in a simulation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SimulationDebuggerData {
     pub classes_debugger_data: HashMap<String, ClassDebuggerData>,
     pub debugger_trace: Vec<DebuggerTraceEntry>,
@@ -79,14 +79,14 @@ pub struct ClassDebuggerDataWithContractClass {
 }
 
 /// Contains the debugger data for a class
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ClassDebuggerData {
     pub sierra_statements_to_cairo_info: HashMap<usize, SierraStatementToCairoDebugInfo>,
     pub source_code: HashMap<String, String>,
 }
 
 /// Contains the debugger data for a contract call
-#[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Clone)]
 pub struct ContractCallDebuggerData {
     pub execution_trace: Vec<DebuggerTraceEntry>,
 }

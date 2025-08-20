@@ -2,7 +2,7 @@ use cairo_lang_starknet_classes::abi::EventField;
 use data_decoder::DecodedValue;
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct EventCall {
     pub call_id: u32,
     pub contract_call_id: u32,

@@ -36,6 +36,7 @@ use crate::handlers::{
     search::get_search_handler,
     verification::{get_verification_status_handler, verify_handler_with_rpc},
 };
+use crate::services::SimulationCache;
 use axum::extract::State;
 use axum::http::StatusCode;
 use tokio::time::{timeout, Duration};
@@ -95,7 +96,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             start_github_scarb_binaries_downloader_scheduler().await;
             start_github_dojo_binaries_downloader_scheduler().await;
 
-            let shared_state = Arc::new(AppState { db_pool, s3_client });
+            // Initialize simulation cache with configurable settings from environment
+            let cache_capacity = std::env::var("CACHE_CAPACITY")
+                .unwrap_or_else(|_| "100".to_string()) // Production: 100 entries
+                .parse::<u64>()
+                .unwrap_or(100);
+            let cache_ttl_minutes = std::env::var("CACHE_TTL_MINUTES")
+                .unwrap_or_else(|_| "1440".to_string()) // Production: 24 hours (24 * 60 = 1440 minutes)
+                .parse::<u64>()
+                .unwrap_or(1440);
+            
+            let simulation_cache = SimulationCache::new(cache_capacity, cache_ttl_minutes);
+            
+            let shared_state = Arc::new(AppState { 
+                db_pool, 
+                s3_client, 
+                simulation_cache 
+            });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
@@ -125,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(get_verification_status_handler),
                 )
                 .route("/v1/debug-transaction", post(debug_transaction))
+                // .route("/v1/cache/stats", get(cache_stats_handler)) // Commented out for now
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))
                 .route_service(

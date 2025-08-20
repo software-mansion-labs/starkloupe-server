@@ -43,13 +43,13 @@ pub enum ESysCall {
     StorageWrite(StorageWrite),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub enum DebuggerTraceEntry {
     WithLocation(DebuggerTraceEntryWithLocation),
     WithContractCall(DebuggerTraceEntryWithContractCall),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DebuggerTraceEntryWithContractCall {
     pub contract_call_id: u32,
     pub reason: Option<String>,

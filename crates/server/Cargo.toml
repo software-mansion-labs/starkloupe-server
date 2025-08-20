@@ -46,3 +46,5 @@ clokwerk.workspace = true
 chrono.workspace = true
 time.workspace = true
 ethers.workspace = true
+moka = { version = "0.12", features = ["future"] }
+sha2 = "0.10"

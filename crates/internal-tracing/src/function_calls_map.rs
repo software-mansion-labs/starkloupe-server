@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::function_call::FunctionCall;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct FunctionCallsMap(pub HashMap<u32, FunctionCall>);
 
 impl FunctionCallsMap {
