@@ -208,7 +208,7 @@ pub struct FlameChartNode {
     pub children: Vec<FlameChartNode>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct L1TransactionData {
     pub chain_id: String,
     pub block_number: Option<u64>,
@@ -220,7 +220,7 @@ pub struct L1TransactionData {
     pub l1_tx_hash: Option<String>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct L2TransactionData {
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
@@ -242,7 +242,7 @@ pub struct L2TransactionData {
     pub execution_resources: Option<ExecutionResources>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct TransactionSimulationResult {
     pub l1_transaction_data: Option<L1TransactionData>,
     pub l2_transaction_data: Option<L2TransactionData>,
@@ -313,14 +313,14 @@ where
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct DebuggerInfo {
     pub contract_calls_map: ContractCallsMap,
     pub function_calls_map: FunctionCallsMap,
     pub simulation_debugger_data: Option<SimulationDebuggerData>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct SimulationInfo {
     pub contract_calls_map: ContractCallsMap,
     pub function_calls_map: FunctionCallsMap,

@@ -14,7 +14,7 @@ use verification::CodeLocation;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::get_name_of_entry_point_selector;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ContractCall {
     pub call_id: u32,
     pub parent_call_id: u32,

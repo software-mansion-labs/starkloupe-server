@@ -4,7 +4,7 @@ use verification::CodeLocation;
 
 use crate::call_trace::InternalFnCallIO;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct FunctionCall {
     pub call_id: u32,
     pub parent_call_id: u32,

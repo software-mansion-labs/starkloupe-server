@@ -11,7 +11,7 @@ use starknet_api::transaction::constants;
 use std::cell::Ref;
 use std::collections::HashMap;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ContractCallsMap(pub HashMap<u32, ContractCall>);
 
 impl ContractCallsMap {
