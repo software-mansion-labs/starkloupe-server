@@ -2,6 +2,7 @@
 //https://github.com/starkware-libs/cairo/blob/v2.10.1/crates/cairo-lang-starknet-classes/src/abi.rs
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// Enum of contract item ABIs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -137,6 +138,10 @@ pub struct Input {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Cow<'static, [StructMember]>>, // For struct types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Function Output ABI.
@@ -144,6 +149,10 @@ pub struct Input {
 pub struct Output {
     #[serde(rename = "type")]
     pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Cow<'static, [StructMember]>>, // For struct types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Struct ABI.
@@ -159,6 +168,10 @@ pub struct StructMember {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Cow<'static, [StructMember]>>, // For nested struct types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Enum ABI.
@@ -174,6 +187,10 @@ pub struct EnumVariant {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<Cow<'static, [StructMember]>>, // For struct types in enum variants
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<Cow<'static, [EnumVariant]>>, // For nested enum types in enum variants
 }
 
 pub fn get_functions(items: &[Item]) -> Vec<Function> {
