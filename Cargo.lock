@@ -7510,6 +7510,7 @@ dependencies = [
  "chrono",
  "clokwerk",
  "cookie",
+ "data-decoder",
  "db",
  "dotenv",
  "ethers",
