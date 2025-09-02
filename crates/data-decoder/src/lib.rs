@@ -3,6 +3,7 @@ mod constants;
 pub mod event_decoder;
 pub mod internal_function_decoder;
 mod starknet_types;
+pub mod type_decoder;
 pub mod utils;
 use num_bigint::{BigInt, BigUint};
 use num_traits::One;
@@ -291,11 +292,11 @@ mod tests {
         let enum_value = DecodedValueType::Enum("Some".to_string(), Box::new(inner_value));
 
         let json = serde_json::to_string(&enum_value).unwrap();
-        // Should contain the "Some" wrapper since type_name is not "Some"
-        assert!(json.contains("\"Some\":"));
-        // Should contain the inner value
+        // Should contain the inner value directly (no "Some" wrapper)
         assert!(json.contains("\"type_name\":\"Array<Call>\""));
         assert!(json.contains("\"call1\""));
+        // Should NOT contain the "Some" wrapper since enum serialization changed
+        assert!(!json.contains("\"Some\":"));
     }
 
     #[test]
@@ -310,8 +311,11 @@ mod tests {
         let enum_value = DecodedValueType::Enum("Error".to_string(), Box::new(inner_value));
 
         let json = serde_json::to_string(&enum_value).unwrap();
-        // Should contain the variant name as wrapper
-        assert!(json.contains("\"Error\":"));
+        // Should contain the inner value directly (no "Error" wrapper)
+        assert!(json.contains("\"type_name\":\"Error\""));
+        assert!(json.contains("\"error_message\""));
+        // Should NOT contain the "Error" wrapper since enum serialization changed
+        assert!(!json.contains("\"Error\":"));
     }
 
     #[test]
@@ -326,8 +330,11 @@ mod tests {
         let enum_value = DecodedValueType::Enum("None".to_string(), Box::new(inner_value));
 
         let json = serde_json::to_string(&enum_value).unwrap();
-        // Should contain the variant name as wrapper
-        assert!(json.contains("\"None\":"));
+        // Should contain the inner value directly (no "None" wrapper)
+        assert!(json.contains("\"type_name\":\"Unit\""));
+        assert!(json.contains("\"value\":null"));
+        // Should NOT contain the "None" wrapper since enum serialization changed
+        assert!(!json.contains("\"None\":"));
     }
 
     #[test]
@@ -367,12 +374,12 @@ mod tests {
         let json = serde_json::to_string(&option_enum).unwrap();
         println!("Complex nested structure: {}", json);
 
-        // Should contain the "Some" wrapper since type_name is not "Some"
-        assert!(json.contains("\"Some\":"));
-        // Should contain the inner structure
+        // Should contain the inner structure directly (no "Some" wrapper)
         assert!(json.contains("\"type_name\":\"Array<Call>\""));
         assert!(json.contains("\"0x123\""));
         assert!(json.contains("\"0x456\""));
+        // Should NOT contain the "Some" wrapper since enum serialization changed
+        assert!(!json.contains("\"Some\":"));
     }
 }
 
@@ -430,9 +437,10 @@ mod integration_tests {
         let json = serde_json::to_string(&enum_value).unwrap();
         println!("Serialized enum: {}", json);
 
-        // The JSON should contain the "Some" wrapper since type_name is not "Some"
-        assert!(json.contains("\"Some\":"));
+        // The JSON should contain the inner structure directly (no "Some" wrapper)
         assert!(json.contains("\"type_name\":\"Array<Call>\""));
+        // Should NOT contain the "Some" wrapper since enum serialization changed
+        assert!(!json.contains("\"Some\":"));
     }
 
     #[test]
@@ -449,8 +457,11 @@ mod integration_tests {
         let json = serde_json::to_string(&enum_value).unwrap();
         println!("Serialized true enum: {}", json);
 
-        // The JSON should contain the variant name as a wrapper
-        assert!(json.contains("\"Some\":"));
+        // The JSON should contain the inner value directly (no "Some" wrapper)
+        assert!(json.contains("\"type_name\":\"Some\""));
+        assert!(json.contains("\"test_value\""));
+        // Should NOT contain the "Some" wrapper since enum serialization changed
+        assert!(!json.contains("\"Some\":"));
     }
 
     #[test]
@@ -467,8 +478,11 @@ mod integration_tests {
         let json = serde_json::to_string(&enum_value).unwrap();
         println!("Serialized None enum: {}", json);
 
-        // The JSON should contain the variant name as a wrapper
-        assert!(json.contains("\"None\":"));
+        // The JSON should contain the inner value directly (no "None" wrapper)
+        assert!(json.contains("\"type_name\":\"Unit\""));
+        assert!(json.contains("\"value\":null"));
+        // Should NOT contain the "None" wrapper since enum serialization changed
+        assert!(!json.contains("\"None\":"));
     }
 
     #[test]
@@ -543,7 +557,9 @@ mod integration_tests {
         let field_layout_1 = DecodedValue {
             name: Some("selector".to_string()),
             type_name: "felt252".to_string(),
-            value: DecodedValueType::String("0x8bf0013e10cffa31b02b9fd12fd75dcec27382ecae9021abca59f6c1bb2c5a".to_string()),
+            value: DecodedValueType::String(
+                "0x8bf0013e10cffa31b02b9fd12fd75dcec27382ecae9021abca59f6c1bb2c5a".to_string(),
+            ),
         };
 
         let field_layout_2 = DecodedValue {
@@ -551,24 +567,38 @@ mod integration_tests {
             type_name: "Layout".to_string(),
             value: DecodedValueType::Struct({
                 let mut map = HashMap::new();
-                map.insert(0, DecodedValue {
-                    name: Some("selector".to_string()),
-                    type_name: "felt252".to_string(),
-                    value: DecodedValueType::String("0x121d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83".to_string()),
-                });
-                map.insert(1, DecodedValue {
-                    name: Some("layout".to_string()),
-                    type_name: "Layout".to_string(),
-                    value: DecodedValueType::Struct({
-                        let mut inner_map = HashMap::new();
-                        inner_map.insert(0, DecodedValue {
-                            name: Some("Fixed".to_string()),
-                            type_name: "Span<u8>".to_string(),
-                            value: DecodedValueType::Array(vec![DecodedValueType::String("32".to_string())]),
-                        });
-                        inner_map
-                    }),
-                });
+                map.insert(
+                    0,
+                    DecodedValue {
+                        name: Some("selector".to_string()),
+                        type_name: "felt252".to_string(),
+                        value: DecodedValueType::String(
+                            "0x121d1cadbcfa91eec65aa16715b94ffc1c9654ba57ea2ef1a2127bca1127a83"
+                                .to_string(),
+                        ),
+                    },
+                );
+                map.insert(
+                    1,
+                    DecodedValue {
+                        name: Some("layout".to_string()),
+                        type_name: "Layout".to_string(),
+                        value: DecodedValueType::Struct({
+                            let mut inner_map = HashMap::new();
+                            inner_map.insert(
+                                0,
+                                DecodedValue {
+                                    name: Some("Fixed".to_string()),
+                                    type_name: "Span<u8>".to_string(),
+                                    value: DecodedValueType::Array(vec![DecodedValueType::String(
+                                        "32".to_string(),
+                                    )]),
+                                },
+                            );
+                            inner_map
+                        }),
+                    },
+                );
                 map
             }),
         };
@@ -580,15 +610,13 @@ mod integration_tests {
             DecodedValue {
                 name: None,
                 type_name: "Span<FieldLayout>".to_string(),
-                value: DecodedValueType::Array(vec![
-                    DecodedValueType::Struct({
-                        let mut map = HashMap::new();
-                        map.insert(0, field_layout_1);
-                        map.insert(1, field_layout_2);
-                        map
-                    })
-                ]),
-            }
+                value: DecodedValueType::Array(vec![DecodedValueType::Struct({
+                    let mut map = HashMap::new();
+                    map.insert(0, field_layout_1);
+                    map.insert(1, field_layout_2);
+                    map
+                })]),
+            },
         );
 
         let json = serde_json::to_string(&layout_struct_variant).unwrap();
@@ -613,7 +641,7 @@ mod integration_tests {
                 name: None,
                 type_name: "Span<u8>".to_string(),
                 value: DecodedValueType::Array(vec![DecodedValueType::String("32".to_string())]),
-            }
+            },
         );
 
         let json = serde_json::to_string(&layout_fixed_variant).unwrap();
@@ -627,7 +655,6 @@ mod integration_tests {
         assert!(json.contains("32"));
     }
 }
-
 
 /// Helper function to create a compact enum value
 pub fn create_compact_enum(

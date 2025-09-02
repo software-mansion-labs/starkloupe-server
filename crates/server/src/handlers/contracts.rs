@@ -6,20 +6,21 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use data_decoder::type_decoder::{
+    expand_enums_recursively, expand_structs_recursively, TypeDecoder,
+};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use starknet::core::types::{BlockId, BlockTag, ContractClass, Felt};
 use starknet::providers::Provider;
-use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::ChainId;
-use std::collections::HashSet;
-use std::{collections::HashMap, sync::Arc, borrow::Cow};
-use tracing::{error, info};
+use std::{collections::HashMap, sync::Arc};
+use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use verification::{db::fetch_verified_class, s3::fetch_verified_class_hash_with_source_code_data};
-use walnut_shared::abi::{get_enums, get_functions, get_structs, Enum, EnumVariant, Function, Input, Item, Output, Struct, StructMember};
+use walnut_shared::abi::{get_enums, get_functions, get_structs, Function, Item};
 use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
@@ -112,36 +113,44 @@ pub async fn get_contract_entrypoints_handler(
                         // Pre-extract structs and enums once, create lookup maps
                         let structs = get_structs(&parsed_abi);
                         let enums = get_enums(&parsed_abi);
-                        
+
                         // Found structs and enums in ABI
-                        let struct_map: std::collections::HashMap<String, Struct> = structs.into_iter()
+                        let struct_map: std::collections::HashMap<
+                            String,
+                            walnut_shared::abi::Struct,
+                        > = structs
+                            .into_iter()
                             .map(|s| (simplify_type_name(&s.name), s))
                             .collect();
-                        let enum_map: std::collections::HashMap<String, Enum> = enums.into_iter()
-                            .map(|e| (simplify_type_name(&e.name), e))
-                            .collect();
-                        
+                        let enum_map: std::collections::HashMap<String, walnut_shared::abi::Enum> =
+                            enums
+                                .into_iter()
+                                .map(|e| (simplify_type_name(&e.name), e))
+                                .collect();
+
                         // Recursively enhance all structs and enums with their members/variants
-                        let expanded_struct_map = expand_structs_recursively(&struct_map, &enum_map);
-                        let expanded_enum_map = expand_enums_recursively(&enum_map, &expanded_struct_map);
-                        
+                        let expanded_struct_map =
+                            expand_structs_recursively(&struct_map, &enum_map);
+                        let expanded_enum_map =
+                            expand_enums_recursively(&enum_map, &expanded_struct_map);
+
                         let functions = get_functions(&parsed_abi);
-                        entry_point_datas = process_functions_with_enhanced_data(
-                            &functions,
-                            &expanded_struct_map,
-                            &expanded_enum_map,
-                        );
-                     }
-                     Err(err) => {
-                         error!("Failed to parse ABI for network: {}", err);
-                     }
-                 }
+
+                        // Use TypeDecoder to decode functions with complete type information
+                        let type_decoder = TypeDecoder::new(expanded_struct_map, expanded_enum_map);
+                        entry_point_datas = type_decoder.decode_functions(&functions);
+                    }
+                    Err(err) => {
+                        error!("Failed to parse ABI for network: {}", err);
+                    }
+                }
             }
         }
-        Err(err) => {       
+        Err(err) => {
             error!(
                 "Failed to fetch class for address {} from source: {}",
-                contract_address, err);
+                contract_address, err
+            );
         }
     }
 
@@ -152,271 +161,6 @@ pub async fn get_contract_entrypoints_handler(
     let response = ContractAbiResponse { entry_point_datas };
 
     (StatusCode::OK, Json(response)).into_response()
-}
-
-fn expand_structs_recursively(
-    struct_map: &HashMap<String, Struct>,
-    enum_map: &HashMap<String, Enum>,
-) -> HashMap<String, Struct> {
-    let mut expanded = HashMap::new();
-    let mut visited = HashSet::new();
-    
-    for name in struct_map.keys() {
-        if !visited.contains(name) {
-            expand_struct_recursively(name, struct_map, enum_map, &mut expanded, &mut visited);
-        }
-    }
-    
-    expanded
-}
-
-fn expand_enums_recursively(
-    enum_map: &HashMap<String, Enum>,
-    struct_map: &HashMap<String, Struct>,
-) -> HashMap<String, Enum> {
-    let mut expanded = HashMap::new();
-    let mut visited = HashSet::new();
-    
-    for name in enum_map.keys() {
-        if !visited.contains(name) {
-            expand_enum_recursively(name, enum_map, struct_map, &mut expanded, &mut visited);
-        }
-    }
-    
-    expanded
-}
-
-fn expand_struct_recursively(
-    struct_name: &str,
-    struct_map: &HashMap<String, Struct>,
-    enum_map: &HashMap<String, Enum>,
-    expanded: &mut HashMap<String, Struct>,
-    visited: &mut HashSet<String>,
-) -> Struct {
-    if let Some(cached) = expanded.get(struct_name) {
-        return cached.clone();
-    }
-    
-    visited.insert(struct_name.to_string());
-    
-    let struct_def = match struct_map.get(struct_name) {
-        Some(def) => def,
-        None => return Struct {
-            name: struct_name.to_string(),
-            members: vec![],
-        },
-    };
-    
-    let expanded_members = struct_def.members.iter()
-        .map(|member| {
-            let member_type = simplify_type_name(&member.ty);
-            
-            if struct_map.contains_key(&member_type) {
-                let expanded_nested = expand_struct_recursively(
-                    &member_type,
-                    struct_map,
-                    enum_map,
-                    expanded,
-                    visited,
-                );
-                
-                StructMember {
-                    name: member.name.clone(),
-                    ty: member_type.clone(),
-                    members: Some(Cow::Owned(expanded_nested.members.clone())),
-                    variants: None,
-                }
-            } else if enum_map.contains_key(&member_type) {
-                let enum_def = enum_map.get(&member_type).unwrap();
-                StructMember {
-                    name: member.name.clone(),
-                    ty: member_type.clone(),
-                    members: None,
-                    variants: Some(Cow::Owned(enum_def.variants.clone())),
-                }
-            } else {
-                StructMember {
-                    name: member.name.clone(),
-                    ty: member_type.clone(),
-                    members: None,
-                    variants: None,
-                }
-            }
-        })
-        .collect();
-    
-    let expanded_struct = Struct {
-        name: struct_name.to_string(),
-        members: expanded_members,
-    };
-    
-    expanded.insert(struct_name.to_string(), expanded_struct.clone());
-    expanded_struct
-}
-
-fn expand_enum_recursively(
-    enum_name: &str,
-    enum_map: &HashMap<String, Enum>,
-    struct_map: &HashMap<String, Struct>,
-    expanded: &mut HashMap<String, Enum>,
-    visited: &mut HashSet<String>,
-) -> Enum {
-    // Return cached result if available
-    if let Some(cached) = expanded.get(enum_name) {
-        return cached.clone();
-    }
-    
-    visited.insert(enum_name.to_string());
-    
-    let enum_def = match enum_map.get(enum_name) {
-        Some(def) => def,
-        None => return Enum {
-            name: enum_name.to_string(),
-            variants: vec![],
-        },
-    };
-    
-    let expanded_variants = enum_def.variants.iter()
-        .map(|variant| {
-            let variant_type = simplify_type_name(&variant.ty);
-            
-            // Check if this variant is a struct that we can expand
-            if struct_map.contains_key(&variant_type) {
-                if let Some(struct_def) = struct_map.get(&variant_type) {
-                    EnumVariant {
-                        name: variant.name.clone(),
-                        ty: variant_type.clone(),
-                        members: Some(Cow::Owned(struct_def.members.clone())),
-                        variants: None,
-                    }
-                } else {
-                    // Fallback if struct not found
-                    EnumVariant {
-                        name: variant.name.clone(),
-                        ty: variant_type.clone(),
-                        members: None,
-                        variants: None,
-                    }
-                }
-            }
-            // Check if this variant is another enum (nested enum)
-            else if enum_map.contains_key(&variant_type) && variant_type != enum_name {
-                // Check for circular reference to prevent infinite recursion
-                if visited.contains(&variant_type) {
-                    // Return basic variant info without expansion to avoid cycles
-                    EnumVariant {
-                        name: variant.name.clone(),
-                        ty: variant_type.clone(),
-                        members: None,
-                        variants: None,
-                    }
-                } else {
-                    let nested_enum = expand_enum_recursively(
-                        &variant_type,
-                        enum_map,
-                        struct_map,
-                        expanded,
-                        visited,
-                    );
-                    
-                    EnumVariant {
-                        name: variant.name.clone(),
-                        ty: variant_type.clone(),
-                        members: None,
-                        variants: Some(Cow::Owned(nested_enum.variants.clone())),
-                    }
-                }
-            } else {
-                // Primitive type or unknown type 
-                EnumVariant {
-                    name: variant.name.clone(),
-                    ty: variant_type.clone(),
-                    members: None,
-                    variants: None,
-                }
-            }
-        })
-        .collect();
-    
-    let expanded_enum = Enum {
-        name: enum_name.to_string(),
-        variants: expanded_variants,
-    };
-    
-    expanded.insert(enum_name.to_string(), expanded_enum.clone());
-    expanded_enum
-}
-
-fn process_functions_with_enhanced_data(
-    functions: &[Function],
-    struct_map: &HashMap<String, Struct>,
-    enum_map: &HashMap<String, Enum>,
-) -> Vec<(String, Function)> {
-    functions.iter()
-        .map(|func| {
-            let selector = selector_from_name(&func.name).0.to_hex_string();
-            let enhanced_func = Function {
-                name: func.name.clone(),
-                inputs: enhance_inputs(&func.inputs, struct_map, enum_map),
-                outputs: enhance_outputs(&func.outputs, struct_map, enum_map),
-                state_mutability: func.state_mutability.clone(),
-            };
-            (selector, enhanced_func)
-        })
-        .collect()
-}
-
-fn enhance_inputs(
-    inputs: &[Input],
-    struct_map: &HashMap<String, Struct>,
-    enum_map: &HashMap<String, Enum>,
-) -> Vec<Input> {
-    inputs.iter()
-        .map(|input| {
-            let input_type = simplify_type_name(&input.ty);
-            
-            let (members, variants) = if let Some(struct_def) = struct_map.get(&input_type) {
-                (Some(Cow::Owned(struct_def.members.clone())), None)
-            } else if let Some(enum_def) = enum_map.get(&input_type) {
-                (None, Some(Cow::Owned(enum_def.variants.clone())))
-            } else {
-                (None, None)
-            };
-            
-            Input {
-                name: input.name.clone(),
-                ty: input_type.clone(),
-                members,
-                variants,
-            }
-        })
-        .collect()
-}
-
-fn enhance_outputs(
-    outputs: &[Output],
-    struct_map: &HashMap<String, Struct>,
-    enum_map: &HashMap<String, Enum>,
-) -> Vec<Output> {
-    outputs.iter()
-        .map(|output| {
-            let output_type = simplify_type_name(&output.ty);
-            
-            let (members, variants) = if let Some(struct_def) = struct_map.get(&output_type) {
-                (Some(Cow::Owned(struct_def.members.clone())), None)
-            } else if let Some(enum_def) = enum_map.get(&output_type) {
-                (None, Some(Cow::Owned(enum_def.variants.clone())))
-            } else {
-                (None, None)
-            };
-            
-            Output {
-                ty: output_type.clone(),
-                members,
-                variants,
-            }
-        })
-        .collect()
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
