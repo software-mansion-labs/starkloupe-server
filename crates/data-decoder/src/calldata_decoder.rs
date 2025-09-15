@@ -1,11 +1,12 @@
 use crate::starknet_types::EDataType;
 use crate::utils::is_allocation_safe;
-use crate::{create_decoded_value_by_type, create_compact_enum, DecodedValue, DecodedValueType};
+use crate::{create_compact_enum, create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use walnut_shared::abi::{Enum, Struct};
+use walnut_shared::utils::simplify_type_name;
 
 type Structs<'a> = &'a [Struct];
 type Enums<'a> = &'a [Enum];
@@ -52,7 +53,7 @@ fn decode_type(
             *data = rest;
             Some(create_decoded_value_by_type(
                 name,
-                ty,
+                &simplify_type_name(ty),
                 DecodedValueType::Single(*value),
             ))
         }
@@ -105,7 +106,7 @@ fn decode_type(
 
             Some(create_decoded_value_by_type(
                 name,
-                ty,
+                &simplify_type_name(ty),
                 DecodedValueType::Array(elements),
             ))
         }
@@ -119,11 +120,16 @@ fn decode_type(
 
             if variant.ty.is_empty() {
                 // For unit variants, use compact format
-                Some(create_compact_enum(name, ty, &variant.name, DecodedValue {
-                    name: None,
-                    type_name: "Unit".to_string(),
-                    value: DecodedValueType::String(variant.name.clone()),
-                }))
+                Some(create_compact_enum(
+                    name,
+                    ty,
+                    &variant.name,
+                    DecodedValue {
+                        name: None,
+                        type_name: "Unit".to_string(),
+                        value: DecodedValueType::String(variant.name.clone()),
+                    },
+                ))
             } else {
                 let decoded = decode_type(data, &variant.ty, None, structs, enums)?;
                 // For variants with data, use compact format
@@ -142,13 +148,13 @@ fn decode_type(
             *data = tuple_data;
             Some(create_decoded_value_by_type(
                 name,
-                ty,
+                &simplify_type_name(ty),
                 DecodedValueType::Array(elements),
             ))
         }
         EDataType::Struct(_) => {
             let struct_def = structs.iter().find(|s| s.name == ty)?;
-            let mut fields = HashMap::new();
+            let mut fields: BTreeMap<usize, DecodedValue> = BTreeMap::new();
             let mut struct_data = *data;
 
             for (index, member) in struct_def.members.iter().enumerate() {
@@ -166,7 +172,7 @@ fn decode_type(
             *data = struct_data;
             Some(create_decoded_value_by_type(
                 name,
-                ty,
+                &simplify_type_name(ty),
                 DecodedValueType::Struct(fields),
             ))
         }

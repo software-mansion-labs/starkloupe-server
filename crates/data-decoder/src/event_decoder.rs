@@ -4,7 +4,7 @@ use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use walnut_shared::utils::simplify_type_name;
 
 pub fn decode_event_datas(
@@ -91,8 +91,9 @@ fn decode_enum(
                 DecodedValueType::Single(Felt::from(variant_index)),
             ));
         }
-        
-        let decoded_value = decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)?;
+
+        let decoded_value =
+            decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)?;
         return Some(create_decoded_value_by_type(
             None,
             debug_name,
@@ -193,7 +194,7 @@ fn decode_standard_struct(
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
 ) -> Option<DecodedValue> {
-    let mut decoded_struct_values = HashMap::with_capacity(generic_args.len());
+    let mut decoded_struct_values = BTreeMap::new();
 
     for (i, arg) in generic_args.iter().enumerate() {
         if let GenericArg::Type(concrete_type_id) = arg {

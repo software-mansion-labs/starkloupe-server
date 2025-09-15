@@ -27,7 +27,7 @@ use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use smol_str::SmolStr;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::error;
 use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
@@ -409,7 +409,7 @@ pub fn adjust_decoded_element(mut decoded_element: DecodedValue) -> Option<Decod
     match &decoded_element.value {
         // Remove "Unit", "ContractState", or "ComponentState" elements
         DecodedValueType::Struct(fields) if decoded_element.type_name.starts_with('(') => {
-            let mut new_fields = HashMap::new();
+            let mut new_fields = BTreeMap::new();
             for (key, value) in fields {
                 // Exclude fields with type_name "Unit", "ContractState", or starting with "ComponentState"
                 if value.type_name != "Unit"

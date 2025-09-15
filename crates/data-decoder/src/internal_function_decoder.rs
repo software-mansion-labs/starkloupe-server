@@ -5,7 +5,7 @@ use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use cairo_lang_sierra_type_size::TypeSizeMap;
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use walnut_shared::utils::simplify_type_name;
 
 pub fn decode_internal_datas(
@@ -210,7 +210,7 @@ fn decode_standard_struct(
     type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
 ) -> Option<DecodedValue> {
-    let mut decoded_struct_values = HashMap::with_capacity(generic_args.len());
+    let mut decoded_struct_values = BTreeMap::new();
     let mut index = 0;
     for arg in generic_args.iter() {
         if let GenericArg::Type(concrete_type_id) = arg {

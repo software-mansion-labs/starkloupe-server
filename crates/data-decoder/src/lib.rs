@@ -7,9 +7,10 @@ pub mod type_decoder;
 pub mod utils;
 use num_bigint::{BigInt, BigUint};
 use num_traits::One;
-use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
+use serde::ser::{SerializeMap, SerializeStruct, Serializer};
+use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 //A negative value -x is serialized as P - x, where P is:
 //P = 2^251 + 17 * 2^192 + 1
@@ -37,7 +38,7 @@ pub enum DecodedValueType {
     BigInt(BigInt),
     Bool(bool),
     Array(Vec<DecodedValueType>),
-    Struct(HashMap<usize, DecodedValue>),
+    Struct(BTreeMap<usize, DecodedValue>),
     Enum(String, Box<DecodedValue>),
     #[default]
     None,
@@ -160,7 +161,7 @@ impl Serialize for DecodedValueType {
                 }
                 map.end()
             }
-            DecodedValueType::Enum(variant_name, value) => {
+            DecodedValueType::Enum(_variant_name, value) => {
                 // For compact enum format, serialize the inner value directly
                 // The variant name will be combined with type_name as "EnumType::Variant"
                 value.serialize(serializer)
@@ -180,6 +181,223 @@ impl Serialize for DecodedValue {
         state.serialize_field("type_name", &self.type_name)?;
         state.serialize_field("value", &self.value)?;
         state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for DecodedValueType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize as a generic JSON value first
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // String type, try to parse as different numeric types
+        if let serde_json::Value::String(s) = &value {
+            if let Ok(parsed) = s.parse::<u64>() {
+                return Ok(DecodedValueType::BigUint(BigUint::from(parsed)));
+            }
+            if let Ok(parsed) = s.parse::<i64>() {
+                return Ok(DecodedValueType::BigInt(BigInt::from(parsed)));
+            }
+            if let Ok(parsed) = s.parse::<bool>() {
+                return Ok(DecodedValueType::Bool(parsed));
+            }
+            if s.starts_with("0x") {
+                if let Ok(felt) = Felt::from_hex(&s[2..]) {
+                    return Ok(DecodedValueType::Single(felt));
+                }
+            }
+            // Default to String
+            return Ok(DecodedValueType::String(s.clone()));
+        }
+
+        // Handle other JSON types
+        match value {
+            serde_json::Value::String(s) => Ok(DecodedValueType::String(s)),
+            serde_json::Value::Bool(b) => Ok(DecodedValueType::Bool(b)),
+            serde_json::Value::Array(arr) => {
+                let mut decoded = Vec::new();
+                for v in arr {
+                    // Handle different types in arrays, including recursive deserialization
+                    match v {
+                        serde_json::Value::String(s) => {
+                            // Try to parse as different numeric types first
+                            if let Ok(parsed) = s.parse::<u64>() {
+                                decoded.push(DecodedValueType::BigUint(BigUint::from(parsed)));
+                            } else if let Ok(parsed) = s.parse::<i64>() {
+                                decoded.push(DecodedValueType::BigInt(BigInt::from(parsed)));
+                            } else if let Ok(parsed) = s.parse::<bool>() {
+                                decoded.push(DecodedValueType::Bool(parsed));
+                            } else if s.starts_with("0x") {
+                                if let Ok(felt) = Felt::from_hex(&s[2..]) {
+                                    decoded.push(DecodedValueType::Single(felt));
+                                } else {
+                                    decoded.push(DecodedValueType::String(s));
+                                }
+                            } else {
+                                decoded.push(DecodedValueType::String(s));
+                            }
+                        }
+                        serde_json::Value::Number(n) => {
+                            if let Some(parsed) = n.as_u64() {
+                                decoded.push(DecodedValueType::BigUint(BigUint::from(parsed)));
+                            } else if let Some(parsed) = n.as_i64() {
+                                decoded.push(DecodedValueType::BigInt(BigInt::from(parsed)));
+                            } else {
+                                decoded.push(DecodedValueType::String(n.to_string()));
+                            }
+                        }
+                        serde_json::Value::Bool(b) => decoded.push(DecodedValueType::Bool(b)),
+                        serde_json::Value::Array(inner_arr) => {
+                            // Recursively handle nested arrays
+                            let inner_decoded = inner_arr
+                                .into_iter()
+                                .map(|v| match v {
+                                    serde_json::Value::String(s) => {
+                                        if let Ok(parsed) = s.parse::<u64>() {
+                                            DecodedValueType::BigUint(BigUint::from(parsed))
+                                        } else if let Ok(parsed) = s.parse::<i64>() {
+                                            DecodedValueType::BigInt(BigInt::from(parsed))
+                                        } else if let Ok(parsed) = s.parse::<bool>() {
+                                            DecodedValueType::Bool(parsed)
+                                        } else if s.starts_with("0x") {
+                                            if let Ok(felt) = Felt::from_hex(&s[2..]) {
+                                                DecodedValueType::Single(felt)
+                                            } else {
+                                                DecodedValueType::String(s)
+                                            }
+                                        } else {
+                                            DecodedValueType::String(s)
+                                        }
+                                    }
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(parsed) = n.as_u64() {
+                                            DecodedValueType::BigUint(BigUint::from(parsed))
+                                        } else if let Some(parsed) = n.as_i64() {
+                                            DecodedValueType::BigInt(BigInt::from(parsed))
+                                        } else {
+                                            DecodedValueType::String(n.to_string())
+                                        }
+                                    }
+                                    serde_json::Value::Bool(b) => DecodedValueType::Bool(b),
+                                    _ => DecodedValueType::String(v.to_string()),
+                                })
+                                .collect();
+                            decoded.push(DecodedValueType::Array(inner_decoded));
+                        }
+                        serde_json::Value::Object(obj) => {
+                            // Handle structs in arrays
+                            let mut fields = BTreeMap::new();
+                            for (k, v) in obj {
+                                let key: usize = k.parse().map_err(serde::de::Error::custom)?;
+                                // Try to deserialize as DecodedValue first
+                                if let Ok(decoded_value) =
+                                    serde_json::from_value::<DecodedValue>(v.clone())
+                                {
+                                    fields.insert(key, decoded_value);
+                                } else {
+                                    // Fallback to basic deserialization
+                                    let value = match v {
+                                        serde_json::Value::String(s) => {
+                                            if let Ok(parsed) = s.parse::<u64>() {
+                                                DecodedValueType::BigUint(BigUint::from(parsed))
+                                            } else if let Ok(parsed) = s.parse::<i64>() {
+                                                DecodedValueType::BigInt(BigInt::from(parsed))
+                                            } else if let Ok(parsed) = s.parse::<bool>() {
+                                                DecodedValueType::Bool(parsed)
+                                            } else if s.starts_with("0x") {
+                                                if let Ok(felt) = Felt::from_hex(&s[2..]) {
+                                                    DecodedValueType::Single(felt)
+                                                } else {
+                                                    DecodedValueType::String(s)
+                                                }
+                                            } else {
+                                                DecodedValueType::String(s)
+                                            }
+                                        }
+                                        serde_json::Value::Number(n) => {
+                                            if let Some(parsed) = n.as_u64() {
+                                                DecodedValueType::BigUint(BigUint::from(parsed))
+                                            } else if let Some(parsed) = n.as_i64() {
+                                                DecodedValueType::BigInt(BigInt::from(parsed))
+                                            } else {
+                                                DecodedValueType::String(n.to_string())
+                                            }
+                                        }
+                                        serde_json::Value::Bool(b) => DecodedValueType::Bool(b),
+                                        _ => DecodedValueType::String(v.to_string()),
+                                    };
+                                    fields.insert(
+                                        key,
+                                        DecodedValue {
+                                            name: None,
+                                            type_name: "unknown".to_string(),
+                                            value,
+                                        },
+                                    );
+                                }
+                            }
+                            decoded.push(DecodedValueType::Struct(fields));
+                        }
+                        _ => decoded.push(DecodedValueType::String(v.to_string())),
+                    }
+                }
+                Ok(DecodedValueType::Array(decoded))
+            }
+            serde_json::Value::Object(obj) => {
+                let mut fields = BTreeMap::new();
+                for (k, v) in obj {
+                    let key: usize = k.parse().map_err(serde::de::Error::custom)?;
+                    let value = match v {
+                        serde_json::Value::String(s) => DecodedValueType::String(s),
+                        serde_json::Value::Number(n) => {
+                            if let Some(parsed) = n.as_u64() {
+                                DecodedValueType::BigUint(BigUint::from(parsed))
+                            } else if let Some(parsed) = n.as_i64() {
+                                DecodedValueType::BigInt(BigInt::from(parsed))
+                            } else {
+                                DecodedValueType::String(n.to_string())
+                            }
+                        }
+                        serde_json::Value::Bool(b) => DecodedValueType::Bool(b),
+                        _ => DecodedValueType::String(v.to_string()),
+                    };
+                    fields.insert(
+                        key,
+                        DecodedValue {
+                            name: None,
+                            type_name: "unknown".to_string(),
+                            value,
+                        },
+                    );
+                }
+                Ok(DecodedValueType::Struct(fields))
+            }
+            serde_json::Value::Null => Ok(DecodedValueType::None),
+            _ => Err(serde::de::Error::custom("Unsupported value type")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DecodedValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct DecodedValueHelper {
+            name: Option<String>,
+            type_name: String,
+            value: DecodedValueType,
+        }
+
+        let helper = DecodedValueHelper::deserialize(deserializer)?;
+        Ok(DecodedValue {
+            name: helper.name,
+            type_name: helper.type_name,
+            value: helper.value,
+        })
     }
 }
 
@@ -230,7 +448,7 @@ mod tests {
     #[test]
     fn test_struct_serialization() {
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -267,7 +485,7 @@ mod tests {
         };
 
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(0, inner_value);
             map
         });
@@ -341,7 +559,7 @@ mod tests {
     fn test_complex_nested_structure() {
         // Test a complex nested structure similar to the user's example
         let call_struct = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -395,7 +613,7 @@ mod integration_tests {
             name: None,
             type_name: "Array<Call>".to_string(),
             value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -489,7 +707,7 @@ mod integration_tests {
     fn test_struct_serialization_with_multiple_fields() {
         // Test case 5: Struct with multiple fields (should wrap)
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -524,7 +742,7 @@ mod integration_tests {
             name: None,
             type_name: "Array<Call>".to_string(),
             value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -538,7 +756,7 @@ mod integration_tests {
         };
 
         let option_struct = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(0, inner_value);
             map
         });
@@ -566,7 +784,7 @@ mod integration_tests {
             name: Some("layout".to_string()),
             type_name: "Layout".to_string(),
             value: DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -584,7 +802,7 @@ mod integration_tests {
                         name: Some("layout".to_string()),
                         type_name: "Layout".to_string(),
                         value: DecodedValueType::Struct({
-                            let mut inner_map = HashMap::new();
+                            let mut inner_map = BTreeMap::new();
                             inner_map.insert(
                                 0,
                                 DecodedValue {
@@ -611,7 +829,7 @@ mod integration_tests {
                 name: None,
                 type_name: "Span<FieldLayout>".to_string(),
                 value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(0, field_layout_1);
                     map.insert(1, field_layout_2);
                     map
