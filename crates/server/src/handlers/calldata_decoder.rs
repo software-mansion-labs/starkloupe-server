@@ -215,8 +215,6 @@ fn decode_calldata_with_abi(
             }
         };
 
-    info!("decoded_values: {:?}", decoded_values);
-
     Ok((decoded_values, Some(function.name.clone())))
 }
 
