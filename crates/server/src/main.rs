@@ -13,6 +13,7 @@ use axum::{routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
+    calldata_decoder::decode_calldata_handler,
     classes::get_class_handler,
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
     debugger::debug_transaction,
@@ -142,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(get_verification_status_handler),
                 )
                 .route("/v1/debug-transaction", post(debug_transaction))
+                .route("/v1/decode-calldata", post(decode_calldata_handler))
                 // .route("/v1/cache/stats", get(cache_stats_handler)) // Commented out for now
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))
