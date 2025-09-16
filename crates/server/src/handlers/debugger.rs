@@ -2,21 +2,21 @@ use crate::app_state::AppState;
 use crate::services::CacheKey;
 use axum::{
     debug_handler,
-    extract::{ State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use simulate::DebugPayload;
 use simulate::{debugger::debug_by_calldata, SimulationArgs};
+use starknet::providers::Provider;
+use starknet_api::block::BlockNumber;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::{error, info};
 use walnut_shared::create_rpc_client_from_url;
-use starknet_api::block::BlockNumber;
-use starknet::providers::Provider;
 
 #[debug_handler]
 pub async fn debug_transaction(
@@ -32,9 +32,7 @@ pub async fn debug_transaction(
         tokio::runtime::Handle::current().block_on(async move {
             // Parse debugger payload
             let debug_args = match SimulationArgs::try_from_debug_payload(payload).await {
-                Ok(args) => {
-                    args
-                },
+                Ok(args) => args,
                 Err(e) => {
                     return Err((StatusCode::BAD_REQUEST, e.to_string()));
                 }
@@ -46,7 +44,10 @@ pub async fn debug_transaction(
                 match provider_client.block_number().await {
                     Ok(block_number) => Some(BlockNumber(block_number)),
                     Err(e) => {
-                        return Err((StatusCode::BAD_REQUEST, format!("Failed to get latest block number: {}", e)));
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            format!("Failed to get latest block number: {}", e),
+                        ));
                     }
                 }
             } else {
@@ -54,8 +55,11 @@ pub async fn debug_transaction(
             };
 
             // Check debug cache first with resolved block number
-            let cache_key = CacheKey::from_debug_args_with_block_number(&debug_args, resolved_block_number.as_ref());
-            
+            let cache_key = CacheKey::from_debug_args_with_block_number(
+                &debug_args,
+                resolved_block_number.as_ref(),
+            );
+
             if let Some(cached_result) = cache.get_debug(&cache_key).await {
                 info!("Debug cache hit! Returning cached result");
                 return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
@@ -69,7 +73,7 @@ pub async fn debug_transaction(
                     let debug_info_arc = Arc::new(debug_info);
                     cache.set_debug(&cache_key, debug_info_arc.clone()).await;
                     Ok((StatusCode::OK, debug_info_arc))
-                },
+                }
                 Err(e) => {
                     info!("Debug simulation failed after: {}", e);
                     Err((StatusCode::BAD_REQUEST, e.to_string()))

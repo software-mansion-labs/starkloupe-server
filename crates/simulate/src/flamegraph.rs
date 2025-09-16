@@ -4,12 +4,12 @@ use crate::DetailedTransactionReceipt;
 use crate::FlameChartNode;
 use crate::FlameChartNodeType;
 use blockifier::fee::eth_gas_constants::DATA_GAS_PER_FIELD_ELEMENT;
+use blockifier::state::cached_state::StorageEntry;
 use semver::Version;
 use starknet_api::core::ContractAddress;
-use walnut_shared::STRK_FEE_TOKEN_ADDRESS;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use blockifier::state::cached_state::StorageEntry;
+use walnut_shared::STRK_FEE_TOKEN_ADDRESS;
 
 // Wrapper struct to access AllocatedKeys
 #[derive(Clone, Debug)]
@@ -248,7 +248,6 @@ pub fn build_flamegraph(
     Some(root)
 }
 
-
 pub fn build_l1_data_flamegraph(
     post_exec_state_data: &PostExecStateData,
     detailed_tx_receipt: &DetailedTransactionReceipt,
@@ -293,104 +292,138 @@ pub fn build_l1_data_flamegraph(
 
     // Storage updates: contract address -> storage key
     let mut contract_to_storage_keys: HashMap<String, Vec<String>> = HashMap::new();
-    for ((contract_addr, storage_key), _) in &post_exec_state_data.state_changes.state_maps.storage {
+    for ((contract_addr, storage_key), _) in &post_exec_state_data.state_changes.state_maps.storage
+    {
         let contract_str = contract_addr.0.to_hex_string();
         let storage_key_str = storage_key.0.to_hex_string();
-        contract_to_storage_keys.entry(contract_str).or_default().push(storage_key_str);
+        contract_to_storage_keys
+            .entry(contract_str)
+            .or_default()
+            .push(storage_key_str);
     }
-    let storage_nodes: Vec<FlameChartNode> = contract_to_storage_keys.into_iter().map(|(contract_addr, storage_keys)| {
-        FlameChartNode {
+    let storage_nodes: Vec<FlameChartNode> = contract_to_storage_keys
+        .into_iter()
+        .map(|(contract_addr, storage_keys)| FlameChartNode {
             call_id: 0,
             name: Some(contract_addr),
             raw_value: storage_keys.len() as u64 * 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
             value: 0.0,
             node_type: Some(FlameChartNodeType::ContractAddress),
-            children: storage_keys.into_iter().map(|storage_key| FlameChartNode {
-                call_id: 0,
-                name: Some(storage_key),
-                raw_value: 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
-                value: 0.0,
-                node_type: Some(FlameChartNodeType::StorageKey),
-                children: vec![],
-            }).collect(),
-        }
-    }).collect();
+            children: storage_keys
+                .into_iter()
+                .map(|storage_key| FlameChartNode {
+                    call_id: 0,
+                    name: Some(storage_key),
+                    raw_value: 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
+                    value: 0.0,
+                    node_type: Some(FlameChartNodeType::StorageKey),
+                    children: vec![],
+                })
+                .collect(),
+        })
+        .collect();
 
     // Class hash updates: contract address -> class_hash
     let mut contract_to_class_hash: HashMap<String, Vec<String>> = HashMap::new();
     for (contract_addr, class_hash) in &post_exec_state_data.state_changes.state_maps.class_hashes {
         let contract_str = contract_addr.0.to_hex_string();
         let class_hash_str = class_hash.0.to_hex_string();
-        contract_to_class_hash.entry(contract_str).or_default().push(class_hash_str);
+        contract_to_class_hash
+            .entry(contract_str)
+            .or_default()
+            .push(class_hash_str);
     }
-    let class_hash_nodes: Vec<FlameChartNode> = contract_to_class_hash.into_iter().map(|(contract_addr, class_hashes)| {
-        FlameChartNode {
+    let class_hash_nodes: Vec<FlameChartNode> = contract_to_class_hash
+        .into_iter()
+        .map(|(contract_addr, class_hashes)| FlameChartNode {
             call_id: 0,
             name: Some(contract_addr),
             raw_value: class_hashes.len() as u64 * DATA_GAS_PER_FIELD_ELEMENT as u64,
             value: 0.0,
             node_type: Some(FlameChartNodeType::ContractAddress),
-            children: class_hashes.into_iter().map(|class_hash| FlameChartNode {
-                call_id: 0,
-                name: Some(class_hash),
-                raw_value: DATA_GAS_PER_FIELD_ELEMENT as u64,
-                value: 0.0,
-                node_type: Some(FlameChartNodeType::ClassHash),
-                children: vec![],
-            }).collect(),
-        }
-    }).collect();
+            children: class_hashes
+                .into_iter()
+                .map(|class_hash| FlameChartNode {
+                    call_id: 0,
+                    name: Some(class_hash),
+                    raw_value: DATA_GAS_PER_FIELD_ELEMENT as u64,
+                    value: 0.0,
+                    node_type: Some(FlameChartNodeType::ClassHash),
+                    children: vec![],
+                })
+                .collect(),
+        })
+        .collect();
 
     // Compiled class hash updates: contract address -> compiled_class_hash
     let mut contract_to_compiled_class_hash: HashMap<String, Vec<String>> = HashMap::new();
-    for (class_hash, compiled_class_hash) in &post_exec_state_data.state_changes.state_maps.compiled_class_hashes {
+    for (class_hash, compiled_class_hash) in &post_exec_state_data
+        .state_changes
+        .state_maps
+        .compiled_class_hashes
+    {
         let class_hash_str = class_hash.0.to_hex_string();
         let compiled_class_hash_str = compiled_class_hash.0.to_hex_string();
-        contract_to_compiled_class_hash.entry(class_hash_str).or_default().push(compiled_class_hash_str);
+        contract_to_compiled_class_hash
+            .entry(class_hash_str)
+            .or_default()
+            .push(compiled_class_hash_str);
     }
-    let compiled_class_hash_nodes: Vec<FlameChartNode> = contract_to_compiled_class_hash.into_iter().map(|(class_hash, compiled_class_hashes)| {
-        FlameChartNode {
+    let compiled_class_hash_nodes: Vec<FlameChartNode> = contract_to_compiled_class_hash
+        .into_iter()
+        .map(|(class_hash, compiled_class_hashes)| FlameChartNode {
             call_id: 0,
             name: Some(class_hash),
             raw_value: compiled_class_hashes.len() as u64 * 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
             value: 0.0,
             node_type: Some(FlameChartNodeType::ClassHash),
-            children: compiled_class_hashes.into_iter().map(|compiled_class_hash| FlameChartNode {
-                call_id: 0,
-                name: Some(compiled_class_hash),
-                raw_value: 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
-                value: 0.0,
-                node_type: Some(FlameChartNodeType::ClassHash),
-                children: vec![],
-            }).collect(),
-        }
-    }).collect();
+            children: compiled_class_hashes
+                .into_iter()
+                .map(|compiled_class_hash| FlameChartNode {
+                    call_id: 0,
+                    name: Some(compiled_class_hash),
+                    raw_value: 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
+                    value: 0.0,
+                    node_type: Some(FlameChartNodeType::ClassHash),
+                    children: vec![],
+                })
+                .collect(),
+        })
+        .collect();
 
     // Allocation key cost: contract address -> storage key
-    let allocated_keys_wrapper = AllocatedKeysWrapper::from_state_changes(&post_exec_state_data.state_changes);
+    let allocated_keys_wrapper =
+        AllocatedKeysWrapper::from_state_changes(&post_exec_state_data.state_changes);
     let mut contract_to_allocated_keys: HashMap<String, Vec<String>> = HashMap::new();
     for (contract_addr, storage_key) in &allocated_keys_wrapper.storage_keys {
         let contract_str = contract_addr.0.to_hex_string();
         let storage_key_str = storage_key.0.to_hex_string();
-        contract_to_allocated_keys.entry(contract_str).or_default().push(storage_key_str);
+        contract_to_allocated_keys
+            .entry(contract_str)
+            .or_default()
+            .push(storage_key_str);
     }
-    let allocated_keys_nodes: Vec<FlameChartNode> = contract_to_allocated_keys.into_iter().map(|(contract_addr, storage_keys)| {
-        FlameChartNode {
+    let allocated_keys_nodes: Vec<FlameChartNode> = contract_to_allocated_keys
+        .into_iter()
+        .map(|(contract_addr, storage_keys)| FlameChartNode {
             call_id: 0,
             name: Some(contract_addr),
             raw_value: storage_keys.len() as u64 * DATA_GAS_PER_FIELD_ELEMENT as u64,
             value: 0.0,
             node_type: Some(FlameChartNodeType::ContractAddress),
-            children: storage_keys.into_iter().map(|storage_key| FlameChartNode {
-                call_id: 0,
-                name: Some(storage_key),
-                raw_value: DATA_GAS_PER_FIELD_ELEMENT as u64,
-                value: 0.0,
-                node_type: Some(FlameChartNodeType::StorageKey),
-                children: vec![],
-            }).collect(),
-        }
-    }).collect();
+            children: storage_keys
+                .into_iter()
+                .map(|storage_key| FlameChartNode {
+                    call_id: 0,
+                    name: Some(storage_key),
+                    raw_value: DATA_GAS_PER_FIELD_ELEMENT as u64,
+                    value: 0.0,
+                    node_type: Some(FlameChartNodeType::StorageKey),
+                    children: vec![],
+                })
+                .collect(),
+        })
+        .collect();
 
     let mut root = FlameChartNode {
         call_id: 0,
@@ -429,7 +462,9 @@ pub fn build_l1_data_flamegraph(
                     FlameChartNode {
                         call_id: 0,
                         name: Some("Compiled class hash updates".to_string()),
-                        raw_value: n_compiled_class_hash_updates * 2 * DATA_GAS_PER_FIELD_ELEMENT as u64,
+                        raw_value: n_compiled_class_hash_updates
+                            * 2
+                            * DATA_GAS_PER_FIELD_ELEMENT as u64,
                         value: 0.0,
                         node_type: Some(FlameChartNodeType::Category),
                         children: compiled_class_hash_nodes,

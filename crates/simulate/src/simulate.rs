@@ -54,9 +54,7 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::{
-    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock,
-};
+use starknet::core::types::{BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock};
 use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
@@ -76,7 +74,7 @@ use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::utils::extract_sierra_and_cairo_versions;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
-    to_chain_id, ETransactionHashType, EChainId, ENetwork,
+    to_chain_id, EChainId, ENetwork, ETransactionHashType,
 };
 
 pub async fn simulate(
@@ -424,10 +422,10 @@ pub async fn simulate_by_calldata(
         None => None,
     };
     let readable_chain_id = chain_id_to_readable_string(&args.chain_id);
-    
+
     // Store original block_number info before args is moved
     let latest_block = args.block_number.is_none();
-    
+
     // Resolve block number if it's None (Latest) - same logic as in simulate function
     let resolved_block_number = if let Some(bn) = args.block_number {
         bn.0
@@ -438,7 +436,7 @@ pub async fn simulate_by_calldata(
             .await
             .map_err(TransactionSimulationError::ProviderError)?
     };
-    
+
     let block_number = BlockId::Number(resolved_block_number);
 
     let sender_address = args.sender_address;

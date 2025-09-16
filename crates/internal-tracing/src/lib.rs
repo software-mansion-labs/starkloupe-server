@@ -86,7 +86,7 @@ pub struct ClassDebuggerData {
 }
 
 /// Contains the debugger data for a contract call
-    #[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ContractCallDebuggerData {
     pub execution_trace: Vec<DebuggerTraceEntry>,
 }

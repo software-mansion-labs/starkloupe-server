@@ -19,14 +19,14 @@ use simulate::{
     simulate::{simulate_by_calldata, simulate_transaction_by_hash},
     SimulationArgs, SimulationRawArgs,
 };
+use starknet::providers::Provider;
+use starknet_api::block::BlockNumber;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::{error, info};
-use walnut_shared::{extract_chain_id, get_rpc_urls, ENetwork, create_rpc_client_from_url};
-use starknet_api::block::BlockNumber;
-use starknet::providers::Provider;
+use walnut_shared::{create_rpc_client_from_url, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SimulationPayload {
@@ -91,11 +91,15 @@ pub async fn simulate_transaction(
 
                     // Resolve block number if it's None (Latest)
                     let resolved_block_number = if simulation_args.block_number.is_none() {
-                        let provider_client = create_rpc_client_from_url(simulation_args.rpc_url.clone());
+                        let provider_client =
+                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
                         match provider_client.block_number().await {
                             Ok(block_number) => Some(BlockNumber(block_number)),
                             Err(e) => {
-                                return Err((StatusCode::BAD_REQUEST, format!("Failed to get latest block number: {}", e)));
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to get latest block number: {}", e),
+                                ));
                             }
                         }
                     } else {
@@ -103,7 +107,10 @@ pub async fn simulate_transaction(
                     };
 
                     // Check cache first with resolved block number
-                    let cache_key = CacheKey::from_simulation_args_with_block_number(&simulation_args, resolved_block_number.as_ref());
+                    let cache_key = CacheKey::from_simulation_args_with_block_number(
+                        &simulation_args,
+                        resolved_block_number.as_ref(),
+                    );
                     if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
                         info!("Cache hit! Returning cached result");
                         return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
@@ -148,6 +155,7 @@ pub async fn simulate_transaction(
                             "Missing required field: chain_id".to_string(),
                         )
                     })?;
+
                     let raw_calldata = match calldata_encoder::encode_decoded_calldata(
                         &args.decoded_calldata,
                         chain_id,
@@ -185,8 +193,29 @@ pub async fn simulate_transaction(
                             }
                         };
 
+                    // Resolve block number if it's None (Latest)
+                    let resolved_block_number = if simulation_args.block_number.is_none() {
+                        let provider_client =
+                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
+                        match provider_client.block_number().await {
+                            Ok(block_number) => Some(BlockNumber(block_number)),
+                            Err(e) => {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to get latest block number: {}", e),
+                                ));
+                            }
+                        }
+                    } else {
+                        simulation_args.block_number.clone()
+                    };
+
                     // Check cache first
-                    let cache_key = CacheKey::from_simulation_args(&simulation_args);
+                    let cache_key = CacheKey::from_simulation_args_with_block_number(
+                        &simulation_args,
+                        resolved_block_number.as_ref(),
+                    );
+
                     if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
                         info!("Cache hit! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));

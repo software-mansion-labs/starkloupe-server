@@ -179,15 +179,20 @@ pub fn execute_transaction_flows_with_executor<'a>(
         let ep_selector = args.entry_point_selector;
         let storage_address = args.sender_address;
         let tx_type = args.transaction_type;
-        let remaining_execution_gas = remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
+        let remaining_execution_gas =
+            remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
 
         let mut execute_call = CallEntryPoint {
-            entry_point_type: if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
+            entry_point_type: if tx_type == Some(TransactionType::L1Handler)
+                && ep_selector.is_some()
+            {
                 EntryPointType::L1Handler
             } else {
                 EntryPointType::External
             },
-            entry_point_selector: if tx_type == Some(TransactionType::L1Handler) && ep_selector.is_some() {
+            entry_point_selector: if tx_type == Some(TransactionType::L1Handler)
+                && ep_selector.is_some()
+            {
                 ep_selector.unwrap()
             } else {
                 get_entrypoint_selector()
@@ -251,7 +256,8 @@ pub fn handle_post_exec_and_collect_gas_vectors(
 
     let mut tx_receipt = create_transaction_receipt(&transaction_context, &tx_resources);
 
-    let post_exec_report = PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
+    let post_exec_report =
+        PostExecutionReport::new(cached_fork_state, &transaction_context, &tx_receipt, true)?;
 
     let is_revertable =
         is_transaction_revertible(args.transaction_type.unwrap(), &args.transaction_version);

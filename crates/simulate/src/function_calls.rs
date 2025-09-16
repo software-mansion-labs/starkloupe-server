@@ -14,13 +14,13 @@ use internal_tracing::utils::compile_sierra_contract_class;
 use internal_tracing::ClassDataProvider;
 use starknet::core::types::Felt;
 use std::collections::HashMap;
-use tracing::{warn, info,};
+use tracing::{info, warn};
 use walnut_shared::utils::convert_contract_class;
 use walnut_shared::utils::is_version_gte;
 
 // Cache for compiled Sierra classes to avoid recompilation
 thread_local! {
-    static COMPILED_CLASS_CACHE: std::cell::RefCell<HashMap<String, (CairoProgram, VersionId)>> = 
+    static COMPILED_CLASS_CACHE: std::cell::RefCell<HashMap<String, (CairoProgram, VersionId)>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -47,20 +47,19 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     Option<EventCallsMap>,
     Option<HashMap<u32, HashMap<String, (Option<String>, String)>>>,
 )> {
-
-    
     let mut function_calls_map = FunctionCallsMap::new();
     let mut event_calls_map = EventCallsMap::default();
     let mut storage_changes_map = HashMap::new();
     let mut prev_nested_level = 0;
-    
+
     // Pre-filter calls that have VM data to avoid unnecessary iterations
-    let mut calls_with_vm_data: Vec<_> = contract_calls_map.0.values_mut()
+    let mut calls_with_vm_data: Vec<_> = contract_calls_map
+        .0
+        .values_mut()
         .filter(|call| call.vm_memory.is_some() && call.vm_trace.is_some())
         .collect();
 
-    
-    for (_idx, call) in calls_with_vm_data.iter_mut().enumerate() {        
+    for (_idx, call) in calls_with_vm_data.iter_mut().enumerate() {
         // Safety: We already filtered for calls with VM data
         let vm_memory = call.vm_memory.as_ref().unwrap();
         let vm_trace = call.vm_trace.as_ref().unwrap();
@@ -143,7 +142,11 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     COMPILED_CLASS_CACHE.with(|cache| {
         let mut cache_ref = cache.borrow_mut();
         if cache_ref.len() > 50 {
-            let keys_to_remove: Vec<_> = cache_ref.keys().take(cache_ref.len() - 50).cloned().collect();
+            let keys_to_remove: Vec<_> = cache_ref
+                .keys()
+                .take(cache_ref.len() - 50)
+                .cloned()
+                .collect();
             for key in keys_to_remove {
                 cache_ref.remove(&key);
             }
@@ -174,22 +177,23 @@ fn resolve_class_data<'a, D: ClassDataProvider>(
     if let Some(class_hash) = &call.class_hash {
         if let Some(class_data) = classes_data.get(class_hash) {
             // Check compiled class cache first
-            let cache_result: Option<(CairoProgram, VersionId)> = COMPILED_CLASS_CACHE.with(|cache| {
-                cache.borrow().get(class_hash).cloned()
-            });
-            
+            let cache_result: Option<(CairoProgram, VersionId)> =
+                COMPILED_CLASS_CACHE.with(|cache| cache.borrow().get(class_hash).cloned());
+
             if let Some((compiled, version)) = cache_result {
                 return Ok((Some(compiled), Some(version), Some(class_data)));
             }
-            
+
             match compile_sierra_contract_class(class_data.get_contract_class(), usize::MAX) {
-                Ok((compiled, _, version)) => { 
+                Ok((compiled, _, version)) => {
                     // Cache the compiled result
                     COMPILED_CLASS_CACHE.with(|cache| {
-                        cache.borrow_mut().insert(class_hash.clone(), (compiled.clone(), version.clone()));
+                        cache
+                            .borrow_mut()
+                            .insert(class_hash.clone(), (compiled.clone(), version.clone()));
                     });
-                    
-                    return Ok((Some(compiled), Some(version), Some(class_data)))
+
+                    return Ok((Some(compiled), Some(version), Some(class_data)));
                 }
                 Err(e) => {
                     warn!("Compilation failed: {:?}", e);
