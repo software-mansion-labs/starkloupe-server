@@ -323,4 +323,3 @@ pub async fn check_periodically_updates(
 
     Ok(())
 }
-

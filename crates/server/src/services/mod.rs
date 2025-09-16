@@ -1,4 +1,4 @@
-pub mod simulation_cache;
 pub mod search;
+pub mod simulation_cache;
 
-pub use simulation_cache::{SimulationCache, CacheKey, CacheStats};
+pub use simulation_cache::{CacheKey, CacheStats, SimulationCache};

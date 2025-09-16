@@ -7,9 +7,10 @@ pub mod type_decoder;
 pub mod utils;
 use num_bigint::{BigInt, BigUint};
 use num_traits::One;
-use serde::ser::{Serialize, SerializeMap, SerializeStruct, Serializer};
+use serde::ser::{SerializeMap, SerializeStruct, Serializer};
+use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 //A negative value -x is serialized as P - x, where P is:
 //P = 2^251 + 17 * 2^192 + 1
@@ -37,7 +38,7 @@ pub enum DecodedValueType {
     BigInt(BigInt),
     Bool(bool),
     Array(Vec<DecodedValueType>),
-    Struct(HashMap<usize, DecodedValue>),
+    Struct(BTreeMap<usize, DecodedValue>),
     Enum(String, Box<DecodedValue>),
     #[default]
     None,
@@ -160,7 +161,7 @@ impl Serialize for DecodedValueType {
                 }
                 map.end()
             }
-            DecodedValueType::Enum(variant_name, value) => {
+            DecodedValueType::Enum(_variant_name, value) => {
                 // For compact enum format, serialize the inner value directly
                 // The variant name will be combined with type_name as "EnumType::Variant"
                 value.serialize(serializer)
@@ -180,6 +181,187 @@ impl Serialize for DecodedValue {
         state.serialize_field("type_name", &self.type_name)?;
         state.serialize_field("value", &self.value)?;
         state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for DecodedValueType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::from_json_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl DecodedValueType {
+    /// Parse JSON value into DecodedValueType with comprehensive numeric type support
+    fn from_json_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
+        match value {
+            serde_json::Value::String(s) => Self::parse_string_value(s),
+            serde_json::Value::Number(n) => Self::parse_number_value(n),
+            serde_json::Value::Bool(b) => Ok(DecodedValueType::Bool(b)),
+            serde_json::Value::Array(arr) => {
+                let decoded: Result<Vec<_>, _> =
+                    arr.into_iter().map(Self::from_json_value).collect();
+                Ok(DecodedValueType::Array(decoded?))
+            }
+            serde_json::Value::Object(obj) => Self::parse_object_value(obj),
+            serde_json::Value::Null => Ok(DecodedValueType::None),
+        }
+    }
+
+    /// Parse string value with numeric type detection
+    fn parse_string_value(s: String) -> Result<Self, serde_json::Error> {
+        // If it starts with '-', it's definitely a signed integer
+        if s.starts_with('-') {
+            if let Ok(parsed) = Self::try_parse_signed_integer(&s) {
+                return Ok(DecodedValueType::BigInt(parsed));
+            }
+        } else {
+            // For positive numbers, try unsigned first, then signed
+            if let Ok(parsed) = Self::try_parse_unsigned_integer(&s) {
+                return Ok(DecodedValueType::BigUint(parsed));
+            }
+            if let Ok(parsed) = Self::try_parse_signed_integer(&s) {
+                return Ok(DecodedValueType::BigInt(parsed));
+            }
+        }
+
+        if let Ok(parsed) = s.parse::<bool>() {
+            return Ok(DecodedValueType::Bool(parsed));
+        }
+
+        if s.starts_with("0x") {
+            if let Ok(felt) = Felt::from_hex(&s[2..]) {
+                return Ok(DecodedValueType::Single(felt));
+            }
+        }
+
+        Ok(DecodedValueType::String(s))
+    }
+
+    /// Parse JSON number with comprehensive type support
+    fn parse_number_value(n: serde_json::Number) -> Result<Self, serde_json::Error> {
+        // Try parsing as different numeric types in order of preference
+        if let Some(parsed) = n.as_u64() {
+            Ok(DecodedValueType::BigUint(BigUint::from(parsed)))
+        } else if let Some(parsed) = n.as_i64() {
+            Ok(DecodedValueType::BigInt(BigInt::from(parsed)))
+        } else if let Some(parsed) = n.as_f64() {
+            // For floating point numbers, convert to string to preserve precision
+            Ok(DecodedValueType::String(parsed.to_string()))
+        } else {
+            // For very large numbers that don't fit in u64/i64, try parsing as string
+            let num_str = n.to_string();
+            if let Ok(parsed) = Self::try_parse_unsigned_integer(&num_str) {
+                Ok(DecodedValueType::BigUint(parsed))
+            } else if let Ok(parsed) = Self::try_parse_signed_integer(&num_str) {
+                Ok(DecodedValueType::BigInt(parsed))
+            } else {
+                Ok(DecodedValueType::String(num_str))
+            }
+        }
+    }
+
+    /// Parse object value (structs)
+    fn parse_object_value(
+        obj: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self, serde_json::Error> {
+        let mut fields = BTreeMap::new();
+
+        for (k, v) in obj {
+            let key: usize = k.parse().map_err(serde::de::Error::custom)?;
+
+            // Try to deserialize as DecodedValue first
+            if let Ok(decoded_value) = serde_json::from_value::<DecodedValue>(v.clone()) {
+                fields.insert(key, decoded_value);
+            } else {
+                // Fallback to basic deserialization
+                let value = Self::from_json_value(v)?;
+                fields.insert(
+                    key,
+                    DecodedValue {
+                        name: None,
+                        type_name: "unknown".to_string(),
+                        value,
+                    },
+                );
+            }
+        }
+
+        Ok(DecodedValueType::Struct(fields))
+    }
+
+    /// Try to parse string as unsigned integer (u8, u16, u32, u64, u128, usize)
+    fn try_parse_unsigned_integer(s: &str) -> Result<BigUint, serde_json::Error> {
+        // Try parsing as different unsigned integer types
+        if let Ok(parsed) = s.parse::<u8>() {
+            return Ok(BigUint::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<u16>() {
+            return Ok(BigUint::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<u32>() {
+            return Ok(BigUint::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<u64>() {
+            return Ok(BigUint::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<u128>() {
+            return Ok(BigUint::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<usize>() {
+            return Ok(BigUint::from(parsed));
+        }
+
+        // Try parsing as BigUint directly for very large numbers
+        s.parse::<BigUint>()
+            .map_err(|e| serde::de::Error::custom(e))
+    }
+
+    /// Try to parse string as signed integer (i8, i16, i32, i64, i128)
+    fn try_parse_signed_integer(s: &str) -> Result<BigInt, serde_json::Error> {
+        // Try parsing as different signed integer types
+        if let Ok(parsed) = s.parse::<i8>() {
+            return Ok(BigInt::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<i16>() {
+            return Ok(BigInt::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<i32>() {
+            return Ok(BigInt::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<i64>() {
+            return Ok(BigInt::from(parsed));
+        }
+        if let Ok(parsed) = s.parse::<i128>() {
+            return Ok(BigInt::from(parsed));
+        }
+
+        // Try parsing as BigInt directly for very large numbers
+        s.parse::<BigInt>().map_err(|e| serde::de::Error::custom(e))
+    }
+}
+
+impl<'de> Deserialize<'de> for DecodedValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct DecodedValueHelper {
+            name: Option<String>,
+            type_name: String,
+            value: DecodedValueType,
+        }
+
+        let helper = DecodedValueHelper::deserialize(deserializer)?;
+        Ok(DecodedValue {
+            name: helper.name,
+            type_name: helper.type_name,
+            value: helper.value,
+        })
     }
 }
 
@@ -230,7 +412,7 @@ mod tests {
     #[test]
     fn test_struct_serialization() {
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -267,7 +449,7 @@ mod tests {
         };
 
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(0, inner_value);
             map
         });
@@ -341,7 +523,7 @@ mod tests {
     fn test_complex_nested_structure() {
         // Test a complex nested structure similar to the user's example
         let call_struct = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -395,7 +577,7 @@ mod integration_tests {
             name: None,
             type_name: "Array<Call>".to_string(),
             value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -489,7 +671,7 @@ mod integration_tests {
     fn test_struct_serialization_with_multiple_fields() {
         // Test case 5: Struct with multiple fields (should wrap)
         let struct_value = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(
                 0,
                 DecodedValue {
@@ -524,7 +706,7 @@ mod integration_tests {
             name: None,
             type_name: "Array<Call>".to_string(),
             value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -538,7 +720,7 @@ mod integration_tests {
         };
 
         let option_struct = DecodedValueType::Struct({
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             map.insert(0, inner_value);
             map
         });
@@ -566,7 +748,7 @@ mod integration_tests {
             name: Some("layout".to_string()),
             type_name: "Layout".to_string(),
             value: DecodedValueType::Struct({
-                let mut map = HashMap::new();
+                let mut map = BTreeMap::new();
                 map.insert(
                     0,
                     DecodedValue {
@@ -584,7 +766,7 @@ mod integration_tests {
                         name: Some("layout".to_string()),
                         type_name: "Layout".to_string(),
                         value: DecodedValueType::Struct({
-                            let mut inner_map = HashMap::new();
+                            let mut inner_map = BTreeMap::new();
                             inner_map.insert(
                                 0,
                                 DecodedValue {
@@ -611,7 +793,7 @@ mod integration_tests {
                 name: None,
                 type_name: "Span<FieldLayout>".to_string(),
                 value: DecodedValueType::Array(vec![DecodedValueType::Struct({
-                    let mut map = HashMap::new();
+                    let mut map = BTreeMap::new();
                     map.insert(0, field_layout_1);
                     map.insert(1, field_layout_2);
                     map
@@ -653,6 +835,230 @@ mod integration_tests {
         assert!(!json.contains("\"Fixed\":"));
         // Should contain the inner data directly
         assert!(json.contains("32"));
+    }
+
+    #[test]
+    fn test_comprehensive_numeric_type_parsing() {
+        // Test all unsigned integer types (including positive signed numbers)
+        let unsigned_tests = vec![
+            ("0", "u8"),
+            ("255", "u8"),
+            ("127", "i8_as_u8"), // positive i8 values are parsed as unsigned
+            ("256", "u16"),
+            ("65535", "u16"),
+            ("32767", "i16_as_u16"), // positive i16 values are parsed as unsigned
+            ("65536", "u32"),
+            ("4294967295", "u32"),
+            ("2147483647", "i32_as_u32"), // positive i32 values are parsed as unsigned
+            ("4294967296", "u64"),
+            ("18446744073709551615", "u64"),
+            ("9223372036854775807", "i64_as_u64"), // positive i64 values are parsed as unsigned
+            ("18446744073709551616", "u128"),
+            ("340282366920938463463374607431768211455", "u128"),
+            ("170141183460469231731687303715884105727", "i128_as_u128"), // positive i128 values are parsed as unsigned
+        ];
+
+        for (value_str, expected_type) in unsigned_tests {
+            let json = format!("\"{}\"", value_str);
+            let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+            match decoded {
+                DecodedValueType::BigUint(big_uint) => {
+                    let expected_value = value_str.parse::<BigUint>().unwrap();
+                    assert_eq!(
+                        big_uint, expected_value,
+                        "Failed for {} as {}",
+                        value_str, expected_type
+                    );
+                }
+                _ => panic!("Expected BigUint for {}, got {:?}", value_str, decoded),
+            }
+        }
+
+        // Test all signed integer types (only negative numbers)
+        let signed_tests = vec![
+            ("-128", "i8"),
+            ("-32768", "i16"),
+            ("-2147483648", "i32"),
+            ("-9223372036854775808", "i64"),
+            ("-170141183460469231731687303715884105728", "i128"),
+        ];
+
+        for (value_str, expected_type) in signed_tests {
+            let json = format!("\"{}\"", value_str);
+            let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+            match decoded {
+                DecodedValueType::BigInt(big_int) => {
+                    let expected_value = value_str.parse::<BigInt>().unwrap();
+                    assert_eq!(
+                        big_int, expected_value,
+                        "Failed for {} as {}",
+                        value_str, expected_type
+                    );
+                }
+                _ => panic!("Expected BigInt for {}, got {:?}", value_str, decoded),
+            }
+        }
+
+        // Test boolean parsing
+        let bool_tests = vec![("true", true), ("false", false)];
+        for (value_str, expected) in bool_tests {
+            let json = format!("\"{}\"", value_str);
+            let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+            match decoded {
+                DecodedValueType::Bool(b) => assert_eq!(b, expected, "Failed for {}", value_str),
+                _ => panic!("Expected Bool for {}, got {:?}", value_str, decoded),
+            }
+        }
+
+        // Test hex parsing
+        let hex_tests = vec!["0x0", "0x1", "0x123abc", "0xffffffffffffffff"];
+        for hex_str in hex_tests {
+            let json = format!("\"{}\"", hex_str);
+            let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+            match decoded {
+                DecodedValueType::Single(felt) => {
+                    let expected_felt = Felt::from_hex(&hex_str[2..]).unwrap();
+                    assert_eq!(felt, expected_felt, "Failed for {}", hex_str);
+                }
+                _ => panic!("Expected Single(Felt) for {}, got {:?}", hex_str, decoded),
+            }
+        }
+
+        // Test string fallback
+        let string_tests = vec!["hello", "world", "not_a_number", "123abc"];
+        for str_val in string_tests {
+            let json = format!("\"{}\"", str_val);
+            let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+            match decoded {
+                DecodedValueType::String(s) => assert_eq!(s, str_val, "Failed for {}", str_val),
+                _ => panic!("Expected String for {}, got {:?}", str_val, decoded),
+            }
+        }
+    }
+
+    #[test]
+    fn test_json_number_parsing() {
+        // Test JSON number parsing for unsigned numbers
+        let unsigned_tests = vec![
+            ("0", 0u64),
+            ("42", 42u64),
+            ("18446744073709551615", 18446744073709551615u64),
+        ];
+
+        for (json_str, expected) in unsigned_tests {
+            let decoded: DecodedValueType = serde_json::from_str(json_str).unwrap();
+
+            match decoded {
+                DecodedValueType::BigUint(big_uint) => {
+                    assert_eq!(big_uint, BigUint::from(expected), "Failed for {}", json_str);
+                }
+                _ => panic!("Expected BigUint for {}", json_str),
+            }
+        }
+
+        // Test JSON number parsing for signed numbers
+        let signed_tests = vec![
+            ("-42", -42i64),
+            ("-9223372036854775808", -9223372036854775808i64),
+        ];
+
+        for (json_str, expected) in signed_tests {
+            let decoded: DecodedValueType = serde_json::from_str(json_str).unwrap();
+
+            match decoded {
+                DecodedValueType::BigInt(big_int) => {
+                    assert_eq!(big_int, BigInt::from(expected), "Failed for {}", json_str);
+                }
+                _ => panic!("Expected BigInt for {}", json_str),
+            }
+        }
+    }
+
+    #[test]
+    fn test_array_deserialization_with_mixed_types() {
+        let json = r#"["42", "-123", "0xabc", "true", "hello"]"#;
+        let decoded: DecodedValueType = serde_json::from_str(json).unwrap();
+
+        match decoded {
+            DecodedValueType::Array(arr) => {
+                assert_eq!(arr.len(), 5);
+
+                // "42" -> BigUint
+                match &arr[0] {
+                    DecodedValueType::BigUint(big_uint) => {
+                        assert_eq!(*big_uint, BigUint::from(42u64));
+                    }
+                    _ => panic!("Expected BigUint for first element"),
+                }
+
+                // "-123" -> BigInt
+                match &arr[1] {
+                    DecodedValueType::BigInt(big_int) => {
+                        assert_eq!(*big_int, BigInt::from(-123i64));
+                    }
+                    _ => panic!("Expected BigInt for second element"),
+                }
+
+                // "0xabc" -> Single(Felt)
+                match &arr[2] {
+                    DecodedValueType::Single(felt) => {
+                        let expected = Felt::from_hex("abc").unwrap();
+                        assert_eq!(*felt, expected);
+                    }
+                    _ => panic!("Expected Single(Felt) for third element"),
+                }
+
+                // "true" -> Bool
+                match &arr[3] {
+                    DecodedValueType::Bool(b) => {
+                        assert_eq!(*b, true);
+                    }
+                    _ => panic!("Expected Bool for fourth element"),
+                }
+
+                // "hello" -> String
+                match &arr[4] {
+                    DecodedValueType::String(s) => {
+                        assert_eq!(s, "hello");
+                    }
+                    _ => panic!("Expected String for fifth element"),
+                }
+            }
+            _ => panic!("Expected Array"),
+        }
+    }
+
+    #[test]
+    fn test_very_large_number_parsing() {
+        // Test very large numbers that exceed standard integer types
+        let very_large_unsigned = "340282366920938463463374607431768211456"; // u128::MAX + 1
+        let json = format!("\"{}\"", very_large_unsigned);
+        let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+        match decoded {
+            DecodedValueType::BigUint(big_uint) => {
+                let expected = very_large_unsigned.parse::<BigUint>().unwrap();
+                assert_eq!(big_uint, expected);
+            }
+            _ => panic!("Expected BigUint for very large number"),
+        }
+
+        let very_large_signed = "-170141183460469231731687303715884105729"; // i128::MIN - 1
+        let json = format!("\"{}\"", very_large_signed);
+        let decoded: DecodedValueType = serde_json::from_str(&json).unwrap();
+
+        match decoded {
+            DecodedValueType::BigInt(big_int) => {
+                let expected = very_large_signed.parse::<BigInt>().unwrap();
+                assert_eq!(big_int, expected);
+            }
+            _ => panic!("Expected BigInt for very large negative number"),
+        }
     }
 }
 

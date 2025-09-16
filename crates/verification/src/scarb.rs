@@ -92,7 +92,10 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        error!("Build failed. Status: {:?}, Stdout: {:?}", output.status, stdout);
+        error!(
+            "Build failed. Status: {:?}, Stdout: {:?}",
+            output.status, stdout
+        );
         return Err(anyhow::anyhow!("The verification process was terminated due to resource limits. Please contact support for assistance."));
     }
 

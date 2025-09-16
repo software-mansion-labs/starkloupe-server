@@ -230,4 +230,3 @@ async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_
         Err(err) => error!("Error in {} update check: {:?}", tool_name, err),
     }
 }
-

@@ -1,7 +1,9 @@
 extern crate dotenv;
+mod abi_fetcher;
 mod app_state;
 mod appsmith_api;
 mod binaries_manager_service;
+mod calldata_encoder;
 mod handlers;
 mod services;
 mod telegram_bot_service;
@@ -13,6 +15,7 @@ use axum::{routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
+    calldata_decoder::decode_calldata_handler,
     classes::get_class_handler,
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
     debugger::debug_transaction,
@@ -105,13 +108,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| "1440".to_string()) // Production: 24 hours (24 * 60 = 1440 minutes)
                 .parse::<u64>()
                 .unwrap_or(1440);
-            
+
             let simulation_cache = SimulationCache::new(cache_capacity, cache_ttl_minutes);
-            
-            let shared_state = Arc::new(AppState { 
-                db_pool, 
-                s3_client, 
-                simulation_cache 
+
+            let shared_state = Arc::new(AppState {
+                db_pool,
+                s3_client,
+                simulation_cache,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
@@ -142,6 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(get_verification_status_handler),
                 )
                 .route("/v1/debug-transaction", post(debug_transaction))
+                .route("/v1/decode-calldata", post(decode_calldata_handler))
                 // .route("/v1/cache/stats", get(cache_stats_handler)) // Commented out for now
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))

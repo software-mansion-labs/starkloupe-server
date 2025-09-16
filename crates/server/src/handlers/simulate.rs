@@ -1,4 +1,5 @@
 use crate::app_state::AppState;
+use crate::calldata_encoder;
 use crate::services::CacheKey;
 use crate::telegram_bot_service::{
     send_telegram_notification_calldata, send_telegram_notification_custom_rpc,
@@ -12,22 +13,46 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use data_decoder::DecodedValue;
 use serde::{Deserialize, Serialize};
 use simulate::{
     simulate::{simulate_by_calldata, simulate_transaction_by_hash},
     SimulationArgs, SimulationRawArgs,
 };
+use starknet::providers::Provider;
+use starknet_api::block::BlockNumber;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::{error, info};
-use walnut_shared::{extract_chain_id, get_rpc_urls, ENetwork};
+use walnut_shared::{create_rpc_client_from_url, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SimulationPayload {
     WithCalldata(SimulationRawArgs),
+    WithDecodedCalldata(SimulationDecodedArgs),
     WithTxHash(SimulationTxHashArgs),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SimulationDecodedArgs {
+    pub chain_id: Option<String>,
+    pub rpc_url: Option<String>,
+    pub block_number: Option<u64>,
+    pub nonce: Option<u64>,
+    pub sender_address: String,
+    pub decoded_calldata: Vec<ContractCall>,
+    pub transaction_version: usize,
+    pub transaction_signature: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ContractCall {
+    pub contract_address: String,
+    pub function_selector: String,
+    pub function_name: Option<String>,
+    pub parameters: Vec<DecodedValue>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,8 +89,28 @@ pub async fn simulate_transaction(
                             }
                         };
 
-                    // Check cache first
-                    let cache_key = CacheKey::from_simulation_args(&simulation_args);
+                    // Resolve block number if it's None (Latest)
+                    let resolved_block_number = if simulation_args.block_number.is_none() {
+                        let provider_client =
+                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
+                        match provider_client.block_number().await {
+                            Ok(block_number) => Some(BlockNumber(block_number)),
+                            Err(e) => {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to get latest block number: {}", e),
+                                ));
+                            }
+                        }
+                    } else {
+                        simulation_args.block_number.clone()
+                    };
+
+                    // Check cache first with resolved block number
+                    let cache_key = CacheKey::from_simulation_args_with_block_number(
+                        &simulation_args,
+                        resolved_block_number.as_ref(),
+                    );
                     if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
                         info!("Cache hit! Returning cached result");
                         return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
@@ -87,11 +132,119 @@ pub async fn simulate_transaction(
                         Ok(sim_info) => {
                             // Wrap in Arc and cache the result
                             let sim_info_arc = Arc::new(sim_info);
-                            state.simulation_cache.set(&cache_key, sim_info_arc.clone()).await;
+                            state
+                                .simulation_cache
+                                .set(&cache_key, sim_info_arc.clone())
+                                .await;
                             info!("Cached simulation result");
-                            
+
                             Ok((StatusCode::OK, sim_info_arc))
-                        },
+                        }
+                        Err(e) => {
+                            info!("Simulation failed after: {}", e);
+                            Err((StatusCode::BAD_REQUEST, e.to_string()))
+                        }
+                    }
+                }
+
+                SimulationPayload::WithDecodedCalldata(args) => {
+                    // Convert decoded calldata to raw calldata with ABI information
+                    let chain_id = args.chain_id.as_deref().ok_or_else(|| {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            "Missing required field: chain_id".to_string(),
+                        )
+                    })?;
+
+                    let raw_calldata = match calldata_encoder::encode_decoded_calldata(
+                        &args.decoded_calldata,
+                        chain_id,
+                    )
+                    .await
+                    {
+                        Ok(calldata) => calldata,
+                        Err(e) => {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                format!("Failed to encode decoded calldata: {}", e),
+                            ));
+                        }
+                    };
+
+                    let raw_args = SimulationRawArgs {
+                        chain_id: args.chain_id,
+                        rpc_url: args.rpc_url,
+                        block_number: args.block_number,
+                        nonce: args.nonce,
+                        sender_address: args.sender_address,
+                        calldata: raw_calldata,
+                        transaction_version: args.transaction_version,
+                        transaction_signature: args
+                            .transaction_signature
+                            .map(|sig| sig.into_iter().filter_map(|s| s.parse().ok()).collect()),
+                    };
+
+                    // Parse calldata args
+                    let simulation_args: SimulationArgs =
+                        match SimulationArgs::try_from_raw_args(raw_args).await {
+                            Ok(args) => args,
+                            Err(e) => {
+                                return Err((StatusCode::BAD_REQUEST, e.to_string()));
+                            }
+                        };
+
+                    // Resolve block number if it's None (Latest)
+                    let resolved_block_number = if simulation_args.block_number.is_none() {
+                        let provider_client =
+                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
+                        match provider_client.block_number().await {
+                            Ok(block_number) => Some(BlockNumber(block_number)),
+                            Err(e) => {
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to get latest block number: {}", e),
+                                ));
+                            }
+                        }
+                    } else {
+                        simulation_args.block_number.clone()
+                    };
+
+                    // Check cache first
+                    let cache_key = CacheKey::from_simulation_args_with_block_number(
+                        &simulation_args,
+                        resolved_block_number.as_ref(),
+                    );
+
+                    if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
+                        info!("Cache hit! Returning cached result");
+                        return Ok((StatusCode::OK, cached_result));
+                    }
+                    info!("Cache miss, proceeding with simulation");
+
+                    // Telegram notification
+                    if !skip_tracking.as_deref().unwrap_or("").eq("true") {
+                        if let Err(err) =
+                            send_telegram_notification_calldata(&simulation_args).await
+                        {
+                            error!("Failed to send Telegram notification. Error: {:?}", err);
+                        }
+                    }
+
+                    // Run simulation
+                    let result = simulate_by_calldata(&db_pool, &s3_client, simulation_args).await;
+                    match result {
+                        Ok(sim_info) => {
+                            // Wrap in Arc and cache the result
+                            let sim_info_arc = Arc::new(sim_info);
+                            state
+                                .simulation_cache
+                                .set(&cache_key, sim_info_arc.clone())
+                                .await;
+                            info!("Cached simulation result");
+
+                            Ok((StatusCode::OK, sim_info_arc))
+                        }
                         Err(e) => {
                             info!("Simulation failed after: {}", e);
                             Err((StatusCode::BAD_REQUEST, e.to_string()))
@@ -102,7 +255,7 @@ pub async fn simulate_transaction(
                 SimulationPayload::WithTxHash(args) => {
                     // Check cache first using tx hash
                     let cache_key = CacheKey::from_tx_hash(&args.tx_hash, "starknet");
-                    
+
                     if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
                         info!("Cache hit for tx hash! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));
@@ -139,11 +292,14 @@ pub async fn simulate_transaction(
                         Ok(sim_info) => {
                             // Wrap in Arc and cache the result
                             let sim_info_arc = Arc::new(sim_info);
-                            state.simulation_cache.set(&cache_key, sim_info_arc.clone()).await;
+                            state
+                                .simulation_cache
+                                .set(&cache_key, sim_info_arc.clone())
+                                .await;
                             info!("Cached tx hash simulation result");
-                            
+
                             Ok((StatusCode::OK, sim_info_arc))
-                        },
+                        }
                         Err(e) => {
                             info!("Tx hash simulation failed after: {}", e);
                             Err((StatusCode::BAD_REQUEST, e.to_string()))
@@ -153,7 +309,7 @@ pub async fn simulate_transaction(
             }
         })
     });
-    
+
     match timeout(Duration::from_secs(900), simulation_task).await {
         Ok(Ok(Ok((status, sim_info)))) => (status, Json(sim_info)).into_response(),
         Ok(Ok(Err((status, message)))) => (status, Json(message)).into_response(),
@@ -215,13 +371,13 @@ pub async fn simulate_transaction_by_hash_handler(
         tokio::runtime::Handle::current().block_on(async move {
             // Check cache first
             let cache_key = CacheKey::from_tx_hash(&tx_hash, &chain_id_clone);
-            
+
             if let Some(cached_result) = cache.get(&cache_key).await {
                 info!("Cache hit for tx hash handler! Returning cached result");
                 return Ok(cached_result);
             }
             info!("Cache miss for tx hash handler, proceeding with simulation");
-            
+
             let result = simulate_transaction_by_hash(
                 &db_pool,
                 &s3_client,
@@ -232,16 +388,16 @@ pub async fn simulate_transaction_by_hash_handler(
                 &network,
             )
             .await;
-            
+
             match result {
                 Ok(sim_info) => {
                     // Wrap in Arc and cache the result
                     let sim_info_arc = Arc::new(sim_info);
                     cache.set(&cache_key, sim_info_arc.clone()).await;
                     info!("Cached simulation by hash result");
-                    
+
                     Ok(sim_info_arc)
-                },
+                }
                 Err(e) => {
                     info!("Simulation by hash failed after: {}", e);
                     Err(e)

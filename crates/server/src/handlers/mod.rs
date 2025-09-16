@@ -1,3 +1,4 @@
+pub(crate) mod calldata_decoder;
 pub(crate) mod classes;
 pub(crate) mod contracts;
 pub(crate) mod debugger;

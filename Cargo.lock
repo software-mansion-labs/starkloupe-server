@@ -7517,6 +7517,7 @@ dependencies = [
  "futures",
  "jsonwebtoken 9.2.0",
  "moka",
+ "num-traits",
  "reqwest 0.11.27",
  "scarb-api",
  "sentry 0.34.0",
