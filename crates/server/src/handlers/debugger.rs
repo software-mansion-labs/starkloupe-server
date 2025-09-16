@@ -14,6 +14,9 @@ use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::{error, info};
+use walnut_shared::create_rpc_client_from_url;
+use starknet_api::block::BlockNumber;
+use starknet::providers::Provider;
 
 #[debug_handler]
 pub async fn debug_transaction(
@@ -37,8 +40,21 @@ pub async fn debug_transaction(
                 }
             };
 
-            // Check debug cache first
-            let cache_key = CacheKey::from_debug_args(&debug_args);
+            // Resolve block number if it's None (Latest)
+            let resolved_block_number = if debug_args.block_number.is_none() {
+                let provider_client = create_rpc_client_from_url(debug_args.rpc_url.clone());
+                match provider_client.block_number().await {
+                    Ok(block_number) => Some(BlockNumber(block_number)),
+                    Err(e) => {
+                        return Err((StatusCode::BAD_REQUEST, format!("Failed to get latest block number: {}", e)));
+                    }
+                }
+            } else {
+                debug_args.block_number.clone()
+            };
+
+            // Check debug cache first with resolved block number
+            let cache_key = CacheKey::from_debug_args_with_block_number(&debug_args, resolved_block_number.as_ref());
             
             if let Some(cached_result) = cache.get_debug(&cache_key).await {
                 info!("Debug cache hit! Returning cached result");

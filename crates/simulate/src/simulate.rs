@@ -55,7 +55,7 @@ use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::{
-    BlockId, BlockTag, ContractClass, ExecutionResult, Felt, ReceiptBlock,
+    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock,
 };
 use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
@@ -76,9 +76,8 @@ use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::utils::extract_sierra_and_cairo_versions;
 use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
-    to_chain_id, ETransactionHashType,
+    to_chain_id, ETransactionHashType, EChainId, ENetwork,
 };
-use walnut_shared::{EChainId, ENetwork};
 
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
@@ -425,11 +424,22 @@ pub async fn simulate_by_calldata(
         None => None,
     };
     let readable_chain_id = chain_id_to_readable_string(&args.chain_id);
-    let block_number = if let Some(bn) = args.block_number {
-        BlockId::Number(bn.0)
+    
+    // Store original block_number info before args is moved
+    let latest_block = args.block_number.is_none();
+    
+    // Resolve block number if it's None (Latest) - same logic as in simulate function
+    let resolved_block_number = if let Some(bn) = args.block_number {
+        bn.0
     } else {
-        BlockId::Tag(BlockTag::Latest)
+        let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
+        provider_client
+            .block_number()
+            .await
+            .map_err(TransactionSimulationError::ProviderError)?
     };
+    
+    let block_number = BlockId::Number(resolved_block_number);
 
     let sender_address = args.sender_address;
     let calldata = args
@@ -467,6 +477,7 @@ pub async fn simulate_by_calldata(
         l1_data_flamechart,
         actual_fee: None,
         execution_resources: None,
+        latest_block,
     };
     Ok(TransactionSimulationResult {
         l1_transaction_data: None,
@@ -614,6 +625,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     l1_data_flamechart: None,
                                     actual_fee: None,
                                     execution_resources: None,
+                                    latest_block: false, // This is from tx hash, so not Latest
                                 };
                                 return Ok(TransactionSimulationResult {
                                     l1_transaction_data: None,
@@ -678,6 +690,7 @@ async fn simulate_starknet_transaction_by_hash(
                             l1_data_flamechart,
                             actual_fee,
                             execution_resources,
+                            latest_block: false, // This is from tx hash, so not Latest
                         };
                         return Ok(TransactionSimulationResult {
                             l1_transaction_data: None,
@@ -843,6 +856,7 @@ async fn process_l1_handler_transaction(
         l1_data_flamechart: None,
         actual_fee: None,
         execution_resources: None,
+        latest_block: block_number.is_none(), // This is L1 handler, check if block_number was None
     };
 
     Ok(TransactionSimulationResult {

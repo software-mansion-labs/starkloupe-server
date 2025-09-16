@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug,info, warn};
+use starknet_api::block::BlockNumber;
 
 use simulate::{SimulationArgs, TransactionSimulationResult, DebuggerInfo};
 
@@ -27,7 +28,7 @@ impl CacheKey {
         }
     }
     
-    pub fn from_simulation_args(args: &SimulationArgs) -> Self {
+    pub fn from_simulation_args_with_block_number(args: &SimulationArgs, resolved_block_number: Option<&BlockNumber>) -> Self {
         let mut hasher = Sha256::new();
         
         // Include key simulation parameters in hash
@@ -35,6 +36,15 @@ impl CacheKey {
         hasher.update(&args.calldata.0.iter().flat_map(|f| f.to_bytes_be()).collect::<Vec<_>>());
         hasher.update(&args.transaction_version.0.to_bytes_be());
         hasher.update(args.chain_id.to_string().as_bytes());
+        
+        // Include resolved block_number in cache key to prevent incorrect cache hits
+        // This ensures that "Latest" requests get different cache keys based on actual block number
+        if let Some(block_number) = &resolved_block_number {
+            hasher.update(block_number.0.to_be_bytes());
+        }
+        
+        // Include rpc_url in cache key for custom RPC endpoints
+        hasher.update(args.rpc_url.as_str().as_bytes());
         
         if let Some(entry_point) = args.entry_point_selector {
             hasher.update(entry_point.0.to_bytes_be());
@@ -46,6 +56,21 @@ impl CacheKey {
         
         if let Some(max_fee) = &args.max_fee {
             hasher.update(max_fee.0.to_be_bytes());
+        }
+        
+        // Include transaction_type in cache key for different transaction types
+        if let Some(transaction_type) = &args.transaction_type {
+            hasher.update(format!("{:?}", transaction_type).as_bytes());
+        }
+        
+        // Include resource_bounds for v3 transactions
+        if let Some(resource_bounds) = &args.resource_bounds {
+            hasher.update(format!("{:?}", resource_bounds).as_bytes());
+        }
+        
+        // Include paymaster_data for sponsored transactions
+        if let Some(paymaster_data) = &args.paymaster_data {
+            hasher.update(paymaster_data.0.iter().flat_map(|f| f.to_bytes_be()).collect::<Vec<_>>());
         }
         
         let hash = format!("{:x}", hasher.finalize());
@@ -61,7 +86,7 @@ impl CacheKey {
         Self { hash }
     }
     
-    pub fn from_debug_args(args: &SimulationArgs) -> Self {
+    pub fn from_debug_args_with_block_number(args: &SimulationArgs, resolved_block_number: Option<&BlockNumber>) -> Self {
         let mut hasher = Sha256::new();
         
         // Include "DEBUG" prefix to differentiate from regular simulation cache
@@ -73,6 +98,14 @@ impl CacheKey {
         hasher.update(&args.transaction_version.0.to_bytes_be());
         hasher.update(args.chain_id.to_string().as_bytes());
         
+        // Include resolved block_number in debug cache key to prevent incorrect cache hits
+        if let Some(block_number) = &resolved_block_number {
+            hasher.update(block_number.0.to_be_bytes());
+        }
+        
+        // Include rpc_url in debug cache key for custom RPC endpoints
+        hasher.update(args.rpc_url.as_str().as_bytes());
+        
         if let Some(entry_point) = args.entry_point_selector {
             hasher.update(entry_point.0.to_bytes_be());
         }
@@ -83,6 +116,21 @@ impl CacheKey {
         
         if let Some(max_fee) = &args.max_fee {
             hasher.update(max_fee.0.to_be_bytes());
+        }
+        
+        // Include transaction_type in debug cache key for different transaction types
+        if let Some(transaction_type) = &args.transaction_type {
+            hasher.update(format!("{:?}", transaction_type).as_bytes());
+        }
+        
+        // Include resource_bounds for v3 transactions in debug cache
+        if let Some(resource_bounds) = &args.resource_bounds {
+            hasher.update(format!("{:?}", resource_bounds).as_bytes());
+        }
+        
+        // Include paymaster_data for sponsored transactions in debug cache
+        if let Some(paymaster_data) = &args.paymaster_data {
+            hasher.update(paymaster_data.0.iter().flat_map(|f| f.to_bytes_be()).collect::<Vec<_>>());
         }
         
         let hash = format!("{:x}", hasher.finalize());

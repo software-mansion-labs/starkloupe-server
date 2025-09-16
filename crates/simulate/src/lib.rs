@@ -240,6 +240,8 @@ pub struct L2TransactionData {
     pub l1_data_flamechart: Option<FlameChartNode>,
     pub actual_fee: Option<String>,
     pub execution_resources: Option<ExecutionResources>,
+    /// Indicates if the original request was for "Latest" block
+    pub latest_block: bool,
 }
 
 #[derive(Serialize, Debug, Clone)]
