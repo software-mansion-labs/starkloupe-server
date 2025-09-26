@@ -69,7 +69,7 @@ pub async fn update_status_from_verification_table_with_inline_class_hash(
                 match (status, inline_status) {
                     (Some(EVerificationStatus::Success), Some(EVerificationStatus::Success)) => {
                         if let Some(entry) = class_status_map.get(class_hash) {
-                            let class_name = entry.0.clone();
+                            let _class_name = entry.0.clone();
 
                             if let Some(entry_mut) = class_status_map.get_mut(class_hash) {
                                 entry_mut.1 = EVerificationStatus::Success;
@@ -89,7 +89,7 @@ pub async fn update_status_from_verification_table_with_inline_class_hash(
                     }
                     _ => {
                         if let Some(entry) = class_status_map.get(class_hash) {
-                            let class_name = entry.0.clone();
+                            let _class_name = entry.0.clone();
 
                             if let Some(entry_mut) = class_status_map.get_mut(class_hash) {
                                 entry_mut.1 = EVerificationStatus::Pending;
@@ -128,22 +128,6 @@ pub async fn update_status_from_verification_table_with_inline_class_hash(
     }
 
     Ok(())
-}
-
-fn aggregate_statuses(statuses: &[(String, EVerificationStatus)]) -> Option<EVerificationStatus> {
-    if statuses
-        .iter()
-        .any(|(_, s)| *s == EVerificationStatus::Success)
-    {
-        Some(EVerificationStatus::Success)
-    } else if statuses
-        .iter()
-        .any(|(_, s)| *s == EVerificationStatus::Pending)
-    {
-        Some(EVerificationStatus::Pending)
-    } else {
-        None
-    }
 }
 
 pub async fn update_status_from_verification_table_(
@@ -204,7 +188,7 @@ pub async fn update_status_from_verified_contract_classes_with_inline_class_hash
                     .is_ok();
 
                 if is_verified && inline_is_verified {
-                    let class_name = class_status_map
+                    let _class_name = class_status_map
                         .get(class_hash)
                         .map(|e| e.0.clone())
                         .unwrap_or_default();
@@ -224,7 +208,7 @@ pub async fn update_status_from_verified_contract_classes_with_inline_class_hash
                 //                            )
                 //                        });
                 } else {
-                    let class_name = class_status_map
+                    let _class_name = class_status_map
                         .get(class_hash)
                         .map(|e| e.0.clone())
                         .unwrap_or_default();

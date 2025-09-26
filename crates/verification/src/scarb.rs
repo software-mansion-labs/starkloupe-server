@@ -63,10 +63,10 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
             .stdout(Stdio::piped())
             .pre_exec(move || {
                 if let Err(e) = set_limits(cpu_limit) {
-                    error!("Failed to set cpu imit: {:?}", e);
+                    error!("Failed to set resource limits: {:?}", e);
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        "Failed to set cpu limit",
+                        format!("Failed to set resource limits: {}", e),
                     ));
                 }
                 Ok(())
@@ -92,11 +92,23 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // For other errors, show the actual Scarb error
         error!(
-            "Build failed. Status: {:?}, Stdout: {:?}",
-            output.status, stdout
+            "Build failed. Status: {:?}, Stdout: {:?}, Stderr: {:?}",
+            output.status, stdout, stderr
         );
-        return Err(anyhow::anyhow!("The verification process was terminated due to resource limits. Please contact support for assistance."));
+
+        // Extract the actual error message from stderr (Scarb errors are usually in stderr)
+        let error_message = if !stderr.is_empty() {
+            stderr.to_string()
+        } else {
+            stdout.to_string()
+        };
+
+        // Return the actual Scarb error message to the user
+        return Err(anyhow::anyhow!("Project build failed: {}", error_message));
     }
 
     Ok(())
