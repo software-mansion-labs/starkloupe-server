@@ -1,7 +1,6 @@
 use crate::abi_fetcher::fetch_contract_abi;
 use data_decoder::DecodedValue;
 use std::collections::HashMap;
-use tracing::info;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::utils::simplify_type_name;
 
@@ -145,8 +144,10 @@ pub fn encode_enum_variant(
 
     // Encode the value based on variant type
     match &value.value {
-        data_decoder::DecodedValueType::String(s) => {
-            calldata.push(s.clone());
+        data_decoder::DecodedValueType::String(_s) => {
+            // For unit variants, the string value is just the variant name
+            // We don't need to add it as calldata since we already have the variant index
+            // This is handled by the variant index above
         }
         data_decoder::DecodedValueType::Single(felt) => {
             calldata.push(felt.to_hex_string());
