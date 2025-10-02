@@ -153,6 +153,10 @@ pub fn extract_submitted_tx(
             resource_bounds_mapping_to_default_valid_resource_bounds(),
             PaymasterData::default(),
         )),
+        Transaction::Deploy(_) | Transaction::DeployAccount(_) => {
+            // DEPLOY and DEPLOY_ACCOUNT transactions are currently not supported
+            return None;
+        }
         _ => None,
     }
 }
