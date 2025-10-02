@@ -34,7 +34,7 @@ pub struct Parameter {
     pub type_name: String,
 }
 
-pub const MAIN_CHAIN_ID: &str = "0x534e5f4d41494e";
+pub const MAINNET_CHAIN_ID: &str = "0x534e5f4d41494e";
 pub const SEPOLIA_CHAIN_ID: &str = "0x534e5f5345504f4c4941";
 
 pub const STRK_FEE_TOKEN_ADDRESS: &str =
@@ -79,7 +79,7 @@ impl From<EChainId> for ChainId {
         match e_chain {
             EChainId::StarknetMainnet => ChainId::Mainnet,
             EChainId::StarknetSepolia => ChainId::Sepolia,
-            EChainId::EthereumMainnet => ChainId::Other("eth_main".into()),
+            EChainId::EthereumMainnet => ChainId::Other("eth_mainnet".into()),
             EChainId::EthereumSepolia => ChainId::Other("eth_sepolia".into()),
         }
     }
@@ -92,7 +92,7 @@ impl TryFrom<ChainId> for EChainId {
         match chain {
             ChainId::Mainnet => Ok(EChainId::StarknetMainnet),
             ChainId::Sepolia => Ok(EChainId::StarknetSepolia),
-            ChainId::Other(ref s) if s == "eth_main" => Ok(EChainId::EthereumMainnet),
+            ChainId::Other(ref s) if s == "eth_mainnet" => Ok(EChainId::EthereumMainnet),
             ChainId::Other(ref s) if s == "eth_sepolia" => Ok(EChainId::EthereumSepolia),
             _ => Err(()),
         }
@@ -234,15 +234,15 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
     match chain_id.to_lowercase().as_str() {
         // Starknet
-        "0x534e5f4d41494e" | "sn_main" | "SN_MAIN" => {
+        MAINNET_CHAIN_ID | "sn_mainnet" | "SN_MAINNET" => {
             Ok((EChainId::StarknetMainnet, ENetwork::Starknet))
         }
-        "0x534e5f5345504f4c4941" | "sn_sepolia" | "SN_SEPOLIA" => {
+        SEPOLIA_CHAIN_ID | "sn_sepolia" | "SN_SEPOLIA" => {
             Ok((EChainId::StarknetSepolia, ENetwork::Starknet))
         }
 
         // Ethereum
-        "eth_main" | "ETH_MAIN" => Ok((EChainId::EthereumMainnet, ENetwork::Ethereum)),
+        "eth_mainnet" | "ETH_MAINNET" => Ok((EChainId::EthereumMainnet, ENetwork::Ethereum)),
         "eth_sepolia" | "ETH_SEPOLIA" => Ok((EChainId::EthereumSepolia, ENetwork::Ethereum)),
 
         _ => Err(anyhow!("Invalid chain id")),
@@ -251,7 +251,7 @@ pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> 
 
 pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
     match chain_id {
-        ChainId::Mainnet => String::from("sn_main"),
+        ChainId::Mainnet => String::from("sn_mainnet"),
         ChainId::Sepolia => String::from("sn_sepolia"),
         ChainId::Other(chain_id) => chain_id.clone(),
         _ => panic!("Invalid chain id"),

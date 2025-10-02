@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.105] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.105)
+
+- Rename MAIN -> MAINNET
+
 ### [0.0.104] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.104)
 
 - Upgrading Alchemy to 0.9
