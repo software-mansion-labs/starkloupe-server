@@ -139,9 +139,9 @@ pub struct Input {
     #[serde(rename = "type")]
     pub ty: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub members: Option<Cow<'static, [StructMember]>>, // For struct types
+    pub struct_members: Option<Cow<'static, [StructMember]>>, // For struct types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
+    pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Function Output ABI.
@@ -150,9 +150,9 @@ pub struct Output {
     #[serde(rename = "type")]
     pub ty: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub members: Option<Cow<'static, [StructMember]>>, // For struct types
+    pub struct_members: Option<Cow<'static, [StructMember]>>, // For struct types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
+    pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Struct ABI.
@@ -169,9 +169,9 @@ pub struct StructMember {
     #[serde(rename = "type")]
     pub ty: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub members: Option<Cow<'static, [StructMember]>>, // For nested struct types
+    pub struct_members: Option<Cow<'static, [StructMember]>>, // For nested struct types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
+    pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
 }
 
 /// Enum ABI.
@@ -188,9 +188,9 @@ pub struct EnumVariant {
     #[serde(rename = "type")]
     pub ty: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub members: Option<Cow<'static, [StructMember]>>, // For struct types in enum variants
+    pub struct_members: Option<Cow<'static, [StructMember]>>, // For struct types in enum variants
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variants: Option<Cow<'static, [EnumVariant]>>, // For nested enum types in enum variants
+    pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For nested enum types in enum variants
 }
 
 pub fn get_functions(items: &[Item]) -> Vec<Function> {

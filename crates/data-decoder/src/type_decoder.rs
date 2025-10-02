@@ -39,8 +39,8 @@ impl TypeDecoder {
                         Input {
                             name: input.name.clone(),
                             ty: enhanced_type,
-                            members: members.map(|cow| Cow::Owned(cow.into_owned())),
-                            variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
+                            struct_members: members.map(|cow| Cow::Owned(cow.into_owned())),
+                            enum_variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
                         }
                     })
                     .collect();
@@ -58,8 +58,8 @@ impl TypeDecoder {
 
                         Output {
                             ty: enhanced_type,
-                            members: members.map(|cow| Cow::Owned(cow.into_owned())),
-                            variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
+                            struct_members: members.map(|cow| Cow::Owned(cow.into_owned())),
+                            enum_variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
                         }
                     })
                     .collect();
@@ -216,8 +216,8 @@ impl TypeDecoder {
                     StructMember {
                         name: member.name.clone(),
                         ty: member.ty.clone(),
-                        members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
-                        variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                        struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
+                        enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -237,8 +237,8 @@ impl TypeDecoder {
                     EnumVariant {
                         name: variant.name.clone(),
                         ty: variant.ty.clone(),
-                        members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
-                        variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                        struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
+                        enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -266,8 +266,8 @@ impl TypeDecoder {
                 let synthetic_member = StructMember {
                     name: "element".to_string(),
                     ty: inner_type.to_string(),
-                    members: inner_members,
-                    variants: inner_variants,
+                    struct_members: inner_members,
+                    enum_variants: inner_variants,
                 };
 
                 return (Some(Cow::Owned(vec![synthetic_member])), None);
@@ -300,8 +300,8 @@ impl TypeDecoder {
                 let member = StructMember {
                     name: member_name,
                     ty: component.trim().to_string(),
-                    members: members.map(|cow| Cow::Owned(cow.into_owned())),
-                    variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
+                    struct_members: members.map(|cow| Cow::Owned(cow.into_owned())),
+                    enum_variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
                 };
                 tuple_members.push(member);
             }
@@ -480,23 +480,23 @@ fn expand_struct_recursively(
                 StructMember {
                     name: member.name.clone(),
                     ty: member_type.clone(),
-                    members: Some(Cow::Owned(expanded_nested.members.clone())),
-                    variants: None,
+                    struct_members: Some(Cow::Owned(expanded_nested.members.clone())),
+                    enum_variants: None,
                 }
             } else if enum_map.contains_key(&member_type) {
                 let enum_def = enum_map.get(&member_type).unwrap();
                 StructMember {
                     name: member.name.clone(),
                     ty: member_type.clone(),
-                    members: None,
-                    variants: Some(Cow::Owned(enum_def.variants.clone())),
+                    struct_members: None,
+                    enum_variants: Some(Cow::Owned(enum_def.variants.clone())),
                 }
             } else {
                 StructMember {
                     name: member.name.clone(),
                     ty: member_type.clone(),
-                    members: None,
-                    variants: None,
+                    struct_members: None,
+                    enum_variants: None,
                 }
             }
         })
@@ -547,16 +547,16 @@ fn expand_enum_recursively(
                     EnumVariant {
                         name: variant.name.clone(),
                         ty: variant_type.clone(),
-                        members: Some(Cow::Owned(struct_def.members.clone())),
-                        variants: None,
+                        struct_members: Some(Cow::Owned(struct_def.members.clone())),
+                        enum_variants: None,
                     }
                 } else {
                     // Fallback if struct not found
                     EnumVariant {
                         name: variant.name.clone(),
                         ty: variant_type.clone(),
-                        members: None,
-                        variants: None,
+                        struct_members: None,
+                        enum_variants: None,
                     }
                 }
             }
@@ -568,8 +568,8 @@ fn expand_enum_recursively(
                     EnumVariant {
                         name: variant.name.clone(),
                         ty: variant_type.clone(),
-                        members: None,
-                        variants: None,
+                        struct_members: None,
+                        enum_variants: None,
                     }
                 } else {
                     let nested_enum = expand_enum_recursively(
@@ -583,8 +583,8 @@ fn expand_enum_recursively(
                     EnumVariant {
                         name: variant.name.clone(),
                         ty: variant_type.clone(),
-                        members: None,
-                        variants: Some(Cow::Owned(nested_enum.variants.clone())),
+                        struct_members: None,
+                        enum_variants: Some(Cow::Owned(nested_enum.variants.clone())),
                     }
                 }
             } else {
@@ -592,8 +592,8 @@ fn expand_enum_recursively(
                 EnumVariant {
                     name: variant.name.clone(),
                     ty: variant_type.clone(),
-                    members: None,
-                    variants: None,
+                    struct_members: None,
+                    enum_variants: None,
                 }
             }
         })
