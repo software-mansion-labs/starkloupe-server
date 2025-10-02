@@ -1,5 +1,41 @@
 # Changelog
 
+### [0.0.104] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.104)
+
+- Upgrading Alchemy to 0.9
+
+### [0.0.103] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.103)
+
+- Fix for simple enum encode
+
+### [0.0.102] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.102)
+
+- Fix verification error message
+
+### [0.0.101] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.101)
+
+- Encode decode calldata
+
+### [0.0.100] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.100)
+
+- Fix test and reorganize type decoder code
+
+### [0.0.99] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.99)
+
+- Expand entrypoints response with full decoded data
+
+### [0.0.98] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.98)
+
+- Introduce caching
+
+### [0.0.97] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.97)
+
+- Remove core library from call trace
+
+### [0.0.96] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.96)
+
+- Fix double decoded type
+
 ### [0.0.95] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.95)
 
 - Remove expresion [\d-\d] from call trace

@@ -42,6 +42,14 @@ pub const STRK_FEE_TOKEN_ADDRESS: &str =
 pub const ETH_FEE_TOKEN_ADDRESS: &str =
     "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7";
 
+// RPC URL constants
+pub const STARKNET_MAINNET_RPC_URL: &str = "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_9/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+pub const STARKNET_SEPOLIA_RPC_URL: &str = "https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_9/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+pub const ETHEREUM_MAINNET_RPC_URL: &str =
+    "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+pub const ETHEREUM_SEPOLIA_RPC_URL: &str =
+    "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ENetwork {
     Starknet,
@@ -101,14 +109,8 @@ pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> 
 
 pub fn rpc_url(chain_id: &ChainId) -> Url {
     match chain_id {
-        ChainId::Mainnet => {
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
-                .unwrap()
-        }
-        ChainId::Sepolia => {
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp")
-                .unwrap()
-        }
+        ChainId::Mainnet => Url::parse(STARKNET_MAINNET_RPC_URL).unwrap(),
+        ChainId::Sepolia => Url::parse(STARKNET_SEPOLIA_RPC_URL).unwrap(),
         _ => panic!("Invalid chain id"),
     }
 }
@@ -119,12 +121,8 @@ pub fn create_eth_provider_from_url(rpc_url: String) -> EthProvider<Http> {
 
 pub fn eth_rpc_url(chain_id: &ChainId) -> String {
     match chain_id {
-        ChainId::Mainnet => {
-            "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string()
-        }
-        ChainId::Sepolia => {
-            "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string()
-        }
+        ChainId::Mainnet => ETHEREUM_MAINNET_RPC_URL.to_string(),
+        ChainId::Sepolia => ETHEREUM_SEPOLIA_RPC_URL.to_string(),
         _ => panic!("Invalid chain id"),
     }
 }
@@ -132,29 +130,20 @@ pub fn eth_rpc_url(chain_id: &ChainId) -> String {
 pub fn get_rpc_urls(chain_id: &EChainId) -> (Option<Url>, Option<String>) {
     match chain_id {
         EChainId::StarknetMainnet => (
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
-            Some(
-                "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
-            ),
-
+            Url::parse(STARKNET_MAINNET_RPC_URL).ok(),
+            Some(ETHEREUM_MAINNET_RPC_URL.to_string()),
         ),
         EChainId::StarknetSepolia => (
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
-            Some(
-                "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
-            ),
+            Url::parse(STARKNET_SEPOLIA_RPC_URL).ok(),
+            Some(ETHEREUM_SEPOLIA_RPC_URL.to_string()),
         ),
         EChainId::EthereumMainnet => (
-            Url::parse("https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
-            Some(
-                "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
-            ),
+            Url::parse(STARKNET_MAINNET_RPC_URL).ok(),
+            Some(ETHEREUM_MAINNET_RPC_URL.to_string()),
         ),
         EChainId::EthereumSepolia => (
-            Url::parse("https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_8/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp").ok(),
-            Some(
-                "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp".to_string(),
-            ),
+            Url::parse(STARKNET_SEPOLIA_RPC_URL).ok(),
+            Some(ETHEREUM_SEPOLIA_RPC_URL.to_string()),
         ),
     }
 }
