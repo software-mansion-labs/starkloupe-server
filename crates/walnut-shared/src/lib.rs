@@ -231,6 +231,8 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     }
 }
 
+pub const VOYAGER_API_KEY: &str = "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB";
+
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
     match chain_id.to_lowercase().as_str() {
         // Starknet
