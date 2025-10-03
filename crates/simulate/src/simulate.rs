@@ -54,7 +54,9 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::{BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock};
+use starknet::core::types::{
+    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock, Transaction,
+};
 use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
@@ -541,6 +543,22 @@ async fn simulate_starknet_transaction_by_hash(
         .get_transaction_by_hash(transaction_hash)
         .await;
     if let Ok(transaction) = transaction {
+        // Check if it's a DEPLOY or DEPLOY_ACCOUNT transaction (not supported)
+        if matches!(transaction, Transaction::Deploy(_)) {
+            let tx_hash_str = transaction_hash.to_hex_string();
+            return Err(TransactionSimulationError::DeployTransactionNotSupported(
+                "DEPLOY".to_string(),
+                tx_hash_str,
+            ));
+        }
+        if matches!(transaction, Transaction::DeployAccount(_)) {
+            let tx_hash_str = transaction_hash.to_hex_string();
+            return Err(TransactionSimulationError::DeployTransactionNotSupported(
+                "DEPLOY_ACCOUNT".to_string(),
+                tx_hash_str,
+            ));
+        }
+
         if let Some((
             nonce,
             sender_address,

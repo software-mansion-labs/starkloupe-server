@@ -278,6 +278,10 @@ pub enum TransactionSimulationError {
     InvalidTransactionHash,
     #[error("Transaction type is not supported")]
     TransactionTypeNotSupported,
+    #[error(
+        "{0} transactions are not supported (tx hash: {1}). Please contact us for assistance."
+    )]
+    DeployTransactionNotSupported(String, String),
     #[error("Either chain_id or rpc_url must be provided")]
     MissingChainIdOrRpcUrl,
     #[error("Transaction index can not be extracted from block")]

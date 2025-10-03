@@ -94,6 +94,8 @@ pub fn parse_transaction_type(value: &str) -> Result<TransactionType, Transactio
         "INVOKE" => Ok(TransactionType::InvokeFunction),
         "DECLARE" => Ok(TransactionType::Declare),
         "L1HANDLER" => Ok(TransactionType::L1Handler),
+        "DEPLOY_ACCOUNT" => Ok(TransactionType::DeployAccount),
+        "DEPLOY" => Err(TransactionSimulationError::TransactionTypeNotSupported), // DEPLOY is deprecated
         _ => Err(TransactionSimulationError::TransactionTypeNotSupported),
     }
 }
