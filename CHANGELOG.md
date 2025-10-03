@@ -1,8 +1,12 @@
 # Changelog
 
-### [0.0.106] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.106)
+### [0.0.107] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.107)
 
 - Rename variants -> enum_variants, members -> struct_members
+
+### [0.0.106] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.106)
+
+- Error message for DEPLOY and DEPLOY_ACCOUNT type 
 
 ### [0.0.105] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.105)
 
