@@ -3,6 +3,7 @@ use simulate::SimulationArgs;
 use starknet_api::core::ChainId;
 use tracing::error;
 use urlencoding::encode;
+use walnut_shared::chain_id_to_url_format;
 
 pub async fn send_telegram_notification_tx_id(
     tx_id: &str,
@@ -39,7 +40,10 @@ pub async fn send_telegram_notification_calldata(
             "transactionVersion={}",
             simulation_args.transaction_version.to_string()
         ),
-        format!("chainId={}", simulation_args.chain_id),
+        format!(
+            "chainId={}",
+            chain_id_to_url_format(&simulation_args.chain_id)
+        ),
     ];
 
     if let Some(block_number) = simulation_args.block_number {

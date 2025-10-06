@@ -258,6 +258,16 @@ pub fn chain_id_to_readable_string(chain_id: &ChainId) -> String {
     }
 }
 
+/// Converts ChainId to URL-friendly format used in frontend URLs
+pub fn chain_id_to_url_format(chain_id: &ChainId) -> String {
+    match chain_id {
+        ChainId::Mainnet => String::from("SN_MAINNET"),
+        ChainId::Sepolia => String::from("SN_SEPOLIA"),
+        ChainId::Other(chain_id) => chain_id.clone(),
+        _ => panic!("Invalid chain id"),
+    }
+}
+
 pub fn to_chain_id(chain_id: &EChainId) -> EChainId {
     match chain_id {
         EChainId::EthereumMainnet => EChainId::StarknetMainnet,
