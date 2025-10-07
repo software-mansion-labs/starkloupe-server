@@ -1,6 +1,6 @@
 use crate::db::{
-    fetch_inline_class_hash_profiles_by_class_hash, fetch_verification_statuses_pending_or_success,
-    fetch_verified_class, fetch_verified_classes, insert_class_hash_profiles,
+    fetch_verification_statuses_pending_or_success, fetch_verified_class, fetch_verified_classes,
+    insert_class_hash_profiles,
 };
 use crate::manifest::Manifest;
 use crate::scarb::{
@@ -256,13 +256,17 @@ pub async fn update_status_from_verified_contract_classes_(
 pub async fn fetch_class_from_blockchain(
     provider_client: &JsonRpcClient<HttpTransport>,
     class_hash: &str,
+    network: &str,
 ) -> Result<(Vec<Felt>, (u32, u32, u32))> {
     let class_hash_felt = Felt::from_str(class_hash).context("Invalid class hash format")?;
 
     let class_from_blockchain = provider_client
         .get_class(BlockId::Tag(BlockTag::Latest), class_hash_felt)
         .await
-        .context("Failed to get class from the network")?;
+        .context(format!(
+            "Failed to get class from the network {}. Class hash: {}",
+            network, class_hash
+        ))?;
 
     let class_json = serde_json::to_value(&class_from_blockchain)
         .context("Failed to serialize class from blockchain to JSON value")?;

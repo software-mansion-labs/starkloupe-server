@@ -234,7 +234,7 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
     match chain_id.to_lowercase().as_str() {
         // Starknet
-        MAINNET_CHAIN_ID | "sn_mainnet" | "SN_MAINNET" => {
+        MAINNET_CHAIN_ID | "sn_mainnet" | "sn_main" | "SN_MAINNET" => {
             Ok((EChainId::StarknetMainnet, ENetwork::Starknet))
         }
         SEPOLIA_CHAIN_ID | "sn_sepolia" | "SN_SEPOLIA" => {
