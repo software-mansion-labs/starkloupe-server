@@ -89,10 +89,11 @@ pub async fn initiate_verification(
     source_code: HashMap<String, String>,
     chain_id: Option<String>,
 ) -> Result<Uuid> {
+    let network = chain_id.as_deref().unwrap_or("unknown");
     let classes_from_blockchain = futures::future::join_all(
         class_hashes
             .iter()
-            .map(|class_hash| fetch_class_from_blockchain(&provider_client, class_hash)),
+            .map(|class_hash| fetch_class_from_blockchain(&provider_client, class_hash, network)),
     )
     .await;
 
@@ -321,6 +322,7 @@ pub async fn verify_by_class_hashes(
     chain_id: Option<String>,
 ) -> Result<HashMap<String, (EVerificationStatus, Option<String>)>> {
     let tmp_dir = create_temp_directory(verification_id.to_string())?;
+    let network = chain_id.as_deref().unwrap_or("unknown");
 
     match verify(
         &tmp_dir,
@@ -329,6 +331,7 @@ pub async fn verify_by_class_hashes(
         classes,
         verification_id,
         &mut source_code,
+        network,
     )
     .await
     {
@@ -461,15 +464,15 @@ async fn verify(
     classes: Vec<(String, String)>, // class_hash, class_name
     verification_id: Uuid,
     source_code: &mut HashMap<String, String>,
+    network: &str,
 ) -> Result<ClassVerificationData> {
     let mut class_verification_data: ClassVerificationData = HashMap::new();
 
-    let classes_from_blockchain = futures::future::join_all(
-        classes
-            .iter()
-            .map(|(class_hash, _)| fetch_class_from_blockchain(provider_client, class_hash)),
-    )
-    .await;
+    let classes_from_blockchain =
+        futures::future::join_all(classes.iter().map(|(class_hash, _)| {
+            fetch_class_from_blockchain(provider_client, class_hash, network)
+        }))
+        .await;
 
     // Classes should have the same Cairo version
     let mut cairo_version = None;
@@ -509,7 +512,7 @@ async fn verify(
 
     // If there is no Cairo version, then it means that zero classes were fetched from the network
     let cairo_version = cairo_version.ok_or_else(|| {
-        let err = anyhow::anyhow!("Failed to fetch classes from the network");
+        let err = anyhow::anyhow!("Failed to fetch classes from the network {}", network);
         error!("{:?}", err);
         err
     })?;
