@@ -1,5 +1,5 @@
 use crate::abi_fetcher::fetch_contract_abi;
-use data_decoder::DecodedValue;
+use data_decoder::{split_into_limbs, DecodedValue};
 use std::collections::HashMap;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::utils::simplify_type_name;
@@ -13,7 +13,12 @@ pub fn encode_decoded_value(
     match &value.value {
         data_decoder::DecodedValueType::String(s) => Ok(vec![s.clone()]),
         data_decoder::DecodedValueType::Single(felt) => Ok(vec![felt.to_hex_string()]),
-        data_decoder::DecodedValueType::BigUint(n) => Ok(vec![format!("0x{:x}", n)]),
+        data_decoder::DecodedValueType::BigUint(n) => {
+            // Special handling for multi-limb integer types (u256, u512)
+            // These types are decoded as single BigUint values for readability,
+            // but must be split back into limbs for transaction encoding
+            Ok(split_into_limbs(n, &value.type_name))
+        }
         data_decoder::DecodedValueType::BigInt(n) => Ok(vec![format!("0x{:x}", n)]),
         data_decoder::DecodedValueType::Bool(b) => Ok(vec![if *b {
             "0x1".to_string()
@@ -153,7 +158,11 @@ pub fn encode_enum_variant(
             calldata.push(felt.to_hex_string());
         }
         data_decoder::DecodedValueType::BigUint(n) => {
-            calldata.push(format!("0x{:x}", n));
+            // Special handling for multi-limb integer types (u256, u512)
+            // Note: For enum variants, we use the variant's type, not the enum's type
+            let variant_type = value.type_name.rsplit("::").next().unwrap_or("");
+            let limbs = split_into_limbs(n, variant_type);
+            calldata.extend(limbs);
         }
         data_decoder::DecodedValueType::BigInt(n) => {
             calldata.push(format!("0x{:x}", n));

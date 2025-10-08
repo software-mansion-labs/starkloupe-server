@@ -205,6 +205,12 @@ impl TypeDecoder {
                 return (inner_members, inner_variants);
             }
 
+            // Special handling for u256 and u512 structs - display as primitive types
+            if self.is_multi_limb_integer_struct(struct_def) {
+                // Return None for struct_members to treat as primitive type
+                return (None, None);
+            }
+
             let enhanced_members = struct_def
                 .members
                 .iter()
@@ -381,6 +387,8 @@ impl TypeDecoder {
             "u32",
             "u64",
             "u128",
+            "u256",
+            "u512",
             "usize",
             "i8",
             "i16",
@@ -396,6 +404,49 @@ impl TypeDecoder {
         ];
 
         primitive_types.contains(&type_name)
+    }
+
+    /// Check if a struct represents a multi-limb integer (u256 or u512)
+    fn is_multi_limb_integer_struct(&self, struct_def: &Struct) -> bool {
+        // Check for u256 struct pattern: exactly 2 members with names "low" and "high" of type u128
+        if struct_def.members.len() == 2 {
+            let has_low = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "low" && m.ty == "u128");
+            let has_high = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "high" && m.ty == "u128");
+            if has_low && has_high {
+                return true;
+            }
+        }
+
+        // Check for u512 struct pattern: exactly 4 members with names "limb0", "limb1", "limb2", "limb3" of type u128
+        if struct_def.members.len() == 4 {
+            let has_limb0 = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "limb0" && m.ty == "u128");
+            let has_limb1 = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "limb1" && m.ty == "u128");
+            let has_limb2 = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "limb2" && m.ty == "u128");
+            let has_limb3 = struct_def
+                .members
+                .iter()
+                .any(|m| m.name == "limb3" && m.ty == "u128");
+            if has_limb0 && has_limb1 && has_limb2 && has_limb3 {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Calculate selector for a function name

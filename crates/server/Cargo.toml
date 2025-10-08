@@ -39,6 +39,7 @@ walnut-shared.workspace = true
 data-decoder.workspace = true
 verification.workspace = true
 num-traits.workspace = true
+num-bigint.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
 sentry.workspace = true
