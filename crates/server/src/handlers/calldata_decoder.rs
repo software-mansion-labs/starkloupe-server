@@ -34,7 +34,7 @@ pub struct CalldataDecoderResponse {
     pub block_number: Option<u64>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Debug)]
 pub struct ContractCall {
     pub contract_address: String,
     pub function_selector: String,
@@ -164,26 +164,20 @@ fn decode_calldata_with_abi(
             )
         })?;
 
-    // Convert function inputs to data-decoder format, unpacking structures using TypeDecoder
+    // Convert function inputs to data-decoder format
+    // The data-decoder can handle structs, enums, and complex types directly
     let mut types: Vec<String> = Vec::new();
     let mut names: Vec<String> = Vec::new();
 
     for input in &function.inputs {
         let simplified_type = walnut_shared::utils::simplify_type_name(&input.ty);
 
-        // Check if this is a struct that needs unpacking
-        if let Some(struct_def) = structs.get(&simplified_type) {
-            // Unpack struct into its primitive components
-            for member in &struct_def.members {
-                types.push(member.ty.clone());
-                names.push(format!("{}_{}", input.name, member.name));
-            }
-        } else if enums.contains_key(&simplified_type) {
-            // For enums, use simplified type name - data-decoder expects simplified names
+        // Use simplified type names for structs and enums - data-decoder handles them
+        if structs.contains_key(&simplified_type) || enums.contains_key(&simplified_type) {
             types.push(simplified_type.clone());
             names.push(input.name.clone());
         } else {
-            // Keep as is for primitive types
+            // Keep original type for primitives and complex types
             types.push(input.ty.clone());
             names.push(input.name.clone());
         }
@@ -327,6 +321,12 @@ pub async fn decode_calldata_handler(
             }
         }
     }
+
+    // Log for debugging
+    info!(
+        "Decode calldata - Network: {}, Sender: {}, Raw calldata: {:?}, Decoded: {:?}",
+        request.chain_id, request.sender_address, raw_calldata, contract_calls
+    );
 
     let response = CalldataDecoderResponse {
         decoded_calldata: contract_calls,

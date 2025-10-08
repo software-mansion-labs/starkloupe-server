@@ -1075,3 +1075,33 @@ pub fn create_compact_enum(
         value: inner_value.value,
     }
 }
+
+/// Split a BigUint into limbs for multi-limb integer types (u256, u512)
+/// Returns a vector of hex strings representing each limb
+pub fn split_into_limbs(value: &BigUint, type_name: &str) -> Vec<String> {
+    match type_name {
+        "u256" => {
+            // Split into 2 limbs: low (bits 0-127), high (bits 128-255)
+            let mask_128 = (BigUint::from(1u128) << 128) - 1u128;
+            let low = value & &mask_128;
+            let high = value >> 128;
+            vec![format!("0x{:x}", low), format!("0x{:x}", high)]
+        }
+        "u512" => {
+            // Split into 4 limbs: limb0 (bits 0-127), limb1 (bits 128-255),
+            // limb2 (bits 256-383), limb3 (bits 384-511)
+            let mask_128 = (BigUint::from(1u128) << 128) - 1u128;
+            let limb0 = value & &mask_128;
+            let limb1 = (value >> 128) & &mask_128;
+            let limb2 = (value >> 256) & &mask_128;
+            let limb3 = value >> 384;
+            vec![
+                format!("0x{:x}", limb0),
+                format!("0x{:x}", limb1),
+                format!("0x{:x}", limb2),
+                format!("0x{:x}", limb3),
+            ]
+        }
+        _ => vec![format!("0x{:x}", value)],
+    }
+}
