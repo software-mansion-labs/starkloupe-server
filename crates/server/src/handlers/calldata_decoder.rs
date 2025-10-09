@@ -172,15 +172,9 @@ fn decode_calldata_with_abi(
     for input in &function.inputs {
         let simplified_type = walnut_shared::utils::simplify_type_name(&input.ty);
 
-        // Use simplified type names for structs and enums - data-decoder handles them
-        if structs.contains_key(&simplified_type) || enums.contains_key(&simplified_type) {
-            types.push(simplified_type.clone());
-            names.push(input.name.clone());
-        } else {
-            // Keep original type for primitives and complex types
-            types.push(input.ty.clone());
-            names.push(input.name.clone());
-        }
+        // Use simplified type names
+        types.push(simplified_type.clone());
+        names.push(input.name.clone());
     }
 
     // Convert to Cow<str> for data-decoder
@@ -202,7 +196,10 @@ fn decode_calldata_with_abi(
 
     let decoded_values =
         match decode_calldata(calldata, &types_cow, &names_cow, &structs_vec, &enums_vec) {
-            Some(values) => values,
+            Some(values) => {
+                info!("Successfully decoded values: {:?}", values);
+                values
+            }
             None => {
                 error!("decode_calldata returned None - decoding failed");
                 return Err("Failed to decode calldata with ABI types".to_string());
@@ -266,6 +263,14 @@ pub async fn decode_calldata_handler(
         for (call_idx, (contract_addr, func_selector, call_calldata)) in
             calls.into_iter().enumerate()
         {
+            info!(
+                "Processing call {}: contract={}, selector={}, calldata_len={}",
+                call_idx,
+                contract_addr,
+                func_selector,
+                call_calldata.len()
+            );
+
             // Try to fetch ABI and decode with it
             match fetch_contract_abi(&contract_addr, &request.chain_id).await {
                 Ok((functions, _type_decoder, structs, enums)) => {
