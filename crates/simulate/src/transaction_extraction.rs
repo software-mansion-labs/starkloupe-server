@@ -1,15 +1,16 @@
 use blockifier::bouncer::BouncerConfig;
+use std::sync::Arc;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::transaction::objects::{
     CommonAccountFields, CurrentTransactionInfo, DeprecatedTransactionInfo, TransactionInfo,
 };
-use blockifier::transaction::transaction_types::TransactionType;
-use blockifier::versioned_constants::VersionedConstants;
+use starknet_api::executable_transaction::TransactionType;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use num_traits::ToPrimitive;
 use starknet::core::types::{
     BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResources, ExecutionResult, Felt,
-    InvokeTransaction, MaybePendingBlockWithTxs, Transaction, TransactionReceipt,
+    InvokeTransaction, MaybePreConfirmedBlockWithTxs, Transaction, TransactionReceipt,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -25,7 +26,6 @@ use starknet_api::transaction::fields::{
     Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
 };
 use starknet_api::transaction::TransactionVersion;
-use std::sync::Arc;
 use walnut_shared::{felts_to_string, format_fee_payment};
 use walnut_shared::{
     resource_bounds_mapping_to_default_valid_resource_bounds,
@@ -61,7 +61,7 @@ pub fn extract_submitted_tx(
                 Calldata(tx.calldata.into()),
                 TransactionVersion::ZERO,
                 TransactionType::InvokeFunction,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
@@ -73,7 +73,7 @@ pub fn extract_submitted_tx(
                 Calldata(tx.calldata.into()),
                 TransactionVersion::ONE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
@@ -85,7 +85,7 @@ pub fn extract_submitted_tx(
                 Calldata(tx.calldata.into()),
                 TransactionVersion::THREE,
                 TransactionType::InvokeFunction,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(u128::MAX),
                 resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                 PaymasterData(tx.paymaster_data),
@@ -99,7 +99,7 @@ pub fn extract_submitted_tx(
                 Calldata(vec![tx.class_hash].into()),
                 TransactionVersion::ZERO,
                 TransactionType::Declare,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
@@ -111,7 +111,7 @@ pub fn extract_submitted_tx(
                 Calldata(vec![tx.class_hash].into()),
                 TransactionVersion::ONE,
                 TransactionType::Declare,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
@@ -123,7 +123,7 @@ pub fn extract_submitted_tx(
                 Calldata(vec![tx.class_hash].into()),
                 TransactionVersion::TWO,
                 TransactionType::Declare,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee(tx.max_fee.to_u128().unwrap_or_default()),
                 resource_bounds_mapping_to_default_valid_resource_bounds(),
                 PaymasterData::default(),
@@ -135,7 +135,7 @@ pub fn extract_submitted_tx(
                 Calldata(vec![tx.class_hash].into()),
                 TransactionVersion::THREE,
                 TransactionType::Declare,
-                TransactionSignature(tx.signature),
+                TransactionSignature(tx.signature.into()),
                 Fee::default(),
                 resource_bounds_mapping_to_valid_resource_bounds(&tx.resource_bounds),
                 PaymasterData(tx.paymaster_data),
@@ -164,15 +164,15 @@ pub fn extract_submitted_tx(
 pub fn extract_transaction_signature(transaction: Transaction) -> Option<TransactionSignature> {
     match transaction {
         Transaction::Invoke(invoke_tx) => match invoke_tx {
-            InvokeTransaction::V0(tx) => Some(TransactionSignature(tx.signature)),
-            InvokeTransaction::V1(tx) => Some(TransactionSignature(tx.signature)),
-            InvokeTransaction::V3(tx) => Some(TransactionSignature(tx.signature)),
+            InvokeTransaction::V0(tx) => Some(TransactionSignature(tx.signature.into())),
+            InvokeTransaction::V1(tx) => Some(TransactionSignature(tx.signature.into())),
+            InvokeTransaction::V3(tx) => Some(TransactionSignature(tx.signature.into())),
         },
         Transaction::Declare(declare_tx) => match declare_tx {
-            DeclareTransaction::V0(tx) => Some(TransactionSignature(tx.signature)),
-            DeclareTransaction::V1(tx) => Some(TransactionSignature(tx.signature)),
-            DeclareTransaction::V2(tx) => Some(TransactionSignature(tx.signature)),
-            DeclareTransaction::V3(tx) => Some(TransactionSignature(tx.signature)),
+            DeclareTransaction::V0(tx) => Some(TransactionSignature(tx.signature.into())),
+            DeclareTransaction::V1(tx) => Some(TransactionSignature(tx.signature.into())),
+            DeclareTransaction::V2(tx) => Some(TransactionSignature(tx.signature.into())),
+            DeclareTransaction::V3(tx) => Some(TransactionSignature(tx.signature.into())),
         },
         // L1Handler transactions have no signature
         Transaction::L1Handler(_) => Some(TransactionSignature::default()),
@@ -233,10 +233,10 @@ async fn fetch_block_with_txs(
     let block_with_txs = provider_client.get_block_with_txs(block_id).await;
 
     match block_with_txs {
-        Ok(MaybePendingBlockWithTxs::Block(block_txs)) => Ok(block_txs),
-        Ok(MaybePendingBlockWithTxs::PendingBlock(_)) => {
-            Err(TransactionSimulationError::PendingBlock(
-                "Pending block is not allowed at the configuration level".to_string(),
+        Ok(MaybePreConfirmedBlockWithTxs::Block(block_txs)) => Ok(block_txs),
+        Ok(MaybePreConfirmedBlockWithTxs::PreConfirmedBlock(_)) => {
+            Err(TransactionSimulationError::PreConfirmedBlock(
+                "Pre-confirmed block is not allowed at the configuration level".to_string(),
             ))
         }
         Err(err) => Err(TransactionSimulationError::ProviderError(err)),
@@ -387,12 +387,12 @@ pub fn extract_transaction_contex(
     };
 
     Arc::new(TransactionContext {
-        block_context: BlockContext::new(
+          block_context: Arc::new(BlockContext::new(
             block_info.clone(),
             chain_info,
             VersionedConstants::latest_constants().clone(),
             BouncerConfig::default(),
-        ),
+        )),
         tx_info: transaction_info,
     })
 }

@@ -12,7 +12,9 @@ use crate::SimulationArgs;
 use crate::TransactionSimulationError;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+    execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
+};
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::build_contract_call_debugger_data_adapter;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
@@ -136,21 +138,29 @@ fn run_simulation_to_get_debug_info(
         &mut GasCounter::new(GasAmount(u64::MAX)),
         transaction_context.clone(),
         &|call, state, cheatnet_state, ctx, _revert| {
+            let mut remaining_gas = call.initial_gas;
             Ok(execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
                 ctx,
-                true,
+                &mut remaining_gas,
+                &ExecuteCallEntryPointExtraOptions {
+                    trace_data_handled_by_revert_call: false,
+                },
             )?)
         },
         &|call, state, cheatnet_state, ctx, _revert| {
+            let mut remaining_gas = call.initial_gas;
             Ok(execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
                 ctx,
-                true,
+                &mut remaining_gas,
+                &ExecuteCallEntryPointExtraOptions {
+                    trace_data_handled_by_revert_call: false,
+                },
             )?)
         },
     )?;

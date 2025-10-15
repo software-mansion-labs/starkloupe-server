@@ -13,7 +13,7 @@ use num_traits::Num;
 use serde::Serialize;
 use serde_json::Value;
 use starknet::core::types::{
-    BlockId, FeePayment, Felt, MaybePendingBlockWithTxHashes, PriceUnit, ResourceBoundsMapping,
+    BlockId, FeePayment, Felt, MaybePreConfirmedBlockWithTxHashes, PriceUnit, ResourceBoundsMapping,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -558,8 +558,8 @@ async fn get_block_timestamp(
         .get_block_with_tx_hashes(BlockId::Number(block_number))
         .await?;
     match block {
-        MaybePendingBlockWithTxHashes::Block(block) => Ok(block.timestamp),
-        MaybePendingBlockWithTxHashes::PendingBlock(pending_block) => Ok(pending_block.timestamp),
+        MaybePreConfirmedBlockWithTxHashes::Block(block) => Ok(block.timestamp),
+        MaybePreConfirmedBlockWithTxHashes::PreConfirmedBlock(pending_block) => Ok(pending_block.timestamp),
     }
 }
 

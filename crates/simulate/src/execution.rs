@@ -26,9 +26,11 @@ use blockifier::state::cached_state::StateChanges;
 use blockifier::state::state_api::State;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::HasRelatedFeeType;
-use blockifier::transaction::transaction_types::TransactionType;
-use blockifier::versioned_constants::VersionedConstants;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
+use starknet_api::executable_transaction::TransactionType;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+    execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
+};
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
@@ -179,8 +181,8 @@ pub fn execute_transaction_flows_with_executor<'a>(
         let ep_selector = args.entry_point_selector;
         let storage_address = args.sender_address;
         let tx_type = args.transaction_type;
-        let remaining_execution_gas =
-            remaining_gas.limit_usage(execution_context.mode_sierra_gas_limit());
+        let sierra_gas_limit = transaction_context.block_context.versioned_constants().sierra_gas_limit(&ExecutionMode::Execute);
+        let remaining_execution_gas = remaining_gas.limit_usage(sierra_gas_limit);
 
         let mut execute_call = CallEntryPoint {
             entry_point_type: if tx_type == Some(TransactionType::L1Handler)
@@ -235,7 +237,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
     signature_len: usize,
     calldata_len: usize,
 ) -> Result<PostExecStateData, TransactionSimulationError> {
-    let mut state_changes = cached_fork_state.get_actual_state_changes()?;
+    let mut state_changes = cached_fork_state.to_state_diff()?;
 
     let versioned_constants = transaction_context.block_context.versioned_constants();
     let use_kzg_da = transaction_context.block_context.block_info().use_kzg_da;
@@ -277,7 +279,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
             is_revertable,
         )?;
 
-        let fee_state_changes = cached_fork_state.get_actual_state_changes()?;
+        let fee_state_changes = cached_fork_state.to_state_diff()?;
 
         let tx_resources = calculate_transaction_resources(
             args,
@@ -364,7 +366,7 @@ fn extract_gas_vectors(
 
     let computation_vm = get_vm_resources_cost(
         constants,
-        &computation.vm_resources,
+        &computation.tx_vm_resources,
         computation.n_reverted_steps,
         gas_mode,
     );
@@ -437,7 +439,9 @@ fn calculate_transaction_resources(
     let total_vm_resources = &charged_resources.vm_resources + &addition_os_resources;
 
     let computation_resources = ComputationResources {
-        vm_resources: total_vm_resources,
+        tx_vm_resources: total_vm_resources,
+        // TODO: add os_vm_resources
+        os_vm_resources: Default::default(),
         n_reverted_steps: 0,
         sierra_gas: charged_resources.gas_consumed,
         reverted_sierra_gas: GasAmount(0),
@@ -464,7 +468,7 @@ fn create_transaction_receipt(
 
     let fee = transaction_context
         .tx_info
-        .get_fee_by_gas_vector(transaction_context.block_context.block_info(), gas);
+        .get_fee_by_gas_vector(transaction_context.block_context.block_info(), gas, Default::default());
 
     let da_gas = resources
         .starknet_resources
@@ -587,12 +591,16 @@ fn execute_fee_transfer(
         initial_gas,
     };
 
-    let execution_result = execute_call_entry_point(
+      let mut remaining_gas = initial_gas;
+      let execution_result = execute_call_entry_point(
         &mut fee_transfer_call,
         state,
         cheatnet_state,
         &mut execution_context,
-        is_revertable,
+        &mut remaining_gas,
+        &ExecuteCallEntryPointExtraOptions {
+            trace_data_handled_by_revert_call: false,
+        },
     )?;
 
     Ok(execution_result)

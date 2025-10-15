@@ -70,7 +70,7 @@ aws-smithy-types = "1.2.0"
 hex = "0.4.3"
 indexmap = "2.3.0"
 walkdir = "2.5.0"
-smol_str = { version = "0.2.0", features = ["serde"] }
+smol_str = { version = "0.3.0", features = ["serde"] }
 thiserror = "1.0.60"
 num-integer = "0.1.46"
 lazy_static = "1.5.0"
@@ -86,38 +86,38 @@ ethers = "2.0.14"
 tiny-keccak = "2.0.2"
 
 #starknet
-starknet = "0.14.0"
-starknet_api = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.13.5-modified-sierra-dep" }
-starknet-types-core = { version = "0.1.8", features = [
+starknet = "0.17.0"
+starknet_api = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.14.0" } #depend on foundry
+starknet-types-core = { version = "0.2.0", features = [
   "hash",
   "prime-bigint",
   "serde",
 ] }
 starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }
 
-blockifier = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.13.5-modified-sierra-dep", default-features = false, features = [
+blockifier = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.14.0", default-features = false, features = [
   "testing",
   "tracing",
-] }
-cairo-annotations = { version = "0.3.1" }
-cairo-vm = "1.0.2"
+] } # depend on foundry
+cairo-annotations = { version = "0.6.1", features = ["cairo-lang"] }
+cairo-vm = "2.5.0"
 
 # Cairo compiler
-cairo-lang-casm = "2.11.2"
-cairo-lang-runner = "2.11.2"
-cairo-lang-utils = "2.11.2"
-cairo-lang-starknet = "2.11.2"
-cairo-lang-sierra = "2.11.2"
-cairo-lang-sierra-type-size = "2.11.2"
-cairo-lang-starknet-classes = "2.11.2"
-cairo-lang-sierra-to-casm = "2.11.2"
+cairo-lang-casm = "2.12.3"
+cairo-lang-runner = "2.12.3"
+cairo-lang-utils = "2.12.3"
+cairo-lang-starknet = "2.12.3"
+cairo-lang-sierra = "2.12.3"
+cairo-lang-sierra-type-size = "2.12.3"
+cairo-lang-starknet-classes = "2.12.3"
+cairo-lang-sierra-to-casm = "2.12.3"
 
 # Starknet Foundry 
-cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "2fbd5d53f7d4e61a6de4729b41c7abe719adb445" }
-runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "2fbd5d53f7d4e61a6de4729b41c7abe719adb445" }
-scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "2fbd5d53f7d4e61a6de4729b41c7abe719adb445" }
-conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "2fbd5d53f7d4e61a6de4729b41c7abe719adb445" }
-universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "2fbd5d53f7d4e61a6de4729b41c7abe719adb445" }
+cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "164675ec4821659d303f737531ece4c0eb0f270a" }
+runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "164675ec4821659d303f737531ece4c0eb0f270a" }
+scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "164675ec4821659d303f737531ece4c0eb0f270a" }
+conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "164675ec4821659d303f737531ece4c0eb0f270a" }
+universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "164675ec4821659d303f737531ece4c0eb0f270a" }
 
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }

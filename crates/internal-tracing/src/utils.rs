@@ -1,6 +1,6 @@
 use anyhow::Result;
 use blockifier::execution::{
-    deprecated_syscalls::DeprecatedSyscallSelector, syscalls::SyscallSelector,
+    deprecated_syscalls::DeprecatedSyscallSelector, syscalls::vm_syscall_utils::SyscallSelector,
 };
 use cairo_lang_casm::{
     ap_change::ApChange,
