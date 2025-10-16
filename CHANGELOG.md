@@ -1,5 +1,25 @@
 # Changelog
 
+### [0.0.112] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.112)
+
+- Upgrade rust to 1.89.0, upgrade cairo to 2.12.3, starknet-rs ro 0.17.0, blockifier to main-0.14.0 and foundry to 
+
+### [0.0.111] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.111)
+
+- Simplify type name for decoding calldata
+
+### [0.0.110] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.110)
+
+- Fixing for parent struct member decoding
+
+### [0.0.109] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.109)
+
+- Fixed sncast mainnet verification
+
+### [0.0.108] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.108)
+
+- Parse chain id for telegram bot
+
 ### [0.0.107] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.107)
 
 - Rename variants -> enum_variants, members -> struct_members
