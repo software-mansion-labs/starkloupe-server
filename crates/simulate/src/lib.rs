@@ -18,7 +18,7 @@ use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
-use blockifier::transaction::transaction_types::TransactionType;
+use starknet_api::executable_transaction::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
 use ethers::types::{Address, U256};
@@ -259,7 +259,7 @@ pub enum TransactionSimulationError {
     #[error("{0}")]
     ProviderError(#[from] ProviderError),
     #[error("{0}")]
-    PendingBlock(String),
+    PreConfirmedBlock(String),
     #[error("{0}")]
     TransactionExecutionError(#[from] TransactionExecutionError),
     #[error("Invalid Felt string conversion: {0}")]

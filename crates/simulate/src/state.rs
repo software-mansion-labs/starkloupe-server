@@ -15,9 +15,9 @@ use runtime::starknet::context::SerializableGasPrices;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::{
-    BlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
+    BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
     DeployedContractItem, EntryPointsByType, Felt, FlattenedSierraClass,
-    MaybePendingBlockWithTxHashes, SierraEntryPoint, StarknetError, TransactionTrace,
+    MaybePreConfirmedBlockWithTxHashes, SierraEntryPoint, StarknetError, TransactionTrace,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -227,7 +227,15 @@ impl ForkStateReader {
     ) -> Result<(), StateError> {
         let results = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
-                .block_on(self.client.trace_block_transactions(block_id))
+                .block_on(self.client.trace_block_transactions(match block_id {
+                    BlockId::Hash(hash) => ConfirmedBlockId::Hash(hash),
+                    BlockId::Number(number) => ConfirmedBlockId::Number(number),
+                    BlockId::Tag(tag) => match tag {
+                        BlockTag::Latest => ConfirmedBlockId::Latest,
+                        BlockTag::PreConfirmed => ConfirmedBlockId::Latest, // Pre-confirmed not supported, use Latest
+                        _ => ConfirmedBlockId::Latest, // Pre-confirmed not supported, use Latest
+                    },
+                }))
         })
         .map_err(|err| {
             StateError::StateReadError(format!(
@@ -554,7 +562,7 @@ impl BlockInfoReader for ForkStateReader {
             tokio::runtime::Handle::current()
                 .block_on(self.client.get_block_with_tx_hashes(self.block_id()))
         }) {
-            Ok(MaybePendingBlockWithTxHashes::Block(block)) => {
+            Ok(MaybePreConfirmedBlockWithTxHashes::Block(block)) => {
                 let block_info = BlockInfo {
                     block_number: BlockNumber(block.block_number),
                     sequencer_address: ContractAddress::try_from(block.sequencer_address)
@@ -570,8 +578,8 @@ impl BlockInfoReader for ForkStateReader {
 
                 Ok(block_info)
             }
-            Ok(MaybePendingBlockWithTxHashes::PendingBlock(_)) => {
-                unreachable!("Pending block is not be allowed at the configuration level")
+            Ok(MaybePreConfirmedBlockWithTxHashes::PreConfirmedBlock(_)) => {
+                unreachable!("Pre-confirmed block is not be allowed at the configuration level")
             }
             Err(ProviderError::Other(boxed)) => other_provider_error(boxed),
             Err(err) => Err(StateReadError(format!(

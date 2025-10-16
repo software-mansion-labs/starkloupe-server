@@ -33,8 +33,10 @@ use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use blockifier::transaction::transaction_types::TransactionType;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::execute_call_entry_point;
+use starknet_api::executable_transaction::TransactionType;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+    execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
+};
 use cheatnet::state::CheatnetState;
 use ethers::abi::AbiDecode;
 use ethers::abi::AbiEncode;
@@ -376,21 +378,29 @@ fn run_simulation(
         &mut initial_gas_counter,
         transaction_context.clone(),
         &|call, state, cheatnet_state, ctx, _| {
+            let mut remaining_gas = call.initial_gas;
             Ok(execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
                 ctx,
-                true,
+                &mut remaining_gas,
+                &ExecuteCallEntryPointExtraOptions {
+                    trace_data_handled_by_revert_call: false,
+                },
             )?)
         },
         &|call, state, cheatnet_state, ctx, _| {
+            let mut remaining_gas = call.initial_gas;
             Ok(execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
                 ctx,
-                true,
+                &mut remaining_gas,
+                &ExecuteCallEntryPointExtraOptions {
+                    trace_data_handled_by_revert_call: false,
+                },
             )?)
         },
     )?;
@@ -581,9 +591,9 @@ async fn simulate_starknet_transaction_by_hash(
                 let block_info = transaction_receipt_with_block_info.block;
 
                 match block_info {
-                    ReceiptBlock::Pending => {
-                        return Err(TransactionSimulationError::PendingBlock(
-                            "Transaction simualtion in pending block not found".to_string(),
+                    ReceiptBlock::PreConfirmed { .. } => {
+                        return Err(TransactionSimulationError::PreConfirmedBlock(
+                            "Transaction simualtion in pre-confirmed block not found".to_string(),
                         ));
                     }
                     ReceiptBlock::Block { block_number, .. } => {

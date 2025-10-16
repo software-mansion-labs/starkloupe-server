@@ -2,7 +2,7 @@ use crate::transaction_extraction::extract_chain_id_from_felt;
 use crate::DebugPayload;
 use crate::SimulationRawArgs;
 use crate::TransactionSimulationError;
-use blockifier::transaction::transaction_types::TransactionType;
+use starknet_api::executable_transaction::TransactionType;
 use ethers::types::{Address, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
