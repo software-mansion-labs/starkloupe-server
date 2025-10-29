@@ -6,45 +6,48 @@ use walnut_shared::utils::simplify_type_name;
 
 /// Parse tuple type string into individual element types
 /// Handles nested tuples, arrays, and generic types properly
-fn parse_tuple_types(tuple_inner: &str) -> Vec<String> {
+#[inline]
+fn parse_tuple_types(tuple_inner: &str) -> Vec<&str> {
     let mut types = Vec::new();
-    let mut current = String::new();
+    let mut start = 0;
     let mut depth_paren = 0;
     let mut depth_angle = 0;
 
-    for ch in tuple_inner.chars() {
+    for (i, ch) in tuple_inner.char_indices() {
         match ch {
-            '(' => {
-                depth_paren += 1;
-                current.push(ch);
-            }
-            ')' => {
-                depth_paren -= 1;
-                current.push(ch);
-            }
-            '<' => {
-                depth_angle += 1;
-                current.push(ch);
-            }
-            '>' => {
-                depth_angle -= 1;
-                current.push(ch);
-            }
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '<' => depth_angle += 1,
+            '>' => depth_angle -= 1,
             ',' if depth_paren == 0 && depth_angle == 0 => {
-                if !current.trim().is_empty() {
-                    types.push(current.trim().to_string());
+                let segment = tuple_inner[start..i].trim();
+                if !segment.is_empty() {
+                    types.push(segment);
                 }
-                current.clear();
+                start = i + 1;
             }
-            _ => current.push(ch),
+            _ => {}
         }
     }
 
-    if !current.trim().is_empty() {
-        types.push(current.trim().to_string());
+    let segment = tuple_inner[start..].trim();
+    if !segment.is_empty() {
+        types.push(segment);
     }
 
     types
+}
+
+/// Extract inner type from generic type (e.g., "Array<T>" -> "T")
+#[inline]
+fn extract_generic_inner(type_name: &str) -> Option<&str> {
+    let start = type_name.find('<')? + 1;
+    let end = type_name.rfind('>')?;
+    if start < end {
+        Some(&type_name[start..end])
+    } else {
+        None
+    }
 }
 
 /// Encode a single decoded value to calldata format
@@ -110,123 +113,96 @@ pub fn encode_decoded_value(
             "0x0".to_string()
         }]),
         data_decoder::DecodedValueType::Array(items) => {
+            let type_name = &value.type_name;
+            let is_tuple = type_name.starts_with('(') || type_name.starts_with("Tuple<");
             let mut calldata = Vec::new();
 
-            // Check if this is a tuple (type_name starts with '(' or 'Tuple<')
-            let is_tuple =
-                value.type_name.starts_with('(') || value.type_name.starts_with("Tuple<");
+            if is_tuple {
+                // Extract tuple element types
+                let inner = if type_name.starts_with("Tuple<") {
+                    type_name
+                        .strip_prefix("Tuple<")
+                        .and_then(|s| s.strip_suffix('>'))
+                        .unwrap_or("")
+                } else {
+                    type_name
+                        .strip_prefix('(')
+                        .and_then(|s| s.strip_suffix(')'))
+                        .unwrap_or("")
+                };
 
-            // Only add array length for actual arrays, NOT for tuples
-            if !is_tuple {
+                let element_types = parse_tuple_types(inner);
+
+                // Encode each tuple element with its correct type
+                for (i, item) in items.iter().enumerate() {
+                    let elem_type = element_types.get(i).copied().unwrap_or("unknown");
+                    let item_value = DecodedValue {
+                        name: None,
+                        type_name: elem_type.to_string(),
+                        value: item.clone(),
+                    };
+                    calldata.extend(encode_decoded_value(&item_value, enums, structs)?);
+                }
+            } else {
+                // Array - add length prefix
                 calldata.push(format!("0x{:x}", items.len()));
-            }
 
-            // Try to extract the element type from the array/tuple type_name
-            let element_type =
-                if value.type_name.starts_with("Array<") || value.type_name.starts_with("Span<") {
-                    // Extract the inner type from Array<T> or Span<T>
-                    let start = value.type_name.find('<').map(|i| i + 1).unwrap_or(0);
-                    let end = value.type_name.rfind('>').unwrap_or(value.type_name.len());
-                    if start < end {
-                        value.type_name[start..end].to_string()
+                // Extract element type from Array<T> or Span<T>
+                let element_type =
+                    if type_name.starts_with("Array<") || type_name.starts_with("Span<") {
+                        extract_generic_inner(type_name).unwrap_or("unknown")
                     } else {
-                        "unknown".to_string()
-                    }
-                } else if is_tuple {
-                    // For tuples, we need to extract individual element types
-                    // Parse tuple type like "(Type1, Type2, Type3)" to get element types
-                    let inner = if value.type_name.starts_with("Tuple<") {
-                        value
-                            .type_name
-                            .strip_prefix("Tuple<")
-                            .and_then(|s| s.strip_suffix('>'))
-                            .unwrap_or("")
-                    } else {
-                        value
-                            .type_name
-                            .strip_prefix('(')
-                            .and_then(|s| s.strip_suffix(')'))
-                            .unwrap_or("")
+                        "unknown"
                     };
 
-                    // Split by comma, handling nested types properly
-                    let element_types = parse_tuple_types(inner);
-
-                    // Encode each tuple element with its correct type
-                    for (i, item) in items.iter().enumerate() {
-                        let elem_type = element_types
-                            .get(i)
-                            .map(|s| s.as_str())
-                            .unwrap_or("unknown");
-
-                        let item_value = DecodedValue {
-                            name: None,
-                            type_name: elem_type.to_string(),
-                            value: item.clone(),
-                        };
-                        let encoded_item = encode_decoded_value(&item_value, enums, structs)?;
-                        calldata.extend(encoded_item);
-                    }
-                    return Ok(calldata);
-                } else {
-                    "unknown".to_string()
-                };
-
-            // For non-tuple arrays
-            for (i, item) in items.iter().enumerate() {
-                let item_value = DecodedValue {
-                    name: None,
-                    type_name: element_type.clone(),
-                    value: item.clone(),
-                };
-                let encoded_item = encode_decoded_value(&item_value, enums, structs)?;
-                calldata.extend(encoded_item);
+                // Encode array elements
+                for item in items {
+                    let item_value = DecodedValue {
+                        name: None,
+                        type_name: element_type.to_string(),
+                        value: item.clone(),
+                    };
+                    calldata.extend(encode_decoded_value(&item_value, enums, structs)?);
+                }
             }
+
             Ok(calldata)
         }
         data_decoder::DecodedValueType::Struct(fields) => {
-            let mut calldata = Vec::new();
+            let mut calldata = Vec::with_capacity(fields.len() * 2);
             for param in fields.values() {
-                let encoded_field = encode_decoded_value(param, enums, structs)?;
-                calldata.extend(encoded_field);
+                calldata.extend(encode_decoded_value(param, enums, structs)?);
             }
             Ok(calldata)
         }
         data_decoder::DecodedValueType::Enum(variant, inner) => {
-            let mut calldata = Vec::new();
-
-            // Parse enum name from type_name
+            // Parse enum name from type_name (before "::")
             let enum_name = value.type_name.split("::").next().unwrap_or("unknown");
-            let variant_name = variant;
 
             // Find enum definition
-            if let Some(enum_def) = enums.get(enum_name) {
-                // Find variant index
-                let variant_index = enum_def
-                    .variants
-                    .iter()
-                    .position(|v| v.name == *variant_name)
-                    .ok_or_else(|| {
-                        format!(
-                            "Variant '{}' not found in enum '{}'",
-                            variant_name, enum_name
-                        )
-                    })?;
+            let enum_def = enums
+                .get(enum_name)
+                .ok_or_else(|| format!("Enum '{}' not found in ABI", enum_name))?;
 
-                // Add variant index
-                calldata.push(format!("0x{:x}", variant_index));
+            // Find variant index
+            let variant_index = enum_def
+                .variants
+                .iter()
+                .position(|v| v.name == *variant)
+                .ok_or_else(|| {
+                    format!("Variant '{}' not found in enum '{}'", variant, enum_name)
+                })?;
 
-                // Encode inner value
-                let inner_value = DecodedValue {
-                    name: None,
-                    type_name: inner.type_name.clone(),
-                    value: inner.value.clone(),
-                };
-                let encoded_inner = encode_decoded_value(&inner_value, enums, structs)?;
-                calldata.extend(encoded_inner);
-            } else {
-                return Err(format!("Enum '{}' not found in ABI", enum_name));
-            }
+            let mut calldata = Vec::with_capacity(2);
+            calldata.push(format!("0x{:x}", variant_index));
+
+            // Encode inner value
+            let inner_value = DecodedValue {
+                name: None,
+                type_name: inner.type_name.clone(),
+                value: inner.value.clone(),
+            };
+            calldata.extend(encode_decoded_value(&inner_value, enums, structs)?);
 
             Ok(calldata)
         }
@@ -337,22 +313,20 @@ pub fn encode_parameters_with_abi(
     structs: &HashMap<String, Struct>,
     enums: &HashMap<String, Enum>,
 ) -> Result<Vec<String>, String> {
-    let mut calldata = Vec::new();
+    let mut calldata = Vec::with_capacity(parameters.len() * 2);
 
     for (i, param) in parameters.iter().enumerate() {
         // Check if this is an enum variant (type_name format: "EnumName::VariantName")
         if is_enum_variant(&param.type_name) {
-            let encoded = encode_enum_variant(param, enums)?;
-            calldata.extend(encoded);
+            calldata.extend(encode_enum_variant(param, enums)?);
             continue;
         }
 
         // For regular parameters, use ABI type if available, otherwise use parameter's own type
-        let input_type = if i < function_inputs.len() {
-            &function_inputs[i].ty
-        } else {
-            &param.type_name
-        };
+        let input_type = function_inputs
+            .get(i)
+            .map(|input| input.ty.as_str())
+            .unwrap_or(&param.type_name);
 
         let simplified_type = simplify_type_name(input_type);
 
@@ -363,8 +337,7 @@ pub fn encode_parameters_with_abi(
             value: param.value.clone(),
         };
 
-        let encoded = encode_decoded_value(&param_with_type, enums, structs)?;
-        calldata.extend(encoded);
+        calldata.extend(encode_decoded_value(&param_with_type, enums, structs)?);
     }
 
     Ok(calldata)
@@ -402,7 +375,7 @@ pub async fn encode_decoded_calldata(
         // Add function selector
         raw_calldata.push(call.function_selector.clone());
         // Fetch ABI for this contract to encode parameters
-        match fetch_contract_abi(&call.contract_address, chain_id).await {
+        let call_calldata = match fetch_contract_abi(&call.contract_address, chain_id).await {
             Ok((functions, _type_decoder, structs, enums)) => {
                 // Find the function by name
                 let function = functions
@@ -416,36 +389,29 @@ pub async fn encode_decoded_calldata(
                     })?;
 
                 // Encode parameters using ABI
-                let call_calldata = encode_parameters_with_abi(
+                encode_parameters_with_abi(
                     &call.parameters,
                     function.inputs.as_slice(),
                     &structs,
                     &enums,
-                )?;
-                // Add calldata length
-                raw_calldata.push(format!("0x{:x}", call_calldata.len()));
-                // Add actual calldata
-                raw_calldata.extend(call_calldata);
+                )?
             }
             Err(_e) => {
-                // Fallback to basic encoding without ABI
-                let call_calldata = encode_parameters_basic(
-                    &call
-                        .parameters
-                        .iter()
-                        .enumerate()
-                        .map(|(i, v)| (i, v.clone()))
-                        .collect(),
-                    &HashMap::new(),
-                    &HashMap::new(),
-                )?;
+                // Fallback to basic encoding without ABI - use empty hashmaps
+                let params_map: HashMap<usize, DecodedValue> = call
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (i, v.clone()))
+                    .collect();
 
-                // Add calldata length
-                raw_calldata.push(format!("0x{:x}", call_calldata.len()));
-                // Add actual calldata
-                raw_calldata.extend(call_calldata);
+                encode_parameters_basic(&params_map, &HashMap::new(), &HashMap::new())?
             }
-        }
+        };
+
+        // Add calldata length and actual calldata
+        raw_calldata.push(format!("0x{:x}", call_calldata.len()));
+        raw_calldata.extend(call_calldata);
     }
 
     Ok(raw_calldata)
