@@ -4,6 +4,49 @@ use std::collections::HashMap;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::utils::simplify_type_name;
 
+/// Parse tuple type string into individual element types
+/// Handles nested tuples, arrays, and generic types properly
+fn parse_tuple_types(tuple_inner: &str) -> Vec<String> {
+    let mut types = Vec::new();
+    let mut current = String::new();
+    let mut depth_paren = 0;
+    let mut depth_angle = 0;
+
+    for ch in tuple_inner.chars() {
+        match ch {
+            '(' => {
+                depth_paren += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth_paren -= 1;
+                current.push(ch);
+            }
+            '<' => {
+                depth_angle += 1;
+                current.push(ch);
+            }
+            '>' => {
+                depth_angle -= 1;
+                current.push(ch);
+            }
+            ',' if depth_paren == 0 && depth_angle == 0 => {
+                if !current.trim().is_empty() {
+                    types.push(current.trim().to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.trim().is_empty() {
+        types.push(current.trim().to_string());
+    }
+
+    types
+}
+
 /// Encode a single decoded value to calldata format
 pub fn encode_decoded_value(
     value: &DecodedValue,
@@ -11,7 +54,48 @@ pub fn encode_decoded_value(
     structs: &HashMap<String, Struct>,
 ) -> Result<Vec<String>, String> {
     match &value.value {
-        data_decoder::DecodedValueType::String(s) => Ok(vec![s.clone()]),
+        data_decoder::DecodedValueType::String(s) => {
+            // Check if this is an enum variant (type_name contains "::" or value is not a hex string)
+            if value.type_name.contains("::")
+                || (!s.starts_with("0x") && !s.chars().all(|c| c.is_ascii_hexdigit()))
+            {
+                // This is likely an enum variant
+                let enum_name = value
+                    .type_name
+                    .split("::")
+                    .next()
+                    .unwrap_or(&value.type_name);
+
+                // Find enum definition
+                if let Some(enum_def) = enums.get(enum_name) {
+                    // Find variant index by name
+                    let variant_index = enum_def
+                        .variants
+                        .iter()
+                        .position(|v| v.name == *s)
+                        .ok_or_else(|| {
+                            format!(
+                                "Variant '{}' not found in enum '{}'. Available variants: {:?}",
+                                s,
+                                enum_name,
+                                enum_def
+                                    .variants
+                                    .iter()
+                                    .map(|v| &v.name)
+                                    .collect::<Vec<_>>()
+                            )
+                        })?;
+
+                    Ok(vec![format!("0x{:x}", variant_index)])
+                } else {
+                    // Enum definition not found - return string as-is
+                    Ok(vec![s.clone()])
+                }
+            } else {
+                // Regular string or hex value
+                Ok(vec![s.clone()])
+            }
+        }
         data_decoder::DecodedValueType::Single(felt) => Ok(vec![felt.to_hex_string()]),
         data_decoder::DecodedValueType::BigUint(n) => {
             // Special handling for multi-limb integer types (u256, u512)
@@ -28,10 +112,16 @@ pub fn encode_decoded_value(
         data_decoder::DecodedValueType::Array(items) => {
             let mut calldata = Vec::new();
 
-            // Add array length first
-            calldata.push(format!("0x{:x}", items.len()));
+            // Check if this is a tuple (type_name starts with '(' or 'Tuple<')
+            let is_tuple =
+                value.type_name.starts_with('(') || value.type_name.starts_with("Tuple<");
 
-            // Try to extract the element type from the array type_name
+            // Only add array length for actual arrays, NOT for tuples
+            if !is_tuple {
+                calldata.push(format!("0x{:x}", items.len()));
+            }
+
+            // Try to extract the element type from the array/tuple type_name
             let element_type =
                 if value.type_name.starts_with("Array<") || value.type_name.starts_with("Span<") {
                     // Extract the inner type from Array<T> or Span<T>
@@ -42,11 +132,48 @@ pub fn encode_decoded_value(
                     } else {
                         "unknown".to_string()
                     }
+                } else if is_tuple {
+                    // For tuples, we need to extract individual element types
+                    // Parse tuple type like "(Type1, Type2, Type3)" to get element types
+                    let inner = if value.type_name.starts_with("Tuple<") {
+                        value
+                            .type_name
+                            .strip_prefix("Tuple<")
+                            .and_then(|s| s.strip_suffix('>'))
+                            .unwrap_or("")
+                    } else {
+                        value
+                            .type_name
+                            .strip_prefix('(')
+                            .and_then(|s| s.strip_suffix(')'))
+                            .unwrap_or("")
+                    };
+
+                    // Split by comma, handling nested types properly
+                    let element_types = parse_tuple_types(inner);
+
+                    // Encode each tuple element with its correct type
+                    for (i, item) in items.iter().enumerate() {
+                        let elem_type = element_types
+                            .get(i)
+                            .map(|s| s.as_str())
+                            .unwrap_or("unknown");
+
+                        let item_value = DecodedValue {
+                            name: None,
+                            type_name: elem_type.to_string(),
+                            value: item.clone(),
+                        };
+                        let encoded_item = encode_decoded_value(&item_value, enums, structs)?;
+                        calldata.extend(encoded_item);
+                    }
+                    return Ok(calldata);
                 } else {
                     "unknown".to_string()
                 };
 
-            for item in items {
+            // For non-tuple arrays
+            for (i, item) in items.iter().enumerate() {
                 let item_value = DecodedValue {
                     name: None,
                     type_name: element_type.clone(),
