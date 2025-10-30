@@ -1,5 +1,9 @@
 # Changelog
 
+### [0.0.114] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.114)
+
+- Fetch all contracts for class
+
 ### [0.0.113] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.113)
 
 - Fix the encoding for array of tuples
