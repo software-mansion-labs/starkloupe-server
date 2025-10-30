@@ -1,8 +1,12 @@
 # Changelog
 
+### [0.0.113] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.113)
+
+- Fix the encoding for array of tuples
+
 ### [0.0.112] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.112)
 
-- Upgrade rust to 1.89.0, upgrade cairo to 2.12.3, starknet-rs ro 0.17.0, blockifier to main-0.14.0 and foundry to 
+- Upgrade rust to 1.89.0, upgrade cairo to 2.12.3, starknet-rs ro 0.17.0, blockifier to main-0.14.0 and foundry
 
 ### [0.0.111] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.111)
 
