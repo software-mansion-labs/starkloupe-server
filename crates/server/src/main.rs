@@ -16,7 +16,7 @@ use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
     calldata_decoder::decode_calldata_handler,
-    classes::get_class_handler,
+    classes::{get_class_handler, get_contracts_by_class_hash_handler},
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
     debugger::debug_transaction,
     openapi::ApiDoc,
@@ -132,6 +132,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(get_class_handler_with_chain_id),
                 )
                 .route("/v1/classes/:class_hash", get(get_class_handler))
+                .route(
+                    "/v1/classes/:class_hash/contracts",
+                    get(get_contracts_by_class_hash_handler),
+                )
                 .route("/v1/contracts/:contract_address", get(get_contract_handler))
                 .route(
                     "/v1/contracts/:contract_address/entrypoints",
