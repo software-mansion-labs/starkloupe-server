@@ -172,6 +172,8 @@ pub struct StructMember {
     pub struct_members: Option<Cow<'static, [StructMember]>>, // For nested struct types
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For enum types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circular_reference_to: Option<String>, // Type name when circular reference detected
 }
 
 /// Enum ABI.
@@ -191,6 +193,8 @@ pub struct EnumVariant {
     pub struct_members: Option<Cow<'static, [StructMember]>>, // For struct types in enum variants
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enum_variants: Option<Cow<'static, [EnumVariant]>>, // For nested enum types in enum variants
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circular_reference_to: Option<String>, // Type name when circular reference detected
 }
 
 pub fn get_functions(items: &[Item]) -> Vec<Function> {
