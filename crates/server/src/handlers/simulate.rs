@@ -66,6 +66,12 @@ pub struct QueryParams {
     skip_tracking: Option<String>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct SimulationErrorResponse {
+    pub error: String,
+    pub simulation_args: SimulationPayload,
+}
+
 #[debug_handler]
 pub async fn simulate_transaction(
     State(state): State<Arc<AppState>>,
@@ -80,12 +86,21 @@ pub async fn simulate_transaction(
         tokio::runtime::Handle::current().block_on(async move {
             match payload {
                 SimulationPayload::WithCalldata(args) => {
+                    let args_for_error = args.clone();
                     // Parse calldata args
                     let simulation_args: SimulationArgs =
                         match SimulationArgs::try_from_raw_args(args).await {
                             Ok(args) => args,
                             Err(e) => {
-                                return Err((StatusCode::BAD_REQUEST, e.to_string()));
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(SimulationErrorResponse {
+                                        error: e.to_string(),
+                                        simulation_args: SimulationPayload::WithCalldata(
+                                            args_for_error,
+                                        ),
+                                    }),
+                                ));
                             }
                         };
 
@@ -98,7 +113,12 @@ pub async fn simulate_transaction(
                             Err(e) => {
                                 return Err((
                                     StatusCode::BAD_REQUEST,
-                                    format!("Failed to get latest block number: {}", e),
+                                    Json(SimulationErrorResponse {
+                                        error: format!("Failed to get latest block number: {}", e),
+                                        simulation_args: SimulationPayload::WithCalldata(
+                                            args_for_error,
+                                        ),
+                                    }),
                                 ));
                             }
                         }
@@ -142,17 +162,31 @@ pub async fn simulate_transaction(
                         }
                         Err(e) => {
                             info!("Simulation failed after: {}", e);
-                            Err((StatusCode::BAD_REQUEST, e.to_string()))
+                            Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(SimulationErrorResponse {
+                                    error: e.to_string(),
+                                    simulation_args: SimulationPayload::WithCalldata(
+                                        args_for_error,
+                                    ),
+                                }),
+                            ))
                         }
                     }
                 }
 
                 SimulationPayload::WithDecodedCalldata(args) => {
                     // Convert decoded calldata to raw calldata with ABI information
+                    let args_for_error = args.clone();
                     let chain_id = args.chain_id.as_deref().ok_or_else(|| {
                         (
                             StatusCode::BAD_REQUEST,
-                            "Missing required field: chain_id".to_string(),
+                            Json(SimulationErrorResponse {
+                                error: "Missing required field: chain_id".to_string(),
+                                simulation_args: SimulationPayload::WithDecodedCalldata(
+                                    args_for_error.clone(),
+                                ),
+                            }),
                         )
                     })?;
 
@@ -166,7 +200,12 @@ pub async fn simulate_transaction(
                         Err(e) => {
                             return Err((
                                 StatusCode::BAD_REQUEST,
-                                format!("Failed to encode decoded calldata: {}", e),
+                                Json(SimulationErrorResponse {
+                                    error: format!("Failed to encode decoded calldata: {}", e),
+                                    simulation_args: SimulationPayload::WithDecodedCalldata(
+                                        args_for_error,
+                                    ),
+                                }),
                             ));
                         }
                     };
@@ -184,12 +223,21 @@ pub async fn simulate_transaction(
                             .map(|sig| sig.into_iter().filter_map(|s| s.parse().ok()).collect()),
                     };
 
+                    let args_for_error = raw_args.clone();
                     // Parse calldata args
                     let simulation_args: SimulationArgs =
                         match SimulationArgs::try_from_raw_args(raw_args).await {
                             Ok(args) => args,
                             Err(e) => {
-                                return Err((StatusCode::BAD_REQUEST, e.to_string()));
+                                return Err((
+                                    StatusCode::BAD_REQUEST,
+                                    Json(SimulationErrorResponse {
+                                        error: e.to_string(),
+                                        simulation_args: SimulationPayload::WithCalldata(
+                                            args_for_error,
+                                        ),
+                                    }),
+                                ));
                             }
                         };
 
@@ -202,7 +250,12 @@ pub async fn simulate_transaction(
                             Err(e) => {
                                 return Err((
                                     StatusCode::BAD_REQUEST,
-                                    format!("Failed to get latest block number: {}", e),
+                                    Json(SimulationErrorResponse {
+                                        error: format!("Failed to get latest block number: {}", e),
+                                        simulation_args: SimulationPayload::WithCalldata(
+                                            args_for_error,
+                                        ),
+                                    }),
                                 ));
                             }
                         }
@@ -247,7 +300,15 @@ pub async fn simulate_transaction(
                         }
                         Err(e) => {
                             info!("Simulation failed after: {}", e);
-                            Err((StatusCode::BAD_REQUEST, e.to_string()))
+                            Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(SimulationErrorResponse {
+                                    error: e.to_string(),
+                                    simulation_args: SimulationPayload::WithCalldata(
+                                        args_for_error,
+                                    ),
+                                }),
+                            ))
                         }
                     }
                 }
@@ -273,9 +334,18 @@ pub async fn simulate_transaction(
                         }
                     }
 
+                    let args_for_error = args.clone();
                     let starknet_rpc_url = match url::Url::parse(&args.rpc_url) {
                         Ok(url) => url,
-                        Err(e) => return Err((StatusCode::BAD_REQUEST, e.to_string())),
+                        Err(e) => {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(SimulationErrorResponse {
+                                    error: format!("Invalid RPC URL: {}", e),
+                                    simulation_args: SimulationPayload::WithTxHash(args_for_error),
+                                }),
+                            ));
+                        }
                     };
 
                     match simulate_transaction_by_hash(
@@ -302,7 +372,13 @@ pub async fn simulate_transaction(
                         }
                         Err(e) => {
                             info!("Tx hash simulation failed after: {}", e);
-                            Err((StatusCode::BAD_REQUEST, e.to_string()))
+                            Err((
+                                StatusCode::BAD_REQUEST,
+                                Json(SimulationErrorResponse {
+                                    error: e.to_string(),
+                                    simulation_args: SimulationPayload::WithTxHash(args_for_error),
+                                }),
+                            ))
                         }
                     }
                 }
@@ -312,7 +388,7 @@ pub async fn simulate_transaction(
 
     match timeout(Duration::from_secs(900), simulation_task).await {
         Ok(Ok(Ok((status, sim_info)))) => (status, Json(sim_info)).into_response(),
-        Ok(Ok(Err((status, message)))) => (status, Json(message)).into_response(),
+        Ok(Ok(Err((status, message)))) => (status, message).into_response(),
         Ok(Err(join_err)) => {
             error!("Simulation task panicked: {:?}", join_err);
             (
