@@ -3,6 +3,9 @@ use std::collections::{HashMap, HashSet};
 use walnut_shared::abi::{Enum, EnumVariant, Function, Input, Output, Struct, StructMember};
 use walnut_shared::utils::simplify_type_name;
 
+/// Maximum depth for type expansion to prevent stack overflow with deeply nested types
+const MAX_EXPANSION_DEPTH: usize = 5;
+
 /// Type decoder for ABI entrypoints that recursively expands all nested types
 pub struct TypeDecoder {
     struct_map: HashMap<String, Struct>,
@@ -25,6 +28,10 @@ impl TypeDecoder {
             .map(|func| {
                 let selector = self.calculate_selector(&func.name);
 
+                // Share visited set across all inputs and outputs of the same function
+                // to properly detect circular references
+                let mut visited = HashSet::new();
+
                 // Decode inputs with complete type information
                 let decoded_inputs = func
                     .inputs
@@ -34,7 +41,8 @@ impl TypeDecoder {
                         let simplified_type = simplify_type_name(&enhanced_type);
 
                         // Recursively get all nested type information
-                        let (members, variants) = self.get_complete_type_info(&simplified_type);
+                        let (members, variants) =
+                            self.get_complete_type_info(&simplified_type, &mut visited, 0);
 
                         Input {
                             name: input.name.clone(),
@@ -54,7 +62,8 @@ impl TypeDecoder {
                         let simplified_type = simplify_type_name(&enhanced_type);
 
                         // Recursively get all nested type information
-                        let (members, variants) = self.get_complete_type_info(&simplified_type);
+                        let (members, variants) =
+                            self.get_complete_type_info(&simplified_type, &mut visited, 0);
 
                         Output {
                             ty: enhanced_type,
@@ -180,6 +189,8 @@ impl TypeDecoder {
     fn get_complete_type_info(
         &self,
         type_name: &str,
+        visited: &mut HashSet<String>,
+        depth: usize,
     ) -> (
         Option<Cow<'static, [StructMember]>>,
         Option<Cow<'static, [EnumVariant]>>,
@@ -187,6 +198,19 @@ impl TypeDecoder {
         if self.is_primitive_type(type_name) {
             return (None, None);
         }
+
+        // Check for depth limit
+        if depth > MAX_EXPANSION_DEPTH {
+            return (None, None);
+        }
+
+        // Check for circular reference
+        if visited.contains(type_name) {
+            // Circular reference detected - return empty to break the cycle
+            return (None, None);
+        }
+
+        visited.insert(type_name.to_string());
 
         if let Some(struct_def) = self.struct_map.get(type_name) {
             // Special handling for Span<T> types that exist as structs in ABI
@@ -199,15 +223,17 @@ impl TypeDecoder {
 
                 // Get the structure of the inner type directly
                 let (inner_members, inner_variants) =
-                    self.get_complete_type_info(&simplified_inner);
+                    self.get_complete_type_info(&simplified_inner, visited, depth + 1);
 
                 // Return the inner type structure directly instead of wrapping in element
+                // Don't remove from visited - keep it for circular reference detection
                 return (inner_members, inner_variants);
             }
 
             // Special handling for u256 and u512 structs - display as primitive types
             if self.is_multi_limb_integer_struct(struct_def) {
                 // Return None for struct_members to treat as primitive type
+                // Don't remove from visited - keep it for circular reference detection
                 return (None, None);
             }
 
@@ -216,18 +242,36 @@ impl TypeDecoder {
                 .iter()
                 .map(|member| {
                     let member_type = simplify_type_name(&member.ty);
-                    let (nested_members, nested_variants) =
-                        self.get_complete_type_info(&member_type);
 
-                    StructMember {
-                        name: member.name.clone(),
-                        ty: member.ty.clone(),
-                        struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
-                        enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                    // Check for circular reference or depth limit before recursing
+                    let is_circular = visited.contains(&member_type);
+                    let exceeds_depth = depth + 1 > MAX_EXPANSION_DEPTH;
+
+                    if is_circular || exceeds_depth {
+                        // Circular reference or depth limit reached - return with reference info
+                        StructMember {
+                            name: member.name.clone(),
+                            ty: member.ty.clone(),
+                            struct_members: None,
+                            enum_variants: None,
+                            circular_reference_to: Some(member_type.clone()),
+                        }
+                    } else {
+                        let (nested_members, nested_variants) =
+                            self.get_complete_type_info(&member_type, visited, depth + 1);
+
+                        StructMember {
+                            name: member.name.clone(),
+                            ty: member.ty.clone(),
+                            struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
+                            enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                            circular_reference_to: None,
+                        }
                     }
                 })
                 .collect::<Vec<_>>();
 
+            // Don't remove from visited - keep it for circular reference detection
             return (Some(Cow::Owned(enhanced_members)), None);
         }
 
@@ -237,18 +281,36 @@ impl TypeDecoder {
                 .iter()
                 .map(|variant| {
                     let variant_type = simplify_type_name(&variant.ty);
-                    let (nested_members, nested_variants) =
-                        self.get_complete_type_info(&variant_type);
 
-                    EnumVariant {
-                        name: variant.name.clone(),
-                        ty: variant.ty.clone(),
-                        struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
-                        enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                    // Check for circular reference or depth limit before recursing
+                    let is_circular = visited.contains(&variant_type);
+                    let exceeds_depth = depth + 1 > MAX_EXPANSION_DEPTH;
+
+                    if is_circular || exceeds_depth {
+                        // Circular reference or depth limit reached - return with reference info
+                        EnumVariant {
+                            name: variant.name.clone(),
+                            ty: variant.ty.clone(),
+                            struct_members: None,
+                            enum_variants: None,
+                            circular_reference_to: Some(variant_type.clone()),
+                        }
+                    } else {
+                        let (nested_members, nested_variants) =
+                            self.get_complete_type_info(&variant_type, visited, depth + 1);
+
+                        EnumVariant {
+                            name: variant.name.clone(),
+                            ty: variant.ty.clone(),
+                            struct_members: nested_members.map(|cow| Cow::Owned(cow.into_owned())),
+                            enum_variants: nested_variants.map(|cow| Cow::Owned(cow.into_owned())),
+                            circular_reference_to: None,
+                        }
                     }
                 })
                 .collect::<Vec<_>>();
 
+            // Don't remove from visited - keep it for circular reference detection
             return (None, Some(Cow::Owned(enhanced_variants)));
         }
 
@@ -256,7 +318,9 @@ impl TypeDecoder {
         if type_name.starts_with("Array<") && type_name.ends_with(">") {
             let inner_type = &type_name[6..type_name.len() - 1];
             let simplified_inner = simplify_type_name(inner_type);
-            return self.get_complete_type_info(&simplified_inner);
+            let result = self.get_complete_type_info(&simplified_inner, visited, depth + 1);
+            // Don't remove from visited - keep it for circular reference detection
+            return result;
         }
 
         // Check if this is a Span type that needs recursive expansion (treat as Array)
@@ -265,7 +329,8 @@ impl TypeDecoder {
             let simplified_inner = simplify_type_name(inner_type);
 
             // For Span types, we need to check if the inner type has structure
-            let (inner_members, inner_variants) = self.get_complete_type_info(&simplified_inner);
+            let (inner_members, inner_variants) =
+                self.get_complete_type_info(&simplified_inner, visited, depth + 1);
 
             // Only create members if the inner type actually has structure
             if inner_members.is_some() || inner_variants.is_some() {
@@ -274,11 +339,14 @@ impl TypeDecoder {
                     ty: inner_type.to_string(),
                     struct_members: inner_members,
                     enum_variants: inner_variants,
+                    circular_reference_to: None,
                 };
 
+                // Don't remove from visited - keep it for circular reference detection
                 return (Some(Cow::Owned(vec![synthetic_member])), None);
             }
 
+            // Don't remove from visited - keep it for circular reference detection
             return (None, None);
         }
 
@@ -286,7 +354,9 @@ impl TypeDecoder {
         if type_name.starts_with("Option<") && type_name.ends_with(">") {
             let inner_type = &type_name[7..type_name.len() - 1];
             let simplified_inner = simplify_type_name(inner_type);
-            return self.get_complete_type_info(&simplified_inner);
+            let result = self.get_complete_type_info(&simplified_inner, visited, depth + 1);
+            // Don't remove from visited - keep it for circular reference detection
+            return result;
         }
 
         // Check if this is a tuple type that needs recursive expansion
@@ -299,7 +369,8 @@ impl TypeDecoder {
             let mut tuple_members = Vec::new();
             for (index, component) in components.iter().enumerate() {
                 let simplified_comp = simplify_type_name(component.trim());
-                let (members, variants) = self.get_complete_type_info(&simplified_comp);
+                let (members, variants) =
+                    self.get_complete_type_info(&simplified_comp, visited, depth + 1);
 
                 // Create a synthetic member for this tuple component
                 let member_name = format!("tuple_{}", index);
@@ -308,11 +379,13 @@ impl TypeDecoder {
                     ty: component.trim().to_string(),
                     struct_members: members.map(|cow| Cow::Owned(cow.into_owned())),
                     enum_variants: variants.map(|cow| Cow::Owned(cow.into_owned())),
+                    circular_reference_to: None,
                 };
                 tuple_members.push(member);
             }
 
             if !tuple_members.is_empty() {
+                // Don't remove from visited - keep it for circular reference detection
                 return (Some(Cow::Owned(tuple_members)), None);
             }
         }
@@ -328,14 +401,17 @@ impl TypeDecoder {
             let params = self.split_generic_params(type_params_content);
             for param in params {
                 let simplified_param = simplify_type_name(&param);
-                let (members, variants) = self.get_complete_type_info(&simplified_param);
+                let (members, variants) =
+                    self.get_complete_type_info(&simplified_param, visited, depth + 1);
                 if members.is_some() || variants.is_some() {
+                    // Don't remove from visited - keep it for circular reference detection
                     return (members, variants);
                 }
             }
         }
 
         // No nested structure found
+        // Don't remove from visited - keep it for circular reference detection
         (None, None)
     }
 
@@ -520,19 +596,32 @@ fn expand_struct_recursively(
             let member_type = simplify_type_name(&member.ty);
 
             if struct_map.contains_key(&member_type) {
-                let expanded_nested = expand_struct_recursively(
-                    &member_type,
-                    struct_map,
-                    enum_map,
-                    expanded,
-                    visited,
-                );
+                // Check for circular reference to prevent infinite recursion
+                if visited.contains(&member_type) {
+                    // Circular reference detected - return basic member info without expansion
+                    StructMember {
+                        name: member.name.clone(),
+                        ty: member_type.clone(),
+                        struct_members: None,
+                        enum_variants: None,
+                        circular_reference_to: Some(member_type.clone()),
+                    }
+                } else {
+                    let expanded_nested = expand_struct_recursively(
+                        &member_type,
+                        struct_map,
+                        enum_map,
+                        expanded,
+                        visited,
+                    );
 
-                StructMember {
-                    name: member.name.clone(),
-                    ty: member_type.clone(),
-                    struct_members: Some(Cow::Owned(expanded_nested.members.clone())),
-                    enum_variants: None,
+                    StructMember {
+                        name: member.name.clone(),
+                        ty: member_type.clone(),
+                        struct_members: Some(Cow::Owned(expanded_nested.members.clone())),
+                        enum_variants: None,
+                        circular_reference_to: None,
+                    }
                 }
             } else if enum_map.contains_key(&member_type) {
                 let enum_def = enum_map.get(&member_type).unwrap();
@@ -541,6 +630,7 @@ fn expand_struct_recursively(
                     ty: member_type.clone(),
                     struct_members: None,
                     enum_variants: Some(Cow::Owned(enum_def.variants.clone())),
+                    circular_reference_to: None,
                 }
             } else {
                 StructMember {
@@ -548,6 +638,7 @@ fn expand_struct_recursively(
                     ty: member_type.clone(),
                     struct_members: None,
                     enum_variants: None,
+                    circular_reference_to: None,
                 }
             }
         })
@@ -600,6 +691,7 @@ fn expand_enum_recursively(
                         ty: variant_type.clone(),
                         struct_members: Some(Cow::Owned(struct_def.members.clone())),
                         enum_variants: None,
+                        circular_reference_to: None,
                     }
                 } else {
                     // Fallback if struct not found
@@ -608,6 +700,7 @@ fn expand_enum_recursively(
                         ty: variant_type.clone(),
                         struct_members: None,
                         enum_variants: None,
+                        circular_reference_to: None,
                     }
                 }
             }
@@ -621,6 +714,7 @@ fn expand_enum_recursively(
                         ty: variant_type.clone(),
                         struct_members: None,
                         enum_variants: None,
+                        circular_reference_to: Some(variant_type.clone()),
                     }
                 } else {
                     let nested_enum = expand_enum_recursively(
@@ -636,6 +730,7 @@ fn expand_enum_recursively(
                         ty: variant_type.clone(),
                         struct_members: None,
                         enum_variants: Some(Cow::Owned(nested_enum.variants.clone())),
+                        circular_reference_to: None,
                     }
                 }
             } else {
@@ -645,6 +740,7 @@ fn expand_enum_recursively(
                     ty: variant_type.clone(),
                     struct_members: None,
                     enum_variants: None,
+                    circular_reference_to: None,
                 }
             }
         })
@@ -657,4 +753,251 @@ fn expand_enum_recursively(
 
     expanded.insert(enum_name.to_string(), expanded_enum.clone());
     expanded_enum
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use walnut_shared::abi::{Enum, EnumVariant, Function, Input, Output, Struct, StructMember};
+
+    /// Test circular reference detection in struct expansion
+    /// This simulates the Layout -> FieldLayout -> Layout circular reference
+    #[test]
+    fn test_circular_reference_struct_expansion() {
+        // Create a circular reference: StructA -> StructB -> StructA
+        let mut struct_map = HashMap::new();
+        let mut enum_map = HashMap::new();
+
+        // StructA contains StructB
+        struct_map.insert(
+            "StructA".to_string(),
+            Struct {
+                name: "StructA".to_string(),
+                members: vec![StructMember {
+                    name: "b".to_string(),
+                    ty: "StructB".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        // StructB contains StructA (circular reference)
+        struct_map.insert(
+            "StructB".to_string(),
+            Struct {
+                name: "StructB".to_string(),
+                members: vec![StructMember {
+                    name: "a".to_string(),
+                    ty: "StructA".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        // Expand structs - should not cause infinite recursion
+        let expanded = expand_structs_recursively(&struct_map, &enum_map);
+
+        // Should successfully expand both structs
+        assert!(expanded.contains_key("StructA"));
+        assert!(expanded.contains_key("StructB"));
+
+        // StructA should have StructB as member, but StructB should not be expanded
+        // (to break the cycle)
+        let struct_a = expanded.get("StructA").unwrap();
+        assert_eq!(struct_a.members.len(), 1);
+        assert_eq!(struct_a.members[0].name, "b");
+        // The nested struct should be None to break the cycle
+        assert!(struct_a.members[0].struct_members.is_none());
+    }
+
+    /// Test circular reference detection in enum expansion
+    #[test]
+    fn test_circular_reference_enum_expansion() {
+        let mut struct_map = HashMap::new();
+        let mut enum_map = HashMap::new();
+
+        // EnumA contains EnumB
+        enum_map.insert(
+            "EnumA".to_string(),
+            Enum {
+                name: "EnumA".to_string(),
+                variants: vec![EnumVariant {
+                    name: "VariantB".to_string(),
+                    ty: "EnumB".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        // EnumB contains EnumA (circular reference)
+        enum_map.insert(
+            "EnumB".to_string(),
+            Enum {
+                name: "EnumB".to_string(),
+                variants: vec![EnumVariant {
+                    name: "VariantA".to_string(),
+                    ty: "EnumA".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        // Expand enums - should not cause infinite recursion
+        let expanded = expand_enums_recursively(&enum_map, &struct_map);
+
+        // Should successfully expand both enums
+        assert!(expanded.contains_key("EnumA"));
+        assert!(expanded.contains_key("EnumB"));
+
+        // EnumA should have EnumB as variant, but EnumB should not be expanded
+        // (to break the cycle)
+        let enum_a = expanded.get("EnumA").unwrap();
+        assert_eq!(enum_a.variants.len(), 1);
+        assert_eq!(enum_a.variants[0].name, "VariantB");
+        // The nested enum should be None to break the cycle
+        assert!(enum_a.variants[0].enum_variants.is_none());
+    }
+
+    /// Test circular reference detection in get_complete_type_info
+    /// This simulates the Layout -> FieldLayout -> Layout case from the real bug
+    #[test]
+    fn test_circular_reference_get_complete_type_info() {
+        let mut struct_map = HashMap::new();
+        let mut enum_map = HashMap::new();
+
+        // Create Layout enum with Struct variant containing FieldLayout
+        enum_map.insert(
+            "Layout".to_string(),
+            Enum {
+                name: "Layout".to_string(),
+                variants: vec![EnumVariant {
+                    name: "Struct".to_string(),
+                    ty: "Span<FieldLayout>".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        // Create FieldLayout struct containing Layout (circular reference)
+        struct_map.insert(
+            "FieldLayout".to_string(),
+            Struct {
+                name: "FieldLayout".to_string(),
+                members: vec![
+                    StructMember {
+                        name: "selector".to_string(),
+                        ty: "felt252".to_string(),
+                        struct_members: None,
+                        enum_variants: None,
+                        circular_reference_to: None,
+                    },
+                    StructMember {
+                        name: "layout".to_string(),
+                        ty: "Layout".to_string(), // Circular reference!
+                        struct_members: None,
+                        enum_variants: None,
+                        circular_reference_to: None,
+                    },
+                ],
+            },
+        );
+
+        // Create TypeDecoder
+        let decoder = TypeDecoder::new(struct_map, enum_map);
+
+        // Create a function that uses Layout type
+        let function = Function {
+            name: "test_function".to_string(),
+            inputs: vec![Input {
+                name: "layout".to_string(),
+                ty: "Layout".to_string(),
+                struct_members: None,
+                enum_variants: None,
+            }],
+            outputs: vec![],
+            state_mutability: walnut_shared::abi::StateMutability::View,
+        };
+
+        // Decode function - should not cause infinite recursion
+        let decoded = decoder.decode_functions(&[function]);
+
+        // Should successfully decode
+        assert_eq!(decoded.len(), 1);
+        let (_, decoded_func) = &decoded[0];
+        assert_eq!(decoded_func.inputs.len(), 1);
+
+        // The Layout enum should be expanded, but when it encounters FieldLayout
+        // which contains Layout again, it should detect the circular reference
+        // and return None for nested types to break the cycle
+        let input = &decoded_func.inputs[0];
+        assert!(input.enum_variants.is_some());
+        let variants = input.enum_variants.as_ref().unwrap();
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].name, "Struct");
+
+        // The Struct variant should have FieldLayout members, but when FieldLayout
+        // tries to expand Layout again, it should detect the cycle and return None
+        // This is the key fix - it prevents infinite recursion
+    }
+
+    /// Test that visited set is shared across inputs and outputs
+    #[test]
+    fn test_visited_set_shared_across_function() {
+        let mut struct_map = HashMap::new();
+        let mut enum_map = HashMap::new();
+
+        // Create a struct that references itself
+        struct_map.insert(
+            "SelfRefStruct".to_string(),
+            Struct {
+                name: "SelfRefStruct".to_string(),
+                members: vec![StructMember {
+                    name: "self_ref".to_string(),
+                    ty: "SelfRefStruct".to_string(),
+                    struct_members: None,
+                    enum_variants: None,
+                    circular_reference_to: None,
+                }],
+            },
+        );
+
+        let decoder = TypeDecoder::new(struct_map, enum_map);
+
+        // Create a function with both input and output using the same self-referential type
+        let function = Function {
+            name: "test_function".to_string(),
+            inputs: vec![Input {
+                name: "input".to_string(),
+                ty: "SelfRefStruct".to_string(),
+                struct_members: None,
+                enum_variants: None,
+            }],
+            outputs: vec![Output {
+                ty: "SelfRefStruct".to_string(),
+                struct_members: None,
+                enum_variants: None,
+            }],
+            state_mutability: walnut_shared::abi::StateMutability::View,
+        };
+
+        // Decode function - should not cause infinite recursion
+        // The visited set should be shared, so when processing the output,
+        // it should detect that SelfRefStruct was already visited in the input
+        let decoded = decoder.decode_functions(&[function]);
+
+        assert_eq!(decoded.len(), 1);
+        // Both input and output should be successfully decoded without stack overflow
+        assert_eq!(decoded[0].1.inputs.len(), 1);
+        assert_eq!(decoded[0].1.outputs.len(), 1);
+    }
 }
