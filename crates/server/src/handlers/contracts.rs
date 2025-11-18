@@ -43,7 +43,7 @@ pub struct ContractAddressQuery {
     get,
     path = "/v1/contracts/{contract_address}/entrypoints",
     responses(
-        (status = 200, description = "Returns the list of entry points of the contract", body = ContractFunctionResponse),
+        (status = 200, description = "Returns the list of entry points of the contract", body = ContractAbiResponse),
         (status = 404, description = "Contract not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -184,7 +184,7 @@ pub struct ContractQuery {
     post,
     path = "/v1/contracts/{contract_address}",
     responses(
-        (status = 200, description = "Returns the contract data", body = ContractResponseWithSourceCode),
+        (status = 200, description = "Returns the contract data", body = GetContractResponse),
         (status = 404, description = "Contract not found for contract address", body = String)
     ),
     params(
