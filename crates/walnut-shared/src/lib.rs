@@ -561,7 +561,9 @@ async fn get_block_timestamp(
         .await?;
     match block {
         MaybePreConfirmedBlockWithTxHashes::Block(block) => Ok(block.timestamp),
-        MaybePreConfirmedBlockWithTxHashes::PreConfirmedBlock(pending_block) => Ok(pending_block.timestamp),
+        MaybePreConfirmedBlockWithTxHashes::PreConfirmedBlock(pending_block) => {
+            Ok(pending_block.timestamp)
+        }
     }
 }
 

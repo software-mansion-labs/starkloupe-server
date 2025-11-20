@@ -1,3 +1,4 @@
+use crate::convert_entry_point_error_with_block;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;
 use crate::utils::format_fee_string;
@@ -5,6 +6,7 @@ use crate::ContractCall;
 use crate::DetailedTransactionReceipt;
 use crate::SimulationArgs;
 use crate::TransactionSimulationError;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::context::TransactionContext;
 use blockifier::execution::call_info::CallInfo;
 use blockifier::execution::call_info::ExecutionSummary;
@@ -26,8 +28,6 @@ use blockifier::state::cached_state::StateChanges;
 use blockifier::state::state_api::State;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::HasRelatedFeeType;
-use starknet_api::executable_transaction::TransactionType;
-use blockifier::blockifier_versioned_constants::VersionedConstants;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
@@ -41,6 +41,7 @@ use starknet_api::calldata;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::ContractAddress;
 use starknet_api::core::EntryPointSelector;
+use starknet_api::executable_transaction::TransactionType;
 use starknet_api::execution_resources::GasAmount;
 use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::constants;
@@ -181,7 +182,10 @@ pub fn execute_transaction_flows_with_executor<'a>(
         let ep_selector = args.entry_point_selector;
         let storage_address = args.sender_address;
         let tx_type = args.transaction_type;
-        let sierra_gas_limit = transaction_context.block_context.versioned_constants().sierra_gas_limit(&ExecutionMode::Execute);
+        let sierra_gas_limit = transaction_context
+            .block_context
+            .versioned_constants()
+            .sierra_gas_limit(&ExecutionMode::Execute);
         let remaining_execution_gas = remaining_gas.limit_usage(sierra_gas_limit);
 
         let mut execute_call = CallEntryPoint {
@@ -219,6 +223,16 @@ pub fn execute_transaction_flows_with_executor<'a>(
             &mut execution_context,
             is_revertable,
         )
+        .map_err(|err: TransactionSimulationError| {
+            // If it's an EntryPointExecutionError, try to extract block number and convert
+            if let TransactionSimulationError::EntryPointExecutionError(ep_err) = err {
+                // Extract block number from state (the block where transaction is executed)
+                let block_number = cached_fork_state.state.block_number();
+                convert_entry_point_error_with_block(ep_err, block_number)
+            } else {
+                err
+            }
+        })
         .ok()
     } else {
         None
@@ -266,6 +280,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
 
     if args.transaction_version == TransactionVersion::THREE {
         let fee = tx_receipt.fee;
+        let block_number = cached_fork_state.state.block_number();
         execute_fee_transfer(
             cached_fork_state,
             cheatnet_state,
@@ -277,6 +292,7 @@ pub fn handle_post_exec_and_collect_gas_vectors(
                 .base
                 .default_initial_gas_cost,
             is_revertable,
+            block_number,
         )?;
 
         let fee_state_changes = cached_fork_state.to_state_diff()?;
@@ -466,9 +482,11 @@ fn create_transaction_receipt(
         &gas_mode,
     );
 
-    let fee = transaction_context
-        .tx_info
-        .get_fee_by_gas_vector(transaction_context.block_context.block_info(), gas, Default::default());
+    let fee = transaction_context.tx_info.get_fee_by_gas_vector(
+        transaction_context.block_context.block_info(),
+        gas,
+        Default::default(),
+    );
 
     let da_gas = resources
         .starknet_resources
@@ -558,6 +576,7 @@ fn execute_fee_transfer(
     actual_fee: Fee,
     initial_gas: u64,
     is_revertable: bool,
+    block_number: u64,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let mut execution_context = EntryPointExecutionContext::new(
         tx_context.clone(),
@@ -591,8 +610,8 @@ fn execute_fee_transfer(
         initial_gas,
     };
 
-      let mut remaining_gas = initial_gas;
-      let execution_result = execute_call_entry_point(
+    let mut remaining_gas = initial_gas;
+    let execution_result = execute_call_entry_point(
         &mut fee_transfer_call,
         state,
         cheatnet_state,
@@ -601,7 +620,10 @@ fn execute_fee_transfer(
         &ExecuteCallEntryPointExtraOptions {
             trace_data_handled_by_revert_call: false,
         },
-    )?;
+    )
+    .map_err(|err: EntryPointExecutionError| {
+        convert_entry_point_error_with_block(err, block_number)
+    })?;
 
     Ok(execution_result)
 }

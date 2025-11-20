@@ -14,11 +14,10 @@ pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
-use blockifier::execution::errors::EntryPointExecutionError;
+use blockifier::execution::errors::{EntryPointExecutionError, PreExecutionError};
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
-use starknet_api::executable_transaction::TransactionType;
 use contract_call::ContractCall;
 use contract_calls_map::ContractCallsMap;
 use ethers::types::{Address, U256};
@@ -36,6 +35,7 @@ use starknet_api::block::BlockNumber;
 use starknet_api::core::EntryPointSelector;
 use starknet_api::core::EthAddress;
 use starknet_api::core::{ChainId, ContractAddress, Nonce};
+use starknet_api::executable_transaction::TransactionType;
 use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::fields::Fee;
@@ -252,8 +252,10 @@ pub struct TransactionSimulationResult {
 
 #[derive(Error, Debug)]
 pub enum TransactionSimulationError {
+    #[error("Contract address {0} not deployed at block {1}")]
+    UninitializedStorageAddress(ContractAddress, u64),
     #[error("{0}")]
-    EntryPointExecutionError(#[from] EntryPointExecutionError),
+    EntryPointExecutionError(EntryPointExecutionError),
     #[error("{0}")]
     StateError(#[from] StateError),
     #[error("{0}")]
@@ -305,6 +307,29 @@ pub enum TransactionSimulationError {
 impl From<anyhow::Error> for TransactionSimulationError {
     fn from(err: anyhow::Error) -> Self {
         TransactionSimulationError::TraceError(err.to_string())
+    }
+}
+
+// Custom From implementation - don't convert UninitializedStorageAddress here
+// as we need block number context which is available at call sites
+impl From<EntryPointExecutionError> for TransactionSimulationError {
+    fn from(err: EntryPointExecutionError) -> Self {
+        TransactionSimulationError::EntryPointExecutionError(err)
+    }
+}
+
+// Helper function to convert EntryPointExecutionError with block number context
+pub fn convert_entry_point_error_with_block(
+    err: EntryPointExecutionError,
+    block_number: u64,
+) -> TransactionSimulationError {
+    if let EntryPointExecutionError::PreExecutionError(
+        PreExecutionError::UninitializedStorageAddress(address),
+    ) = &err
+    {
+        TransactionSimulationError::UninitializedStorageAddress(*address, block_number)
+    } else {
+        TransactionSimulationError::EntryPointExecutionError(err)
     }
 }
 
