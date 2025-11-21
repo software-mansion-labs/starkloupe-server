@@ -15,9 +15,10 @@ use runtime::starknet::context::SerializableGasPrices;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet::core::types::{
-    BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet, ContractStorageDiffItem, DeclaredClassItem,
-    DeployedContractItem, EntryPointsByType, Felt, FlattenedSierraClass,
-    MaybePreConfirmedBlockWithTxHashes, SierraEntryPoint, StarknetError, TransactionTrace,
+    BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet,
+    ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, EntryPointsByType, Felt,
+    FlattenedSierraClass, MaybePreConfirmedBlockWithTxHashes, SierraEntryPoint, StarknetError,
+    TransactionTrace,
 };
 use starknet::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -220,14 +221,22 @@ impl ForkStateReader {
         BlockId::Number(self.adjusted_block_number)
     }
 
+    pub fn block_number(&self) -> u64 {
+        self.block_number
+    }
+
+    pub fn adjusted_block_number(&self) -> u64 {
+        self.adjusted_block_number
+    }
+
     pub fn prepare_storage_view(
         &mut self,
         block_id: BlockId,
         transaction_index: usize,
     ) -> Result<(), StateError> {
         let results = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.client.trace_block_transactions(match block_id {
+            tokio::runtime::Handle::current().block_on(self.client.trace_block_transactions(
+                match block_id {
                     BlockId::Hash(hash) => ConfirmedBlockId::Hash(hash),
                     BlockId::Number(number) => ConfirmedBlockId::Number(number),
                     BlockId::Tag(tag) => match tag {
@@ -235,7 +244,8 @@ impl ForkStateReader {
                         BlockTag::PreConfirmed => ConfirmedBlockId::Latest, // Pre-confirmed not supported, use Latest
                         _ => ConfirmedBlockId::Latest, // Pre-confirmed not supported, use Latest
                     },
-                }))
+                },
+            ))
         })
         .map_err(|err| {
             StateError::StateReadError(format!(

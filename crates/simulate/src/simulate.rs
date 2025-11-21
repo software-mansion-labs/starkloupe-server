@@ -1,6 +1,7 @@
 use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
+use crate::convert_entry_point_error_with_block;
 use crate::events::EmittedEvent;
 use crate::execution::execute_transaction_flows_with_executor;
 use crate::execution::PostExecStateData;
@@ -31,9 +32,9 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
+use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use starknet_api::executable_transaction::TransactionType;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
@@ -64,6 +65,7 @@ use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::core::ChainId;
+use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use std::collections::HashMap;
@@ -371,6 +373,9 @@ fn run_simulation(
     let initial_gas = transaction_context.initial_sierra_gas();
     let mut initial_gas_counter = GasCounter::new(initial_gas);
 
+    // Extract block number for error conversion
+    let block_number = cached_fork_state_non_inlined_class.state.block_number();
+
     let (validate, execute) = execute_transaction_flows_with_executor(
         &args,
         cached_fork_state_non_inlined_class,
@@ -379,7 +384,7 @@ fn run_simulation(
         transaction_context.clone(),
         &|call, state, cheatnet_state, ctx, _| {
             let mut remaining_gas = call.initial_gas;
-            Ok(execute_call_entry_point(
+            execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
@@ -388,11 +393,14 @@ fn run_simulation(
                 &ExecuteCallEntryPointExtraOptions {
                     trace_data_handled_by_revert_call: false,
                 },
-            )?)
+            )
+            .map_err(|err: EntryPointExecutionError| {
+                convert_entry_point_error_with_block(err, block_number)
+            })
         },
         &|call, state, cheatnet_state, ctx, _| {
             let mut remaining_gas = call.initial_gas;
-            Ok(execute_call_entry_point(
+            execute_call_entry_point(
                 call,
                 state,
                 cheatnet_state,
@@ -401,7 +409,10 @@ fn run_simulation(
                 &ExecuteCallEntryPointExtraOptions {
                     trace_data_handled_by_revert_call: false,
                 },
-            )?)
+            )
+            .map_err(|err: EntryPointExecutionError| {
+                convert_entry_point_error_with_block(err, block_number)
+            })
         },
     )?;
 
