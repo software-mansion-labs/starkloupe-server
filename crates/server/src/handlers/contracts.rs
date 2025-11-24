@@ -43,7 +43,7 @@ pub struct ContractAddressQuery {
     get,
     path = "/v1/contracts/{contract_address}/entrypoints",
     responses(
-        (status = 200, description = "Returns the list of entry points of the contract", body = ContractFunctionResponse),
+        (status = 200, description = "Returns the list of entry points of the contract", body = ContractAbiResponse),
         (status = 404, description = "Contract not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -170,25 +170,28 @@ pub struct GetContractResponse {
     pub deployed_sources: Vec<ESource>,
     pub cairo_version: String,
     pub source_code: Option<HashMap<String, String>>,
+    pub abi: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ContractQuery {
     pub rpc_urls: Option<String>,
     pub include_source_code: Option<bool>,
+    pub include_abi: Option<bool>,
 }
 
 #[utoipa::path(
     post,
     path = "/v1/contracts/{contract_address}",
     responses(
-        (status = 200, description = "Returns the contract data", body = ContractResponseWithSourceCode),
+        (status = 200, description = "Returns the contract data", body = GetContractResponse),
         (status = 404, description = "Contract not found for contract address", body = String)
     ),
     params(
         ("contract_address" = String, Path, description = "Contract address"),
         ("rpc_urls" = Option<String>, Query, description = "Comma-separated list of additional RPC URLs to check"),
-        ("include_source_code" = Option<bool>, Query, description = "Whether to include the source code in the response")
+        ("include_source_code" = Option<bool>, Query, description = "Whether to include the source code in the response"),
+        ("include_abi" = Option<bool>, Query, description = "Whether to include the ABI in the response")
     ),
     tag = "Contract details"
 )]
@@ -218,7 +221,9 @@ pub async fn get_contract_handler(
         }
     };
 
-    let results: Vec<Option<(ESource, Felt, (u32, u32, u32))>> = sources
+    let include_abi = query.include_abi.unwrap_or_default();
+
+    let results: Vec<Option<(ESource, Felt, (u32, u32, u32), Option<String>)>> = sources
         .iter()
         .filter_map(|source| {
             if let ESourceType::ChainId(e_chain_id) = source {
@@ -249,7 +254,12 @@ pub async fn get_contract_handler(
                             &flattened_sierra_class.sierra_program,
                         )
                         .ok()?;
-                        return Some((source.into(), class_hash_felt, cairo_version));
+                        let abi = if include_abi {
+                            Some(flattened_sierra_class.abi.clone())
+                        } else {
+                            None
+                        };
+                        return Some((source.into(), class_hash_felt, cairo_version, abi));
                     }
                 }
                 None
@@ -259,7 +269,7 @@ pub async fn get_contract_handler(
         .collect::<Vec<_>>()
         .await;
 
-    let valid_results: Vec<(ESource, Felt, (u32, u32, u32))> =
+    let valid_results: Vec<(ESource, Felt, (u32, u32, u32), Option<String>)> =
         results.into_iter().flatten().collect();
 
     if valid_results.is_empty() {
@@ -287,10 +297,13 @@ pub async fn get_contract_handler(
             .into_response();
     }
 
-    let (_, class_hash_felt, cairo_version_tuple) = valid_results[0];
+    let first_result = &valid_results[0];
+    let class_hash_felt = first_result.1;
+    let cairo_version_tuple = first_result.2;
+    let abi = first_result.3.clone();
     let cairo_version_str = tuple_to_version_string(cairo_version_tuple);
 
-    let valid_sources: Vec<ESource> = valid_results.into_iter().map(|(s, _, _)| s).collect();
+    let valid_sources: Vec<ESource> = valid_results.into_iter().map(|(s, _, _, _)| s).collect();
 
     let class_hash = class_hash_felt.to_fixed_hex_string();
     let is_verified = fetch_verified_class(&state.db_pool, &class_hash)
@@ -318,6 +331,7 @@ pub async fn get_contract_handler(
         deployed_sources: valid_sources,
         cairo_version: cairo_version_str,
         source_code,
+        abi,
     };
 
     (StatusCode::OK, Json(response_body)).into_response()
