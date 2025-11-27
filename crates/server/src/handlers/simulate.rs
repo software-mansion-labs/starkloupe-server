@@ -131,7 +131,9 @@ pub async fn simulate_transaction(
                         &simulation_args,
                         resolved_block_number.as_ref(),
                     );
-                    if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
+                    if let Some(cached_result) =
+                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
+                    {
                         info!("Cache hit! Returning cached result");
                         return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
                     }
@@ -154,7 +156,7 @@ pub async fn simulate_transaction(
                             let sim_info_arc = Arc::new(sim_info);
                             state
                                 .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone())
+                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
                                 .await;
                             info!("Cached simulation result");
 
@@ -269,7 +271,9 @@ pub async fn simulate_transaction(
                         resolved_block_number.as_ref(),
                     );
 
-                    if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
+                    if let Some(cached_result) =
+                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
+                    {
                         info!("Cache hit! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));
                     }
@@ -292,7 +296,7 @@ pub async fn simulate_transaction(
                             let sim_info_arc = Arc::new(sim_info);
                             state
                                 .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone())
+                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
                                 .await;
                             info!("Cached simulation result");
 
@@ -317,7 +321,9 @@ pub async fn simulate_transaction(
                     // Check cache first using tx hash
                     let cache_key = CacheKey::from_tx_hash(&args.tx_hash, "starknet");
 
-                    if let Some(cached_result) = state.simulation_cache.get(&cache_key).await {
+                    if let Some(cached_result) =
+                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
+                    {
                         info!("Cache hit for tx hash! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));
                     }
@@ -364,7 +370,7 @@ pub async fn simulate_transaction(
                             let sim_info_arc = Arc::new(sim_info);
                             state
                                 .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone())
+                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
                                 .await;
                             info!("Cached tx hash simulation result");
 
@@ -448,7 +454,7 @@ pub async fn simulate_transaction_by_hash_handler(
             // Check cache first
             let cache_key = CacheKey::from_tx_hash(&tx_hash, &chain_id_clone);
 
-            if let Some(cached_result) = cache.get(&cache_key).await {
+            if let Some(cached_result) = cache.get(&cache_key, Some(&db_pool)).await {
                 info!("Cache hit for tx hash handler! Returning cached result");
                 return Ok(cached_result);
             }
@@ -469,7 +475,9 @@ pub async fn simulate_transaction_by_hash_handler(
                 Ok(sim_info) => {
                     // Wrap in Arc and cache the result
                     let sim_info_arc = Arc::new(sim_info);
-                    cache.set(&cache_key, sim_info_arc.clone()).await;
+                    cache
+                        .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
+                        .await;
                     info!("Cached simulation by hash result");
 
                     Ok(sim_info_arc)

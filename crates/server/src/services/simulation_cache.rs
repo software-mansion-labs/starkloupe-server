@@ -8,6 +8,31 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use simulate::{DebuggerInfo, SimulationArgs, TransactionSimulationResult};
+use sqlx::Pool;
+use sqlx::Postgres;
+
+/// Extracts all class_hashes from a TransactionSimulationResult
+fn extract_class_hashes_from_result(result: &TransactionSimulationResult) -> Vec<String> {
+    let mut class_hashes = Vec::new();
+
+    if let Some(l2_data) = &result.l2_transaction_data {
+        class_hashes.extend(
+            l2_data
+                .simulation_result
+                .contract_calls_map
+                .collect_all_class_hashes(),
+        );
+    }
+
+    // L1TransactionData doesn't contain simulation result with class_hashes
+
+    class_hashes
+}
+
+/// Extracts all class_hashes from a DebuggerInfo
+fn extract_class_hashes_from_debugger_info(debug_info: &DebuggerInfo) -> Vec<String> {
+    debug_info.contract_calls_map.collect_all_class_hashes()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheKey {
@@ -180,20 +205,34 @@ pub enum CachedResult {
 pub struct CacheEntry {
     pub result: CachedResult,
     pub cached_at: std::time::Instant,
+    pub class_hashes: Vec<String>,
+    pub verified_class_hashes_at_cache_time: Vec<String>,
 }
 
 impl CacheEntry {
-    pub fn new_simulation(result: Arc<TransactionSimulationResult>) -> Self {
+    pub fn new_simulation(
+        result: Arc<TransactionSimulationResult>,
+        class_hashes: Vec<String>,
+        verified_class_hashes: Vec<String>,
+    ) -> Self {
         Self {
             result: CachedResult::Simulation(result),
             cached_at: std::time::Instant::now(),
+            class_hashes,
+            verified_class_hashes_at_cache_time: verified_class_hashes,
         }
     }
 
-    pub fn new_debug(result: Arc<DebuggerInfo>) -> Self {
+    pub fn new_debug(
+        result: Arc<DebuggerInfo>,
+        class_hashes: Vec<String>,
+        verified_class_hashes: Vec<String>,
+    ) -> Self {
         Self {
             result: CachedResult::Debug(result),
             cached_at: std::time::Instant::now(),
+            class_hashes,
+            verified_class_hashes_at_cache_time: verified_class_hashes,
         }
     }
 
@@ -272,7 +311,11 @@ impl SimulationCache {
         }
     }
 
-    pub async fn get(&self, key: &CacheKey) -> Option<Arc<TransactionSimulationResult>> {
+    pub async fn get(
+        &self,
+        key: &CacheKey,
+        db_pool: Option<&Pool<Postgres>>,
+    ) -> Option<Arc<TransactionSimulationResult>> {
         match self.cache.get(&key.hash).await {
             Some(cached) => {
                 if cached.is_expired(self.ttl) {
@@ -284,6 +327,25 @@ impl SimulationCache {
                     self.log_stats_if_needed().await;
                     None
                 } else {
+                    // Check if any classes were verified after cache creation
+                    if let Some(pool) = db_pool {
+                        if self
+                            .should_invalidate_due_to_verification(&cached, pool)
+                            .await
+                        {
+                            info!(
+                                "[CACHE INVALIDATE] Classes verified after cache creation {}",
+                                key.display_id()
+                            );
+                            self.invalidate(key).await;
+                            let mut misses = self.misses.write().await;
+                            *misses += 1;
+                            drop(misses);
+                            self.log_stats_if_needed().await;
+                            return None;
+                        }
+                    }
+
                     info!("[CACHE HIT] simulation {}", key.display_id());
                     let mut hits = self.hits.write().await;
                     *hits += 1;
@@ -313,14 +375,85 @@ impl SimulationCache {
         }
     }
 
-    pub async fn set(&self, key: &CacheKey, result: Arc<TransactionSimulationResult>) {
-        let cached_entry = CacheEntry::new_simulation(result);
+    async fn should_invalidate_due_to_verification(
+        &self,
+        cached: &CacheEntry,
+        db_pool: &Pool<Postgres>,
+    ) -> bool {
+        if cached.class_hashes.is_empty() {
+            return false;
+        }
+
+        // Check which class_hashes are currently verified
+        match verification::db::fetch_verified_classes(db_pool, &cached.class_hashes).await {
+            Ok(verified_classes) => {
+                let currently_verified: std::collections::HashSet<String> =
+                    verified_classes.into_iter().map(|c| c.hash).collect();
+
+                let verified_at_cache_time: std::collections::HashSet<String> = cached
+                    .verified_class_hashes_at_cache_time
+                    .iter()
+                    .cloned()
+                    .collect();
+
+                // Check if there are any NEWLY verified classes (verified now but not at cache time)
+                let newly_verified: Vec<_> = currently_verified
+                    .difference(&verified_at_cache_time)
+                    .collect();
+
+                if !newly_verified.is_empty() {
+                    debug!(
+                        "[CACHE] Found {} newly verified classes: {:?}",
+                        newly_verified.len(),
+                        newly_verified
+                    );
+                    return true;
+                }
+
+                false
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to check verification status for cache invalidation: {:?}",
+                    e
+                );
+                false
+            }
+        }
+    }
+
+    pub async fn set(
+        &self,
+        key: &CacheKey,
+        result: Arc<TransactionSimulationResult>,
+        db_pool: Option<&Pool<Postgres>>,
+    ) {
+        let class_hashes = extract_class_hashes_from_result(&result);
+
+        // Get currently verified class_hashes at cache creation time
+        let verified_class_hashes = if let Some(pool) = db_pool {
+            match verification::db::fetch_verified_classes(pool, &class_hashes).await {
+                Ok(verified_classes) => verified_classes.into_iter().map(|c| c.hash).collect(),
+                Err(e) => {
+                    warn!("Failed to fetch verified classes for cache: {:?}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        let cached_entry = CacheEntry::new_simulation(result, class_hashes, verified_class_hashes);
         self.cache.insert(key.hash.clone(), cached_entry).await;
         debug!("[CACHE SET] simulation {}", key.display_id());
         self.log_stats_if_needed().await;
     }
 
-    pub async fn get_debug(&self, key: &CacheKey) -> Option<Arc<DebuggerInfo>> {
+    pub async fn get_debug(
+        &self,
+        key: &CacheKey,
+        db_pool: Option<&Pool<Postgres>>,
+    ) -> Option<Arc<DebuggerInfo>> {
         match self.cache.get(&key.hash).await {
             Some(cached) => {
                 if cached.is_expired(self.ttl) {
@@ -332,6 +465,25 @@ impl SimulationCache {
                     self.log_stats_if_needed().await;
                     None
                 } else {
+                    // Check if any classes were verified after cache creation
+                    if let Some(pool) = db_pool {
+                        if self
+                            .should_invalidate_due_to_verification(&cached, pool)
+                            .await
+                        {
+                            info!(
+                                "[CACHE INVALIDATE] Classes verified after cache creation {}",
+                                key.display_id()
+                            );
+                            self.invalidate(key).await;
+                            let mut misses = self.misses.write().await;
+                            *misses += 1;
+                            drop(misses);
+                            self.log_stats_if_needed().await;
+                            return None;
+                        }
+                    }
+
                     info!("[CACHE HIT] debug {}", key.display_id());
                     let mut hits = self.hits.write().await;
                     *hits += 1;
@@ -361,8 +513,28 @@ impl SimulationCache {
         }
     }
 
-    pub async fn set_debug(&self, key: &CacheKey, result: Arc<DebuggerInfo>) {
-        let cached_entry = CacheEntry::new_debug(result);
+    pub async fn set_debug(
+        &self,
+        key: &CacheKey,
+        result: Arc<DebuggerInfo>,
+        db_pool: Option<&Pool<Postgres>>,
+    ) {
+        let class_hashes = extract_class_hashes_from_debugger_info(&result);
+
+        // Get currently verified class_hashes at cache creation time
+        let verified_class_hashes = if let Some(pool) = db_pool {
+            match verification::db::fetch_verified_classes(pool, &class_hashes).await {
+                Ok(verified_classes) => verified_classes.into_iter().map(|c| c.hash).collect(),
+                Err(e) => {
+                    warn!("Failed to fetch verified classes for cache: {:?}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        let cached_entry = CacheEntry::new_debug(result, class_hashes, verified_class_hashes);
         self.cache.insert(key.hash.clone(), cached_entry).await;
         debug!("[CACHE SET] debug {}", key.display_id());
         self.log_stats_if_needed().await;

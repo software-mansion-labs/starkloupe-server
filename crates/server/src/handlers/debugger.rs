@@ -60,7 +60,7 @@ pub async fn debug_transaction(
                 resolved_block_number.as_ref(),
             );
 
-            if let Some(cached_result) = cache.get_debug(&cache_key).await {
+            if let Some(cached_result) = cache.get_debug(&cache_key, Some(&db_pool)).await {
                 info!("Debug cache hit! Returning cached result");
                 return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
             }
@@ -71,7 +71,9 @@ pub async fn debug_transaction(
                 Ok(debug_info) => {
                     // Wrap in Arc and cache the debug result
                     let debug_info_arc = Arc::new(debug_info);
-                    cache.set_debug(&cache_key, debug_info_arc.clone()).await;
+                    cache
+                        .set_debug(&cache_key, debug_info_arc.clone(), Some(&db_pool))
+                        .await;
                     Ok((StatusCode::OK, debug_info_arc))
                 }
                 Err(e) => {
