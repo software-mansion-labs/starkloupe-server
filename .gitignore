@@ -13,3 +13,5 @@ flamegraph.svg
 .DS_Store
 
 local/db-docker-compose-full.yaml
+
+.vscode/
