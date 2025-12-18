@@ -1,11 +1,12 @@
 use crate::utils::{is_allocation_safe, skip_builtin_type_declaration};
-use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
+use crate::{create_compact_enum, create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::{GenericArg, TypeDeclaration};
 use cairo_lang_sierra_type_size::TypeSizeMap;
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::collections::{BTreeMap, HashMap};
+use walnut_shared::abi::Enum;
 use walnut_shared::utils::simplify_type_name;
 
 pub fn decode_internal_datas(
@@ -15,6 +16,7 @@ pub fn decode_internal_datas(
     type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
     data_index: &mut usize,
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     let type_declaration = type_declaration_map.get(type_id)?;
     let type_size = type_sizes.get(type_id)?;
@@ -42,6 +44,7 @@ pub fn decode_internal_datas(
             type_sizes,
             type_size,
             relocated_memory,
+            enums,
         ),
         "Struct" => decode_struct(
             values,
@@ -51,6 +54,7 @@ pub fn decode_internal_datas(
             type_declaration_map,
             type_sizes,
             relocated_memory,
+            enums,
         ),
         "Array" => decode_array(
             generic_args,
@@ -60,6 +64,7 @@ pub fn decode_internal_datas(
             data_index,
             type_declaration_map,
             type_sizes,
+            enums,
         ),
         "Snapshot" => decode_snapshot(
             generic_args,
@@ -68,6 +73,7 @@ pub fn decode_internal_datas(
             relocated_memory,
             type_declaration_map,
             type_sizes,
+            enums,
         ),
         // https://docs.swmansion.com/scarb/corelib/core-zeroable-NonZero.html
         "NonZero" => {
@@ -79,6 +85,7 @@ pub fn decode_internal_datas(
                     type_sizes,
                     relocated_memory,
                     data_index,
+                    enums,
                 )
             } else {
                 None
@@ -97,6 +104,7 @@ fn decode_enum(
     type_sizes: &TypeSizeMap,
     type_size: &i16,
     relocated_memory: &[Option<Felt>],
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     let total_variants = generic_args.len().saturating_sub(1);
     if let Some(value) = values.get(*data_index) {
@@ -117,7 +125,32 @@ fn decode_enum(
         let starting_values_index = type_size.saturating_sub(*variant_type_size);
         *data_index += starting_values_index.to_usize()?;
 
+        // Try to find enum definition in ABI and get variant name
+        let (variant_name, has_abi_enum) = enums
+            .and_then(|enums| {
+                enums
+                    .iter()
+                    .find(|e| simplify_type_name(&e.name) == debug_name)
+                    .and_then(|enum_def| enum_def.variants.get(variant_index))
+                    .map(|variant| (variant.name.clone(), true))
+            })
+            .unwrap_or_else(|| (format!("Variant{}", variant_index), false));
+
         if let Some("Unit") = concrete_type_id.debug_name.as_deref() {
+            // Unit variant - create compact enum format if we have variant name from ABI
+            if has_abi_enum {
+                return Some(create_compact_enum(
+                    None,
+                    debug_name,
+                    &variant_name,
+                    DecodedValue {
+                        name: None,
+                        type_name: "Unit".to_string(),
+                        value: DecodedValueType::String(variant_name.clone()),
+                    },
+                ));
+            }
+            // Fallback to old behavior if no ABI enum found
             return Some(create_decoded_value_by_type(
                 None,
                 debug_name,
@@ -132,12 +165,25 @@ fn decode_enum(
             type_sizes,
             relocated_memory,
             data_index,
+            enums,
         )?;
-        return Some(create_decoded_value_by_type(
+
+        // If we have variant name from ABI, create compact enum format
+        if has_abi_enum {
+            return Some(create_compact_enum(
+                None,
+                debug_name,
+                &variant_name,
+                decoded_value,
+            ));
+        }
+
+        // Fallback to old behavior if no ABI enum found
+        Some(create_decoded_value_by_type(
             None,
             debug_name,
             decoded_value.value,
-        ));
+        ))
     } else {
         None
     }
@@ -151,6 +197,7 @@ fn decode_struct(
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     let simplified_debug_name = simplify_type_name(debug_name);
     if simplified_debug_name.starts_with("Span<") {
@@ -162,6 +209,7 @@ fn decode_struct(
             type_declaration_map,
             type_sizes,
             relocated_memory,
+            enums,
         )
     } else {
         decode_standard_struct(
@@ -172,6 +220,7 @@ fn decode_struct(
             type_declaration_map,
             type_sizes,
             relocated_memory,
+            enums,
         )
     }
 }
@@ -184,6 +233,7 @@ fn decode_span(
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     // Span is a struct with one field, which is the inner array
     // The inner array type is the second generic argument
@@ -195,6 +245,7 @@ fn decode_span(
             type_sizes,
             relocated_memory,
             data_index,
+            enums,
         )
         .map(|decoded_value| create_decoded_value_by_type(None, debug_name, decoded_value.value))
     } else {
@@ -209,6 +260,7 @@ fn decode_standard_struct(
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
     relocated_memory: &[Option<Felt>],
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     let mut decoded_struct_values = BTreeMap::new();
     let mut index = 0;
@@ -221,6 +273,7 @@ fn decode_standard_struct(
                 type_sizes,
                 relocated_memory,
                 data_index,
+                enums,
             ) {
                 decoded_struct_values.insert(index, decoded_value);
                 index += 1;
@@ -245,6 +298,7 @@ fn decode_array(
     data_index: &mut usize,
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     if is_valid_relocated_memory_range(values, *data_index, relocated_memory.len()) {
         let current_index: usize = *data_index;
@@ -267,6 +321,7 @@ fn decode_array(
             relocated_memory,
             type_declaration_map,
             type_sizes,
+            enums,
         );
 
         let decoded_value = create_decoded_value_by_type(
@@ -288,6 +343,7 @@ fn decode_snapshot(
     relocated_memory: &[Option<Felt>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
+    enums: Option<&[Enum]>,
 ) -> Option<DecodedValue> {
     if let Some(GenericArg::Type(inner_type_id)) = generic_args.first() {
         decode_internal_datas(
@@ -297,6 +353,7 @@ fn decode_snapshot(
             type_sizes,
             relocated_memory,
             data_index,
+            enums,
         )
     } else {
         None
@@ -310,6 +367,7 @@ fn decode_array_elements_from_memory(
     relocated_memory: &[Option<Felt>],
     type_declaration_map: &HashMap<ConcreteTypeId, TypeDeclaration>,
     type_sizes: &TypeSizeMap,
+    enums: Option<&[Enum]>,
 ) -> Vec<DecodedValueType> {
     let mut decoded_array_values = Vec::with_capacity(array_length);
     if let Some(GenericArg::Type(concrete_type_id)) = generic_args.first() {
@@ -325,6 +383,7 @@ fn decode_array_elements_from_memory(
                 type_sizes,
                 relocated_memory,
                 &mut local_data_index,
+                enums,
             ) {
                 decoded_array_values.push(decoded_value.value);
                 index += local_data_index;

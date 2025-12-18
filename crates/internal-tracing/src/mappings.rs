@@ -26,11 +26,13 @@ use data_decoder::{DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
 use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
+use serde_json;
 use smol_str::SmolStr;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::error;
 use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
+use walnut_shared::abi::{get_enums, Enum as AbiEnum, Item as WalnutItem};
 use walnut_shared::felts_to_string;
 use walnut_shared::utils::simplify_type_name;
 
@@ -55,6 +57,7 @@ pub struct Mappings {
     pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
     pub type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration>,
     pub events: HashSet<Event>,
+    pub abi_enums: Vec<AbiEnum>,
 }
 
 impl Mappings {
@@ -88,6 +91,19 @@ impl Mappings {
                         _ => None,
                     })
                     .collect()
+            })
+            .unwrap_or_default();
+
+        let abi_enums: Vec<AbiEnum> = contract_class
+            .abi
+            .as_ref()
+            .and_then(|contract| {
+                // Serialize Contract to JSON string, then parse as Vec<walnut_shared::abi::Item>
+                serde_json::to_string(contract).ok().and_then(|json_str| {
+                    serde_json::from_str::<Vec<WalnutItem>>(&json_str)
+                        .ok()
+                        .map(|parsed_abi| get_enums(&parsed_abi))
+                })
             })
             .unwrap_or_default();
 
@@ -135,6 +151,7 @@ impl Mappings {
             sierra_statement_info: casm_program.debug_info.sierra_statement_info,
             type_declaration_map,
             events,
+            abi_enums,
         })
     }
 
@@ -251,6 +268,7 @@ impl Mappings {
                         &self.type_sizes,
                         relocated_memory,
                         &mut data_index,
+                        Some(&self.abi_enums),
                     ) {
                         if let Some(adjusted_element) = adjust_decoded_element(argument_decoded) {
                             arguments_decoded.push(adjusted_element);
@@ -367,6 +385,7 @@ impl Mappings {
                             &self.type_sizes,
                             relocated_memory,
                             &mut data_index,
+                            Some(&self.abi_enums),
                         ) {
                             if let Some(adjusted_element) = adjust_decoded_element(decoded_element)
                             {

@@ -163,7 +163,7 @@ impl Serialize for DecodedValueType {
             }
             DecodedValueType::Enum(_variant_name, value) => {
                 // For compact enum format, serialize the inner value directly
-                // The variant name will be combined with type_name as "EnumType::Variant"
+                // The type_name contains only the enum type name
                 value.serialize(serializer)
             }
             DecodedValueType::None => serializer.serialize_none(),
@@ -804,8 +804,8 @@ mod integration_tests {
         let json = serde_json::to_string(&layout_struct_variant).unwrap();
         println!("Layout::Struct compact format: {}", json);
 
-        // Should have compact format: type_name = "Layout::Struct"
-        assert!(json.contains("\"type_name\":\"Layout::Struct\""));
+        // Should have compact format: type_name = "Layout"
+        assert!(json.contains("\"type_name\":\"Layout\""));
         // Should not have wrapper object with "Struct" key
         assert!(!json.contains("\"Struct\":"));
         // Should contain the inner data directly
@@ -829,8 +829,8 @@ mod integration_tests {
         let json = serde_json::to_string(&layout_fixed_variant).unwrap();
         println!("Layout::Fixed compact format: {}", json);
 
-        // Should have compact format: type_name = "Layout::Fixed"
-        assert!(json.contains("\"type_name\":\"Layout::Fixed\""));
+        // Should have compact format: type_name = "Layout"
+        assert!(json.contains("\"type_name\":\"Layout\""));
         // Should not have wrapper object with "Fixed" key
         assert!(!json.contains("\"Fixed\":"));
         // Should contain the inner data directly
@@ -1071,7 +1071,7 @@ pub fn create_compact_enum(
 ) -> DecodedValue {
     DecodedValue {
         name: name.map(|s| s.to_string()),
-        type_name: format!("{}::{}", enum_type_name, variant),
+        type_name: enum_type_name.to_string(),
         value: inner_value.value,
     }
 }

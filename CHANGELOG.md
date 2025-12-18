@@ -1,5 +1,39 @@
 # Changelog
 
+### [0.0.123] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.123)
+
+### [0.0.122] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.122)
+
+- Fix sozo downloader, handling both "v1.8.0" and "sozo/v1.8.1" formats
+
+### [0.0.121] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.121)
+
+- Update foudnry commit hash - relocation trace always present
+
+### [0.0.120] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.120)
+
+- Added new error message in case dojo version is not supported
+
+### [0.0.119] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.119)
+
+- Added verified cache invalidation logic
+
+### [0.0.118] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.118)
+
+- Added ABI to contract response
+
+### [0.0.117] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.117)
+
+- Better errror in case contract is not deployed
+
+### [0.0.116] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.116)
+
+- Fixed a circular recursion issue in data types (e.g., Layout → FieldLayout → Layout) that was preventing Contract pages from opening
+
+### [0.0.115] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.115)
+
+- Always return raw simulation args
+
 ### [0.0.114] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.114)
 
 - Fetch all contracts for class
