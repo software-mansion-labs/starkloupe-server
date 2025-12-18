@@ -121,6 +121,19 @@ fn get_scarb_file_name_for_arch() -> Result<String, Box<dyn Error>> {
     Ok(file_name.to_string())
 }
 
+// Parse version from tag name, handling both "v1.8.0" and "sozo/v1.8.1" formats
+fn parse_version_from_tag(tag_name: &str) -> String {
+    let mut version_str = tag_name.trim();
+
+    if version_str.starts_with("sozo/") {
+        version_str = &version_str[5..];
+    }
+    
+    version_str = version_str.trim_start_matches('v');
+    
+    version_str.to_string()
+}
+
 pub async fn check_periodically_sozo_updates(
     repo: &str,
     versioning_file_name: &str,
@@ -188,7 +201,7 @@ pub async fn check_periodically_updates(
             .await?;
     } else {
         let content = tokio_fs::read_to_string(&versioning_file_name).await?;
-        let content_parsed = content.trim().replace("v", "");
+        let content_parsed = parse_version_from_tag(content.trim());
         let latest_installed_tag_from_file = match Version::parse(content_parsed.as_str()) {
             Ok(ver) => ver,
             Err(_) => {
@@ -217,7 +230,8 @@ pub async fn check_periodically_updates(
         .into_iter()
         .filter_map(|release| {
             // Parse version once per release
-            let version = Version::parse(release.tag_name.trim_start_matches('v')).ok()?;
+            let version_str = parse_version_from_tag(&release.tag_name);
+            let version = Version::parse(&version_str).ok()?;
 
             // Check for new version and for 2.9.4
             let is_newer = version > latest_installed_tag;
@@ -292,8 +306,8 @@ pub async fn check_periodically_updates(
                     extract_tar_gz(tar_gz_output_path, extract_path_dir_path).await?;
                     let extracted_binary_path =
                         format!("{}{}", &extract_path, &binary_path_in_extracted_folder);
-                    let version =
-                        Version::parse(release.tag_name.as_str().trim_start_matches("v"))?;
+                    let version_str = parse_version_from_tag(&release.tag_name);
+                    let version = Version::parse(&version_str)?;
                     let tag_name = format!("v{}", version);
                     let extracted_binary_destination_path = format!(
                         "{}{}{}",
