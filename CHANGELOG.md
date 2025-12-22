@@ -1,6 +1,12 @@
 # Changelog
 
+### [0.0.124] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.124)
+
+- Normalize class hash by padding leading zeros to 66 characters
+
 ### [0.0.123] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.123)
+
+- Add ABI enum parsing to use proper variant names during function decoding
 
 ### [0.0.122] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.122)
 
