@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
 use std::{collections::HashMap, sync::Arc};
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use utoipa::ToSchema;
 use verification::{
     db::fetch_verified_class,
@@ -182,17 +182,26 @@ pub struct ContractInfo {
     tag = "Contract class verification"
 )]
 pub async fn get_contracts_by_class_hash_handler(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(class_hash): Path<String>,
     Query(_query): Query<HashMap<String, String>>,
 ) -> Response {
     // Validate class hash format
-    if class_hash.len() != 66 || !class_hash.starts_with("0x") {
-        let error_message = "Invalid class hash format. Must be 66 characters starting with 0x";
+    if !class_hash.starts_with("0x") {
+        let error_message = "Invalid class hash format. Must start with 0x";
         return (StatusCode::BAD_REQUEST, Json(error_message)).into_response();
     }
 
-    let class_hash_fixed = match Felt::from_hex(&class_hash) {
+    // Normalize to 66 characters (64 hex chars + "0x") by padding with leading zeros
+    let hex_part = &class_hash[2..];
+    let normalized_class_hash = if class_hash.len() < 66 {
+        let padding_needed = 66 - class_hash.len();
+        format!("0x{}{}", "0".repeat(padding_needed), hex_part)
+    } else {
+        class_hash.clone()
+    };
+
+    let class_hash_fixed = match Felt::from_hex(&normalized_class_hash) {
         Ok(felt) => felt.to_fixed_hex_string(),
         Err(_) => {
             let error_message = "Invalid class hash format";
@@ -287,7 +296,7 @@ pub async fn get_contracts_by_class_hash_handler(
     }
 
     let response_body = GetContractsByClassHashResponse {
-        class_hash,
+        class_hash: class_hash_fixed.clone(),
         total_count: all_contracts.len(),
         contracts: all_contracts,
     };
