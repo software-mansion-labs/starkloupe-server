@@ -27,8 +27,8 @@ use data_decoder::{event_decoder::decode_event_datas, DecodedValue, DecodedValue
 use itertools::chain;
 use itertools::Itertools;
 use serde::Serialize;
-use starknet::core::types::Felt;
 use starknet_api::abi::abi_utils::selector_from_name;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tracing::error;

@@ -1,12 +1,12 @@
 use futures::future::join_all;
 use serde_json::Value;
-use starknet::core::types::{BlockId, BlockTag, Felt, FunctionCall};
-use starknet::macros::selector;
-use starknet::providers::{
+use starknet_api::core::{ChainId, ContractAddress};
+use starknet_rust::core::types::{BlockId, BlockTag, Felt, FunctionCall};
+use starknet_rust::macros::selector;
+use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
-use starknet_api::core::{ChainId, ContractAddress};
 use std::collections::{HashMap, HashSet};
 use tracing::info;
 use walnut_shared::{bytes_to_text, get_voyager_api_url};

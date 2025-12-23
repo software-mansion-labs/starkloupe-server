@@ -22,10 +22,10 @@ use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
 use internal_tracing::SimulationDebuggerData;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::Felt;
-use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
 use starknet_api::execution_resources::GasAmount;
+use starknet_rust::core::types::Felt;
+use starknet_rust::providers::Provider;
 use walnut_shared::create_rpc_client_from_url;
 
 pub async fn simulate_to_get_debug_info(

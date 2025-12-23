@@ -4,7 +4,7 @@ use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use simulate::{get_error_from_call, simulate, to_simulated_transaction, SimulationArgs};
-use starknet::core::types::{ExecuteInvocation, TransactionTrace};
+use starknet_rust::core::types::{ExecuteInvocation, TransactionTrace};
 
 #[tokio::main]
 async fn main() {

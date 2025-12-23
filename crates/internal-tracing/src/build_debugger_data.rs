@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Result;
 use cairo_lang_sierra_to_casm::compiler::CairoProgram;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use tracing::info;
 

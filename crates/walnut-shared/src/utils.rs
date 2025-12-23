@@ -1,6 +1,6 @@
 use cairo_lang_starknet_classes::compiler_version::VersionId;
-use starknet::core::types::ContractClass as ContractClassStarknet;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::ContractClass as ContractClassStarknet;
+use starknet_rust::core::types::Felt;
 
 pub fn simplify_type_name(type_str: &str) -> String {
     if let (Some(inner), Some(_)) = (type_str.strip_prefix('['), type_str.strip_suffix(']')) {
@@ -126,7 +126,7 @@ pub fn convert_contract_class(
     from: ContractClassStarknet,
 ) -> Option<cairo_lang_starknet_classes::contract_class::ContractClass> {
     match from {
-        starknet::core::types::ContractClass::Sierra(ref class) => {
+        starknet_rust::core::types::ContractClass::Sierra(ref class) => {
             Some(cairo_lang_starknet_classes::contract_class::ContractClass {
                 sierra_program: class
                     .sierra_program

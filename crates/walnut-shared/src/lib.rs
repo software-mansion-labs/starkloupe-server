@@ -12,17 +12,17 @@ use num_integer::Integer;
 use num_traits::Num;
 use serde::Serialize;
 use serde_json::Value;
-use starknet::core::types::{
-    BlockId, FeePayment, Felt, MaybePreConfirmedBlockWithTxHashes, PriceUnit, ResourceBoundsMapping,
-};
-use starknet::providers::{
-    jsonrpc::{HttpTransport, JsonRpcClient},
-    Provider, Url,
-};
 use starknet_api::block::GasPrice;
 use starknet_api::core::ChainId;
 use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::{AllResourceBounds, ResourceBounds, ValidResourceBounds};
+use starknet_rust::core::types::{
+    BlockId, FeePayment, Felt, MaybePreConfirmedBlockWithTxHashes, PriceUnit, ResourceBoundsMapping,
+};
+use starknet_rust::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider, Url,
+};
 use starknet_selector_decoder::get_selector;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
 use std::fmt;
@@ -41,10 +41,9 @@ pub const STRK_FEE_TOKEN_ADDRESS: &str =
     "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 pub const ETH_FEE_TOKEN_ADDRESS: &str =
     "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7";
-
 // RPC URL constants
-pub const STARKNET_MAINNET_RPC_URL: &str = "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_9/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
-pub const STARKNET_SEPOLIA_RPC_URL: &str = "https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_9/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+pub const STARKNET_MAINNET_RPC_URL: &str = "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_10/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+pub const STARKNET_SEPOLIA_RPC_URL: &str = "https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_10/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
 pub const ETHEREUM_MAINNET_RPC_URL: &str =
     "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
 pub const ETHEREUM_SEPOLIA_RPC_URL: &str =

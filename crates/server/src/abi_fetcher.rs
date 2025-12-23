@@ -1,8 +1,8 @@
 use data_decoder::type_decoder::{
     expand_enums_recursively, expand_structs_recursively, TypeDecoder,
 };
-use starknet::core::types::{BlockId, BlockTag, ContractClass, Felt};
-use starknet::providers::Provider;
+use starknet_rust::core::types::{BlockId, BlockTag, ContractClass, Felt};
+use starknet_rust::providers::Provider;
 use walnut_shared::abi::{get_enums, get_functions, get_structs, Item};
 use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{extract_chain_id, get_rpc_urls};

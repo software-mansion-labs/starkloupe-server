@@ -34,8 +34,6 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::executio
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
-use starknet::core::types::ExecutionResult;
-use starknet::core::types::Felt;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::calldata;
 use starknet_api::contract_class::EntryPointType;
@@ -49,6 +47,8 @@ use starknet_api::transaction::fields::Calldata;
 use starknet_api::transaction::fields::Fee;
 use starknet_api::transaction::fields::GasVectorComputationMode;
 use starknet_api::transaction::TransactionVersion;
+use starknet_rust::core::types::ExecutionResult;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use walnut_shared::felts_to_string;

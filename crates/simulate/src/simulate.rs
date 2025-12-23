@@ -57,10 +57,6 @@ use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::{
-    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock, Transaction,
-};
-use starknet::providers::Provider;
 use starknet_api::block::BlockInfo;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
@@ -68,6 +64,10 @@ use starknet_api::core::ChainId;
 use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
+use starknet_rust::core::types::{
+    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock, Transaction,
+};
+use starknet_rust::providers::Provider;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use tracing::warn;
@@ -876,7 +876,11 @@ async fn process_l1_handler_transaction(
         simulation_result,
         chain_id: chain_id_to_readable_string(&core_l2_chain_id),
         block_number: block_number.map_or_else(
-            || starknet::core::types::BlockId::Tag(starknet::core::types::BlockTag::Latest),
+            || {
+                starknet_rust::core::types::BlockId::Tag(
+                    starknet_rust::core::types::BlockTag::Latest,
+                )
+            },
             BlockId::Number,
         ),
         block_timestamp: block_timestamp.0,

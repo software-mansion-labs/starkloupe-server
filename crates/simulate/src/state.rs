@@ -14,13 +14,13 @@ use num_bigint::BigUint;
 use runtime::starknet::context::SerializableGasPrices;
 use sqlx::Pool;
 use sqlx::Postgres;
-use starknet::core::types::{
+use starknet_rust::core::types::{
     BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet,
     ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, EntryPointsByType, Felt,
     FlattenedSierraClass, MaybePreConfirmedBlockWithTxHashes, SierraEntryPoint, StarknetError,
     TransactionTrace,
 };
-use starknet::providers::{
+use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider, ProviderError, Url,
 };

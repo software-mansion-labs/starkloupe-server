@@ -12,7 +12,7 @@ use cairo_lang_starknet_classes::abi::EventField;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use data_decoder::DecodedValue;
 use serde::Serialize;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
 

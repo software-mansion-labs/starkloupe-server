@@ -13,7 +13,7 @@ use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
 use sqlx::Type;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;

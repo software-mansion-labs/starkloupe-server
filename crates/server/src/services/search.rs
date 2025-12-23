@@ -2,9 +2,9 @@ use anyhow::{anyhow, Result};
 use ethers::providers::Middleware;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
-use starknet::core::types::Felt;
-use starknet::providers::Provider;
 use starknet_api::core::ChainId;
+use starknet_rust::core::types::Felt;
+use starknet_rust::providers::Provider;
 use std::str::FromStr;
 use url::Url;
 use utoipa::ToSchema;
@@ -184,8 +184,8 @@ pub async fn check_contract(hash: &str, sources: &[ESourceType]) -> Option<Vec<D
 
                 provider
                     .get_class_hash_at(
-                        starknet::core::types::BlockId::Tag(
-                            starknet::core::types::BlockTag::Latest,
+                        starknet_rust::core::types::BlockId::Tag(
+                            starknet_rust::core::types::BlockTag::Latest,
                         ),
                         hash_felt,
                     )
@@ -241,8 +241,8 @@ pub async fn check_class(hash: &str, sources: &[ESourceType]) -> Option<Vec<Data
                 };
                 provider
                     .get_class(
-                        starknet::core::types::BlockId::Tag(
-                            starknet::core::types::BlockTag::Latest,
+                        starknet_rust::core::types::BlockId::Tag(
+                            starknet_rust::core::types::BlockTag::Latest,
                         ),
                         hash_felt,
                     )
