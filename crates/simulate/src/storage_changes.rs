@@ -5,12 +5,12 @@ use internal_tracing::{
     call_trace::ESysCall,
     utils::{get_pc_sys_call_mappings, get_system_call_at_trace_step},
 };
-use starknet::core::types::{BlockId, Felt};
-use starknet::providers::{
+use starknet_api::{core::ContractAddress, state::StorageKey};
+use starknet_rust::core::types::{BlockId, Felt};
+use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };
-use starknet_api::{core::ContractAddress, state::StorageKey};
 use std::collections::HashMap;
 
 use crate::contract_calls_map::ContractCallsMap;

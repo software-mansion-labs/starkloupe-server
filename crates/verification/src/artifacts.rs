@@ -3,7 +3,7 @@ use crate::utils::{deserialize_json, read_file};
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
-use starknet::core::types::contract::SierraClass;
+use starknet_rust::core::types::contract::SierraClass;
 use std::path::PathBuf;
 use tracing::error;
 

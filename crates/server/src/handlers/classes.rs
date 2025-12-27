@@ -11,8 +11,8 @@ use axum::{
 use chrono;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use starknet::core::types::Felt;
 use starknet_api::core::ChainId;
+use starknet_rust::core::types::Felt;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{error, warn};
 use utoipa::ToSchema;

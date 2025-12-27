@@ -12,8 +12,8 @@ use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
-use starknet::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, Felt};
-use starknet::providers::{
+use starknet_rust::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, Felt};
+use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };

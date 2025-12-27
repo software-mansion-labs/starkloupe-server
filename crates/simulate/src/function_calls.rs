@@ -12,7 +12,7 @@ use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::utils::compile_sierra_contract_class;
 use internal_tracing::ClassDataProvider;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use tracing::{info, warn};
 use walnut_shared::utils::convert_contract_class;

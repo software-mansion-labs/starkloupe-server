@@ -1,31 +1,31 @@
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::bouncer::BouncerConfig;
-use std::sync::Arc;
 use blockifier::context::TransactionContext;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses};
 use blockifier::transaction::objects::{
     CommonAccountFields, CurrentTransactionInfo, DeprecatedTransactionInfo, TransactionInfo,
 };
-use starknet_api::executable_transaction::TransactionType;
-use blockifier::blockifier_versioned_constants::VersionedConstants;
 use num_traits::ToPrimitive;
-use starknet::core::types::{
-    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResources, ExecutionResult, Felt,
-    InvokeTransaction, MaybePreConfirmedBlockWithTxs, Transaction, TransactionReceipt,
-};
-use starknet::providers::{
-    jsonrpc::{HttpTransport, JsonRpcClient},
-    Provider,
-};
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
 use starknet_api::block::{BlockInfo, GasPriceVector, GasPrices, NonzeroGasPrice};
 use starknet_api::contract_address;
 use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
+use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::fields::{
     Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
 };
 use starknet_api::transaction::TransactionVersion;
+use starknet_rust::core::types::{
+    BlockId, BlockWithTxs, DeclareTransaction, Event, ExecutionResources, ExecutionResult, Felt,
+    InvokeTransaction, MaybePreConfirmedBlockWithTxs, Transaction, TransactionReceipt,
+};
+use starknet_rust::providers::{
+    jsonrpc::{HttpTransport, JsonRpcClient},
+    Provider,
+};
+use std::sync::Arc;
 use walnut_shared::{felts_to_string, format_fee_payment};
 use walnut_shared::{
     resource_bounds_mapping_to_default_valid_resource_bounds,
@@ -155,9 +155,8 @@ pub fn extract_submitted_tx(
         )),
         Transaction::Deploy(_) | Transaction::DeployAccount(_) => {
             // DEPLOY and DEPLOY_ACCOUNT transactions are currently not supported
-            return None;
+            None
         }
-        _ => None,
     }
 }
 
@@ -252,8 +251,8 @@ pub async fn extract_block_timestamp(
 }
 
 pub async fn extract_block_txs_info(
-    provider_client: &starknet::providers::jsonrpc::JsonRpcClient<
-        starknet::providers::jsonrpc::HttpTransport,
+    provider_client: &starknet_rust::providers::jsonrpc::JsonRpcClient<
+        starknet_rust::providers::jsonrpc::HttpTransport,
     >,
     simulation_args: &SimulationArgs,
     block_number: u64,
@@ -311,7 +310,7 @@ pub async fn extract_block_txs_info(
 }
 
 pub fn extract_transaction_index(
-    block_with_txs: &starknet::core::types::BlockWithTxs,
+    block_with_txs: &starknet_rust::core::types::BlockWithTxs,
     simulation_args: &SimulationArgs,
 ) -> usize {
     for (index, tx) in block_with_txs.transactions.iter().enumerate() {
@@ -387,7 +386,7 @@ pub fn extract_transaction_contex(
     };
 
     Arc::new(TransactionContext {
-          block_context: Arc::new(BlockContext::new(
+        block_context: Arc::new(BlockContext::new(
             block_info.clone(),
             chain_info,
             VersionedConstants::latest_constants().clone(),

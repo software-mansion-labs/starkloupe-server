@@ -1,4 +1,4 @@
-use starknet::core::types::{
+use starknet_rust::core::types::{
     DeclareTransaction, DeployAccountTransaction, Felt, InvokeTransaction, Transaction,
 };
 

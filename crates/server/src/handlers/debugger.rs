@@ -9,8 +9,8 @@ use axum::{
 };
 use simulate::DebugPayload;
 use simulate::{debugger::debug_by_calldata, SimulationArgs};
-use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
+use starknet_rust::providers::Provider;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;

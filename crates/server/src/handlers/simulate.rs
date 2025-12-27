@@ -19,8 +19,8 @@ use simulate::{
     simulate::{simulate_by_calldata, simulate_transaction_by_hash},
     SimulationArgs, SimulationRawArgs,
 };
-use starknet::providers::Provider;
 use starknet_api::block::BlockNumber;
+use starknet_rust::providers::Provider;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;

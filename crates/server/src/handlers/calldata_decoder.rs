@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 // Using our own DecodedValue struct
 use crate::abi_fetcher::fetch_contract_abi;
 use num_traits::ToPrimitive;

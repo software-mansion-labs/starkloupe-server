@@ -6,7 +6,7 @@ use cheatnet::state::CallTrace;
 use data_decoder::{calldata_decoder::decode_calldata, DecodedValue};
 use internal_tracing::ContractCallDebuggerData;
 use serde::Serialize;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 use std::borrow::Cow;
 use std::cell::Ref;
 use std::fmt::Debug;

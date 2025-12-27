@@ -12,9 +12,9 @@ use data_decoder::type_decoder::{
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use starknet::core::types::{BlockId, BlockTag, ContractClass, Felt};
-use starknet::providers::Provider;
 use starknet_api::core::ChainId;
+use starknet_rust::core::types::{BlockId, BlockTag, ContractClass, Felt};
+use starknet_rust::providers::Provider;
 use std::{collections::HashMap, sync::Arc};
 use tracing::error;
 use url::Url;
@@ -98,7 +98,7 @@ pub async fn get_contract_entrypoints_handler(
 
     match provider
         .get_class_at(
-            starknet::core::types::BlockId::Tag(starknet::core::types::BlockTag::Latest),
+            starknet_rust::core::types::BlockId::Tag(starknet_rust::core::types::BlockTag::Latest),
             contract_address_felt,
         )
         .await

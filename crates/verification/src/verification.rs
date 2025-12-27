@@ -16,8 +16,8 @@ use crate::utils::{create_files_from_map, create_temp_directory, remove_walnut_d
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Postgres};
-use starknet::core::types::{BlockId, BlockTag, Felt};
-use starknet::providers::{
+use starknet_rust::core::types::{BlockId, BlockTag, Felt};
+use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider,
 };

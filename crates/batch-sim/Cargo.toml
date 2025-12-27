@@ -11,4 +11,4 @@ tracing-subscriber.workspace = true
 sqlx.workspace = true
 simulate = { path = "../simulate" }
 db = { path = "../db" }
-starknet.workspace = true
+starknet-rust.workspace = true
