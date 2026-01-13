@@ -6,10 +6,9 @@ use cheatnet::state::CallTrace;
 use cheatnet::state::CallTraceNode;
 use cheatnet::state::CheatnetState;
 use serde::Serialize;
-use starknet_api::abi::abi_utils::selector_from_name;
-use starknet_api::transaction::constants;
 use std::cell::Ref;
 use std::collections::HashMap;
+use walnut_shared::STRK_FEE_TOKEN_ADDRESS;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ContractCallsMap(pub HashMap<u32, ContractCall>);
@@ -107,14 +106,26 @@ impl ContractCallsMapBuilder {
         match trace_call {
             CallTraceNode::EntryPointCall(call_trace) => {
                 let new_contract_call_id = self.next_call_id;
-                let is_fee_transfer = call_trace.borrow().entry_point.entry_point_selector
-                    == selector_from_name(constants::TRANSFER_ENTRY_POINT_NAME);
+
+                // Check if contract address is STRK fee token address
+                let is_strk_fee_token_address = {
+                    match starknet_rust::core::types::Felt::from_hex(STRK_FEE_TOKEN_ADDRESS) {
+                        Ok(felt) => match starknet_api::core::ContractAddress::try_from(felt) {
+                            Ok(strk_addr) => {
+                                call_trace.borrow().entry_point.storage_address == strk_addr
+                            }
+                            Err(_) => false,
+                        },
+                        Err(_) => false,
+                    }
+                };
+
                 let contract_call = ContractCall::from_cheatnet_state_calltrace(
                     &call_trace.borrow(),
                     new_contract_call_id,
                     current_call_id,
                     nesting_level + 1,
-                    is_fee_transfer,
+                    is_strk_fee_token_address,
                 );
 
                 if contract_call.is_failed {
