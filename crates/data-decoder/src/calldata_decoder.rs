@@ -1,6 +1,6 @@
 use crate::starknet_types::EDataType;
 use crate::utils::is_allocation_safe;
-use crate::{create_compact_enum, create_decoded_value_by_type, DecodedValue, DecodedValueType};
+use crate::{create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use num_traits::cast::ToPrimitive;
 use starknet_types_core::felt::Felt;
 use std::borrow::Cow;
@@ -119,21 +119,33 @@ fn decode_type(
             let variant = enum_def.variants.get(variant_idx)?;
 
             if variant.ty.is_empty() {
-                // For unit variants, use compact format
-                Some(create_compact_enum(
-                    name,
-                    ty,
-                    &variant.name,
-                    DecodedValue {
-                        name: None,
-                        type_name: "Unit".to_string(),
-                        value: DecodedValueType::String(variant.name.clone()),
-                    },
-                ))
+                // For unit variants, create Enum structure with variant name as string value
+                let variant_value = DecodedValue {
+                    name: Some(variant.name.clone()),
+                    type_name: "string".to_string(),
+                    value: DecodedValueType::String(variant.name.clone()),
+                };
+                Some(DecodedValue {
+                    name: name.map(|s| s.to_string()),
+                    type_name: ty.to_string(),
+                    value: DecodedValueType::Enum(variant.name.clone(), Box::new(variant_value)),
+                })
             } else {
+                // For variants with data, wrap it with variant name, type, and value
                 let decoded = decode_type(data, &variant.ty, None, structs, enums)?;
-                // For variants with data, use compact format
-                Some(create_compact_enum(name, ty, &variant.name, decoded))
+                let variant_type = simplify_type_name(&variant.ty);
+
+                // Create the inner value structure
+                let variant_value = DecodedValue {
+                    name: Some(variant.name.clone()),
+                    type_name: variant_type.clone(),
+                    value: decoded.value,
+                };
+                Some(DecodedValue {
+                    name: name.map(|s| s.to_string()),
+                    type_name: ty.to_string(),
+                    value: DecodedValueType::Enum(variant.name.clone(), Box::new(variant_value)),
+                })
             }
         }
         EDataType::Tuple(inners) => {
