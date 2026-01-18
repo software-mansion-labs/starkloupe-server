@@ -30,6 +30,50 @@ pub struct DecodedValue {
     pub value: DecodedValueType,
 }
 
+impl DecodedValue {
+    /// Get the type string based on the value type
+    pub fn get_type_string(&self) -> &'static str {
+        match &self.value {
+            DecodedValueType::String(_) => "string",
+            DecodedValueType::Single(_)
+            | DecodedValueType::BigUint(_)
+            | DecodedValueType::BigInt(_) => "primitive",
+            DecodedValueType::Bool(_) => "boolean",
+            DecodedValueType::Array(elements) => {
+                // Check if this is a tuple by examining type_name
+                if self.type_name.starts_with('(') && self.type_name.ends_with(')') {
+                    return "tuple";
+                }
+                // Check if this is an array of tuples: Array<(T1, T2, ...)> or Span<(T1, T2, ...)>
+                if (self.type_name.starts_with("Array<(") || self.type_name.starts_with("Span<("))
+                    && self.type_name.ends_with(")>")
+                {
+                    return "array-tuple";
+                }
+                // Check the type of the first element to determine array subtype
+                if let Some(first) = elements.first() {
+                    match first {
+                        DecodedValueType::String(_) => "array-string",
+                        DecodedValueType::Single(_)
+                        | DecodedValueType::BigUint(_)
+                        | DecodedValueType::BigInt(_) => "array-primitive",
+                        DecodedValueType::Bool(_) => "array-boolean",
+                        DecodedValueType::Array(_) => "array-array",
+                        DecodedValueType::Struct(_) => "array-struct",
+                        DecodedValueType::Enum(_, _) => "array-enum",
+                        DecodedValueType::None => "array-null",
+                    }
+                } else {
+                    "array"
+                }
+            }
+            DecodedValueType::Struct(_) => "struct",
+            DecodedValueType::Enum(_, _) => "enum",
+            DecodedValueType::None => "null",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum DecodedValueType {
     String(String),
@@ -176,9 +220,10 @@ impl Serialize for DecodedValue {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("DecodedValue", 3)?;
+        let mut state = serializer.serialize_struct("DecodedValue", 4)?;
         state.serialize_field("name", &self.name)?;
         state.serialize_field("type_name", &self.type_name)?;
+        state.serialize_field("type", &self.get_type_string())?;
         state.serialize_field("value", &self.value)?;
         state.end()
     }
