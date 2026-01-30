@@ -35,7 +35,12 @@ fn minimum_supported_new_dojo_version() -> Version {
     Version::parse("1.1.0").unwrap()
 }
 
-fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
+fn run_project_build_for_profile(
+    tmp_dir: &PathBuf,
+    path: &str,
+    profile: &str,
+    package_name: Option<&str>,
+) -> Result<()> {
     // Default limit is 300s = 5min
     let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
         .unwrap_or("300".to_string())
@@ -54,13 +59,20 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
         }
     }?;
 
+    let mut cmd = Command::new(absolute_path);
+    cmd.current_dir(tmp_dir)
+        .arg("--profile")
+        .arg(profile)
+        .arg("build");
+
+    // For workspace projects, build only the specific package
+    if let Some(pkg) = package_name {
+        info!("Building workspace package: {}", pkg);
+        cmd.arg("-p").arg(pkg);
+    }
+
     let child_result = unsafe {
-        Command::new(absolute_path)
-            .current_dir(tmp_dir)
-            .arg("--profile")
-            .arg(profile)
-            .arg("build")
-            .stdout(Stdio::piped())
+        cmd.stdout(Stdio::piped())
             .pre_exec(move || {
                 if let Err(e) = set_limits(cpu_limit) {
                     error!("Failed to set resource limits: {:?}", e);
@@ -140,7 +152,12 @@ pub fn compile_with_scarb_for_profile(
         binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
     );
 
-    run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
+    let pkg_name = if manifest.is_workspace {
+        Some(manifest.package_name.as_str())
+    } else {
+        None
+    };
+    run_project_build_for_profile(tmp_dir, &scarb_path, profile, pkg_name)?;
 
     read_old_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -167,6 +184,12 @@ pub fn build_with_scarb_for_profile(
         ));
     }
 
+    let pkg_name = if manifest.is_workspace {
+        Some(manifest.package_name.as_str())
+    } else {
+        None
+    };
+
     if let Some(dojo_version) = &manifest.dojo_version {
         if !is_dojo_version_supported(dojo_version) {
             return Err(anyhow::anyhow!(
@@ -177,7 +200,7 @@ pub fn build_with_scarb_for_profile(
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
-        run_project_build_for_profile(tmp_dir, &sozo_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile, pkg_name)?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -188,7 +211,7 @@ pub fn build_with_scarb_for_profile(
             manifest.cairo_version.1,
             manifest.cairo_version.2
         );
-        run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile, pkg_name)?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }

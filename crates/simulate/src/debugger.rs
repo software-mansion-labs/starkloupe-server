@@ -18,8 +18,10 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::executio
 use cheatnet::state::CheatnetState;
 use internal_tracing::build_debugger_data::build_contract_call_debugger_data_adapter;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
-use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data;
+use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data_with_external;
+use internal_tracing::external_class_cache::ExternalClassCache;
 use internal_tracing::SimulationDebuggerData;
+use verification::voyager::VoyagerClient;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet_api::block::BlockInfo;
@@ -32,6 +34,8 @@ pub async fn simulate_to_get_debug_info(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
+    external_cache: Option<&ExternalClassCache>,
+    voyager_client: Option<&VoyagerClient>,
 ) -> Result<DebuggerInfo, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let block_number = if let Some(bn) = args.block_number {
@@ -87,8 +91,14 @@ pub async fn simulate_to_get_debug_info(
 
     let class_hashes = contract_calls_map.collect_all_class_hashes();
 
-    let classes_debugger_data =
-        fetch_classes_debugger_data(db_pool, s3_client, &class_hashes).await;
+    let classes_debugger_data = fetch_classes_debugger_data_with_external(
+        db_pool,
+        s3_client,
+        &class_hashes,
+        external_cache,
+        voyager_client,
+    )
+    .await;
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
@@ -172,8 +182,12 @@ pub async fn debug_by_calldata(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
+    external_cache: Option<&ExternalClassCache>,
+    voyager_client: Option<&VoyagerClient>,
 ) -> Result<DebuggerInfo, TransactionSimulationError> {
-    let debugger_info = simulate_to_get_debug_info(db_pool, s3_client, args).await?;
+    let debugger_info =
+        simulate_to_get_debug_info(db_pool, s3_client, args, external_cache, voyager_client)
+            .await?;
 
     Ok(debugger_info)
 }

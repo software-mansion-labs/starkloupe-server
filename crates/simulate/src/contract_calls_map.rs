@@ -7,7 +7,7 @@ use cheatnet::state::CallTraceNode;
 use cheatnet::state::CheatnetState;
 use serde::Serialize;
 use std::cell::Ref;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use walnut_shared::STRK_FEE_TOKEN_ADDRESS;
 
 #[derive(Debug, Serialize, Clone)]
@@ -19,10 +19,14 @@ impl ContractCallsMap {
     }
 
     pub fn collect_all_class_hashes(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
         let mut class_hashes = Vec::new();
         for call in self.0.values() {
             if let Some(class_hash) = call.entry_point.class_hash {
-                class_hashes.push(class_hash.0.to_fixed_hex_string());
+                let hash_str = class_hash.0.to_fixed_hex_string();
+                if seen.insert(hash_str.clone()) {
+                    class_hashes.push(hash_str);
+                }
             }
         }
         class_hashes

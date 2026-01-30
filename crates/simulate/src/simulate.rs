@@ -51,9 +51,12 @@ use ethers::types::U256;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
 use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_data_adapter;
-use internal_tracing::debugger_data_fetcher::fetch_classes_data;
+use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fetch_classes_data};
 use internal_tracing::event_calls_map::EventCallsMap;
+use internal_tracing::external_class_cache::ExternalClassCache;
 use internal_tracing::SimulationDebuggerData;
+use std::collections::HashSet;
+use verification::voyager::VoyagerClient;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
@@ -88,6 +91,8 @@ pub async fn simulate(
     s3_client: &aws_sdk_s3::Client,
     execution_result: Option<ExecutionResult>,
     args: SimulationArgs,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<
     (
         SimulationInfo,
@@ -99,6 +104,7 @@ pub async fn simulate(
     ),
     TransactionSimulationError,
 > {
+    tracing::info!("Starting simulation");
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
     let block_number = if let Some(bn) = args.block_number {
@@ -157,6 +163,21 @@ pub async fn simulate(
             true,
             build_simple_contract_call_debugger_data_adapter,
         )?;
+
+    // Check Voyager for classes not verified on Walnut to enable green debug button.
+    // Also triggers background pre-compilation so the debug request gets a cache hit.
+    let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
+    let voyager_verified =
+        check_voyager_verified_classes(voyager_client, &class_hashes, &already_verified, external_cache).await;
+    if !voyager_verified.is_empty() {
+        for call in contract_calls_map.0.values_mut() {
+            if let Some(class_hash) = &call.class_hash {
+                if voyager_verified.contains(class_hash) {
+                    call.call_debugger_data_available = true;
+                }
+            }
+        }
+    }
 
     // Set the deepest function call that panic to true
     if let Some(deepest_func_call_id) = deepest_function_call_id_with_panic {
@@ -439,6 +460,8 @@ pub async fn simulate_by_calldata(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let nonce: Option<u64> = match args.nonce {
         Some(nonce) => nonce.0.to_u64(),
@@ -478,7 +501,7 @@ pub async fn simulate_by_calldata(
         total_transactions_in_block,
         l2_flamechart,
         l1_data_flamechart,
-    ) = simulate(db_pool, s3_client, None, args).await?;
+    ) = simulate(db_pool, s3_client, None, args, voyager_client, external_cache).await?;
 
     let l2_transaction_data = L2TransactionData {
         simulation_result,
@@ -514,6 +537,8 @@ pub async fn simulate_transaction_by_hash(
     tx_hash: &str,
     chain_id: Option<EChainId>,
     network: &ENetwork,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash, network) {
         let result = match transaction_hash {
@@ -525,6 +550,8 @@ pub async fn simulate_transaction_by_hash(
                     ethereum_rpc_url,
                     starknet_hash,
                     chain_id,
+                    voyager_client,
+                    external_cache,
                 )
                 .await?
             }
@@ -536,6 +563,8 @@ pub async fn simulate_transaction_by_hash(
                     ethereum_rpc_url,
                     ethereum_hash,
                     chain_id,
+                    voyager_client,
+                    external_cache,
                 )
                 .await?
             }
@@ -556,6 +585,8 @@ async fn simulate_starknet_transaction_by_hash(
     _ethereum_rpc_url: Option<String>,
     transaction_hash: Felt,
     chain_id: Option<EChainId>,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
     let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
@@ -706,6 +737,8 @@ async fn simulate_starknet_transaction_by_hash(
                                 paymaster_data: Some(paymaster_data),
                                 strkgate_event,
                             },
+                            voyager_client,
+                            external_cache,
                         )
                         .await?;
                         // Build and return simulation result
@@ -758,6 +791,8 @@ pub async fn simulate_ethereum_transaction_by_hash(
     ethereum_rpc_url: Option<String>,
     transaction_hash: H256,
     chain_id: Option<EChainId>,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let chain_id = chain_id.ok_or(TransactionSimulationError::InvalidChainId)?;
     let ethereum_rpc_url = ethereum_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
@@ -800,6 +835,8 @@ pub async fn simulate_ethereum_transaction_by_hash(
             chain_id,
             transaction_hash,
             l1_l2_event.clone(),
+            voyager_client,
+            external_cache,
         )
         .await;
     }
@@ -819,6 +856,8 @@ async fn process_l1_handler_transaction(
     chain_id: EChainId,
     transaction_hash: H256,
     l1_event: EStarknetL1L2Event,
+    voyager_client: Option<&VoyagerClient>,
+    external_cache: Option<&ExternalClassCache>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let l1_handler_tx = L1HandlerTransaction::try_from(l1_event)
         .map_err(|_| TransactionSimulationError::ConversionError)?;
@@ -869,6 +908,8 @@ async fn process_l1_handler_transaction(
             paymaster_data: None,
             strkgate_event: None,
         },
+        voyager_client,
+        external_cache,
     )
     .await?;
 

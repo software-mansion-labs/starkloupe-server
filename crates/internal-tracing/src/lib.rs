@@ -3,6 +3,7 @@ pub mod call_trace;
 pub mod debugger_data_fetcher;
 pub mod event_call;
 pub mod event_calls_map;
+pub mod external_class_cache;
 pub mod function_call;
 pub mod function_calls_map;
 pub mod mappings;
@@ -71,7 +72,7 @@ pub struct SimulationDebuggerData {
 }
 
 /// Contains the debugger data for a class with the Sierra contract class
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClassDebuggerDataWithContractClass {
     pub inline_strategy_class_hash: Option<String>,
     pub class_debugger_data: Option<ClassDebuggerData>,

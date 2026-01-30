@@ -8,6 +8,7 @@ pub mod scarb;
 pub mod scarb_and_dojo_download_scheduler;
 pub mod utils;
 pub mod verification;
+pub mod voyager;
 
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;

@@ -25,6 +25,7 @@ use walnut_shared::{get_voyager_api_url, VOYAGER_API_KEY};
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponseWithSourceCode {
     pub source_code: HashMap<String, String>,
+    pub source: String,
 }
 
 #[utoipa::path(
@@ -44,23 +45,47 @@ pub async fn get_class_handler_with_chain_id(
     State(state): State<Arc<AppState>>,
     Path((_chain_id, class_hash)): Path<(String, String)>,
 ) -> Response {
+    // Try to fetch from local (Walnut) first
     if let Ok((_verified_class_row, verified_class_data)) =
         fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash).await
     {
-        (
+        return (
             StatusCode::OK,
             Json(GetClassResponseWithSourceCode {
                 source_code: verified_class_data.source_code.clone(),
+                source: "walnut".to_string(),
             }),
         )
-            .into_response()
-    } else {
-        (
-            StatusCode::NOT_FOUND,
-            "Contract class is not verified or does not exist",
-        )
-            .into_response()
+            .into_response();
     }
+
+    // Fallback to Voyager
+    if let Some(voyager_client) = &state.voyager_client {
+        match voyager_client.fetch_source_code(&class_hash).await {
+            Ok(Some(voyager_response)) => {
+                return (
+                    StatusCode::OK,
+                    Json(GetClassResponseWithSourceCode {
+                        source_code: voyager_response.source_code,
+                        source: "voyager".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+            Ok(None) => {
+                warn!("Class {} not found on Voyager", class_hash);
+            }
+            Err(e) => {
+                warn!("Failed to fetch from Voyager: {}", e);
+            }
+        }
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        "Contract class is not verified or does not exist",
+    )
+        .into_response()
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -68,6 +93,7 @@ pub struct GetClassResponse {
     pub verified: bool,
     pub declared_sources: Vec<ESource>,
     pub source_code: Option<HashMap<String, String>>,
+    pub source: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -122,23 +148,60 @@ pub async fn get_class_handler(
         .map(|data| data.source)
         .collect();
 
-    let is_verified = fetch_verified_class(&state.db_pool, &class_hash_fixed)
+    let is_verified_locally = fetch_verified_class(&state.db_pool, &class_hash_fixed)
         .await
         .is_ok();
 
-    let source_code = if query.include_source_code.unwrap_or(false) && is_verified {
-        match fetch_verified_class_hash_with_source_code_data(
-            &state.db_pool,
-            &state.s3_client,
-            &class_hash_fixed,
-        )
-        .await
-        {
-            Ok(source_code) => source_code,
-            Err(_) => None,
+    let (source_code, source, is_verified) = if query.include_source_code.unwrap_or(false) {
+        if is_verified_locally {
+            // Try local (Walnut) first
+            match fetch_verified_class_hash_with_source_code_data(
+                &state.db_pool,
+                &state.s3_client,
+                &class_hash_fixed,
+            )
+            .await
+            {
+                Ok(Some(code)) => (Some(code), Some("walnut".to_string()), true),
+                _ => {
+                    // Fallback to Voyager
+                    if let Some(voyager_client) = &state.voyager_client {
+                        match voyager_client.fetch_source_code(&class_hash_fixed).await {
+                            Ok(Some(voyager_response)) => {
+                                (Some(voyager_response.source_code), Some("voyager".to_string()), true)
+                            }
+                            _ => (None, None, true), // Still verified locally even if no source code
+                        }
+                    } else {
+                        (None, None, true)
+                    }
+                }
+            }
+        } else {
+            // Not verified locally, try Voyager
+            if let Some(voyager_client) = &state.voyager_client {
+                match voyager_client.fetch_source_code(&class_hash_fixed).await {
+                    Ok(Some(voyager_response)) => {
+                        (Some(voyager_response.source_code), Some("voyager".to_string()), true)
+                    }
+                    _ => (None, None, false),
+                }
+            } else {
+                (None, None, false)
+            }
         }
     } else {
-        None
+        // No source code requested, check Voyager for verification status
+        if is_verified_locally {
+            (None, None, true)
+        } else if let Some(voyager_client) = &state.voyager_client {
+            match voyager_client.fetch_source_code(&class_hash_fixed).await {
+                Ok(Some(_)) => (None, Some("voyager".to_string()), true),
+                _ => (None, None, false),
+            }
+        } else {
+            (None, None, false)
+        }
     };
 
     (
@@ -147,6 +210,7 @@ pub async fn get_class_handler(
             verified: is_verified,
             declared_sources,
             source_code,
+            source,
         }),
     )
         .into_response()

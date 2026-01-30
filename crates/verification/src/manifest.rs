@@ -8,6 +8,7 @@ use crate::scarb::is_cairo_version_supported;
 #[derive(Debug, Clone)]
 pub struct Manifest {
     pub package_name: String,
+    pub is_workspace: bool,
     pub dojo_version: Option<String>,
     pub dojo_namespace_name: Option<String>,
     pub cairo_version: (u32, u32, u32),
@@ -19,6 +20,14 @@ impl Manifest {
     pub fn new(
         source_code: &mut HashMap<String, String>,
         cairo_version: Option<(u32, u32, u32)>,
+    ) -> Result<Self> {
+        Self::new_with_verified_name(source_code, cairo_version, None)
+    }
+
+    pub fn new_with_verified_name(
+        source_code: &mut HashMap<String, String>,
+        cairo_version: Option<(u32, u32, u32)>,
+        verified_name: Option<&str>,
     ) -> Result<Self> {
         let scarb_config_contents = match source_code.get("Scarb.toml") {
             Some(contents) => contents,
@@ -137,16 +146,29 @@ impl Manifest {
         })?;
         source_code.insert("Scarb.toml".to_string(), updated_scarb_config);
 
+        // Detect if this is a workspace project
+        let is_workspace = scarb_config_toml.get("workspace").is_some();
+
+        tracing::info!("Package toml {:?}", scarb_config_toml);
         let package_name = match scarb_config_toml
             .get("package")
             .and_then(|p| p.get("name"))
             .and_then(toml::Value::as_str)
         {
-            Some(name) => name,
-            None => {
-                error!("Package name not found in Scarb.toml");
-                return Err(anyhow::anyhow!("No package name found"));
-            }
+            Some(name) => name.to_string(),
+            None => match verified_name {
+                Some(name) => {
+                    tracing::info!(
+                        "Package name not found in Scarb.toml, using verifiedName from Voyager: {}",
+                        name
+                    );
+                    name.to_string()
+                }
+                None => {
+                    error!("Package name not found in Scarb.toml");
+                    return Err(anyhow::anyhow!("No package name found"));
+                }
+            },
         };
 
         // TODO
@@ -208,6 +230,7 @@ impl Manifest {
 
         Ok(Self {
             package_name: package_name.to_string(),
+            is_workspace,
             dojo_version: dojo_tag,
             dojo_namespace_name,
             cairo_version,
