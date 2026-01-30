@@ -80,6 +80,8 @@ pub async fn simulate_transaction(
 ) -> Response {
     let db_pool = state.db_pool.clone();
     let s3_client = state.s3_client.clone();
+    let voyager_client = state.voyager_client.clone();
+    let external_cache = state.external_class_cache.clone();
     let skip_tracking = query_params.skip_tracking.clone();
     let payload = payload.clone();
     let simulation_task = task::spawn_blocking(move || {
@@ -149,7 +151,14 @@ pub async fn simulate_transaction(
                     }
 
                     // Run simulation
-                    let result = simulate_by_calldata(&db_pool, &s3_client, simulation_args).await;
+                    let result = simulate_by_calldata(
+                        &db_pool,
+                        &s3_client,
+                        simulation_args,
+                        voyager_client.as_ref(),
+                        Some(&external_cache),
+                    )
+                    .await;
                     match result {
                         Ok(sim_info) => {
                             // Wrap in Arc and cache the result
@@ -289,7 +298,14 @@ pub async fn simulate_transaction(
                     }
 
                     // Run simulation
-                    let result = simulate_by_calldata(&db_pool, &s3_client, simulation_args).await;
+                    let result = simulate_by_calldata(
+                        &db_pool,
+                        &s3_client,
+                        simulation_args,
+                        voyager_client.as_ref(),
+                        Some(&external_cache),
+                    )
+                    .await;
                     match result {
                         Ok(sim_info) => {
                             // Wrap in Arc and cache the result
@@ -362,6 +378,8 @@ pub async fn simulate_transaction(
                         &args.tx_hash,
                         None,
                         &ENetwork::Starknet,
+                        voyager_client.as_ref(),
+                        Some(&external_cache),
                     )
                     .await
                     {
@@ -442,6 +460,8 @@ pub async fn simulate_transaction_by_hash_handler(
 
     let db_pool = state.db_pool.clone();
     let s3_client = state.s3_client.clone();
+    let voyager_client = state.voyager_client.clone();
+    let external_cache = state.external_class_cache.clone();
     let tx_hash = tx_hash.clone();
     let payload_tx_hash = tx_hash.clone();
     let network = network.clone();
@@ -468,6 +488,8 @@ pub async fn simulate_transaction_by_hash_handler(
                 &tx_hash,
                 e_chain_id,
                 &network,
+                voyager_client.as_ref(),
+                Some(&external_cache),
             )
             .await;
 

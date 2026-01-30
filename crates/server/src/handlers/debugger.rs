@@ -26,6 +26,8 @@ pub async fn debug_transaction(
     let db_pool = state.db_pool.clone();
     let s3_client = state.s3_client.clone();
     let cache = state.simulation_cache.clone();
+    let external_cache = state.external_class_cache.clone();
+    let voyager_client = state.voyager_client.clone();
     let payload = payload.clone();
 
     let simulation_task = task::spawn_blocking(move || {
@@ -67,7 +69,15 @@ pub async fn debug_transaction(
             info!("Debug cache miss, proceeding with debug simulation");
 
             // Run debug simulation
-            match debug_by_calldata(&db_pool, &s3_client, debug_args).await {
+            match debug_by_calldata(
+                &db_pool,
+                &s3_client,
+                debug_args,
+                Some(&external_cache),
+                voyager_client.as_ref(),
+            )
+            .await
+            {
                 Ok(debug_info) => {
                     // Wrap in Arc and cache the debug result
                     let debug_info_arc = Arc::new(debug_info);

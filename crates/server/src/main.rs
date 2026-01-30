@@ -111,10 +111,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let simulation_cache = SimulationCache::new(cache_capacity, cache_ttl_minutes);
 
+            // Initialize external class cache for Voyager compiled classes
+            let external_class_cache =
+                internal_tracing::external_class_cache::ExternalClassCache::from_env();
+
+            // Initialize Voyager client with API key
+            let voyager_config = verification::voyager::VoyagerConfig::get_voyager_config();
+            let voyager_client = match verification::voyager::VoyagerClient::new(voyager_config) {
+                Ok(client) => {
+                    tracing::info!("Voyager client initialized and enabled");
+                    Some(client)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize Voyager client: {:?}", e);
+                    None
+                }
+            };
+
             let shared_state = Arc::new(AppState {
                 db_pool,
                 s3_client,
                 simulation_cache,
+                external_class_cache,
+                voyager_client,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();

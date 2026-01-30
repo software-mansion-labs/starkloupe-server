@@ -170,6 +170,7 @@ pub struct GetContractResponse {
     pub deployed_sources: Vec<ESource>,
     pub cairo_version: String,
     pub source_code: Option<HashMap<String, String>>,
+    pub source: Option<String>,
     pub abi: Option<String>,
 }
 
@@ -306,23 +307,60 @@ pub async fn get_contract_handler(
     let valid_sources: Vec<ESource> = valid_results.into_iter().map(|(s, _, _, _)| s).collect();
 
     let class_hash = class_hash_felt.to_fixed_hex_string();
-    let is_verified = fetch_verified_class(&state.db_pool, &class_hash)
+    let is_verified_locally = fetch_verified_class(&state.db_pool, &class_hash)
         .await
         .is_ok();
 
-    let source_code = if is_verified && query.include_source_code.unwrap_or_default() {
-        match fetch_verified_class_hash_with_source_code_data(
-            &state.db_pool,
-            &state.s3_client,
-            &class_hash,
-        )
-        .await
-        {
-            Ok(source_code) => source_code,
-            Err(_) => None,
+    let (source_code, source, is_verified) = if query.include_source_code.unwrap_or_default() {
+        if is_verified_locally {
+            // Try local (Walnut) first
+            match fetch_verified_class_hash_with_source_code_data(
+                &state.db_pool,
+                &state.s3_client,
+                &class_hash,
+            )
+            .await
+            {
+                Ok(Some(code)) => (Some(code), Some("walnut".to_string()), true),
+                _ => {
+                    // Fallback to Voyager
+                    if let Some(voyager_client) = &state.voyager_client {
+                        match voyager_client.fetch_source_code(&class_hash).await {
+                            Ok(Some(voyager_response)) => {
+                                (Some(voyager_response.source_code), Some("voyager".to_string()), true)
+                            }
+                            _ => (None, None, true), // Still verified locally even if no source code
+                        }
+                    } else {
+                        (None, None, true)
+                    }
+                }
+            }
+        } else {
+            // Not verified locally, try Voyager
+            if let Some(voyager_client) = &state.voyager_client {
+                match voyager_client.fetch_source_code(&class_hash).await {
+                    Ok(Some(voyager_response)) => {
+                        (Some(voyager_response.source_code), Some("voyager".to_string()), true)
+                    }
+                    _ => (None, None, false),
+                }
+            } else {
+                (None, None, false)
+            }
         }
     } else {
-        None
+        // No source code requested, check Voyager for verification status
+        if is_verified_locally {
+            (None, None, true)
+        } else if let Some(voyager_client) = &state.voyager_client {
+            match voyager_client.fetch_source_code(&class_hash).await {
+                Ok(Some(_)) => (None, Some("voyager".to_string()), true),
+                _ => (None, None, false),
+            }
+        } else {
+            (None, None, false)
+        }
     };
 
     let response_body = GetContractResponse {
@@ -331,6 +369,7 @@ pub async fn get_contract_handler(
         deployed_sources: valid_sources,
         cairo_version: cairo_version_str,
         source_code,
+        source,
         abi,
     };
 

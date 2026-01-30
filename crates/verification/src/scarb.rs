@@ -41,7 +41,6 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
         .unwrap_or("300".to_string())
         .parse::<u64>()?;
 
-    info!("Build project with {:?}", &path);
     let absolute_path = match fs::canonicalize(path) {
         Ok(path) => Ok(path),
         Err(e) => {
@@ -54,13 +53,21 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
         }
     }?;
 
+    let mut cmd = Command::new(&absolute_path);
+    cmd.current_dir(tmp_dir)
+        .arg("--profile")
+        .arg(profile)
+        .arg("build");
+
+    // Log the full command being executed
+    info!(
+        "Running build command: {} --profile {} build",
+        absolute_path.display(),
+        profile
+    );
+
     let child_result = unsafe {
-        Command::new(absolute_path)
-            .current_dir(tmp_dir)
-            .arg("--profile")
-            .arg(profile)
-            .arg("build")
-            .stdout(Stdio::piped())
+        cmd.stdout(Stdio::piped())
             .pre_exec(move || {
                 if let Err(e) = set_limits(cpu_limit) {
                     error!("Failed to set resource limits: {:?}", e);
