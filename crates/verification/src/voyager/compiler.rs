@@ -1,7 +1,9 @@
 use super::types::{CompilerVersion, VoyagerSourceResponse};
 use crate::manifest::Manifest;
 use crate::scarb::{build_with_scarb_for_profile, is_new_cairo_version_supported};
-use crate::utils::{create_files_from_map, remove_walnut_debug_from_scarb};
+use crate::utils::{
+    create_files_from_map, move_failed_verification_to_failed_tmp, remove_walnut_debug_from_scarb,
+};
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use std::collections::HashMap;
@@ -73,14 +75,14 @@ pub async fn compile_voyager_source(
     ) {
         Ok(m) => m,
         Err(e) => {
-            // cleanup_tmp_dir(&tmp_dir);
+            cleanup_tmp_dir(&tmp_dir);
             return Err(anyhow::anyhow!("Failed to parse manifest: {}", e));
         }
     };
 
     // Write source files to temp directory
     if let Err(e) = create_files_from_map(&source_code, &tmp_dir) {
-        // cleanup_tmp_dir(&tmp_dir);
+        cleanup_tmp_dir(&tmp_dir);
         return Err(anyhow::anyhow!("Failed to write source files: {}", e));
     }
 
@@ -99,7 +101,9 @@ pub async fn compile_voyager_source(
         Ok(classes) => classes,
         Err(e) => {
             error!("Failed to compile Voyager source: {:?}", e);
-            cleanup_tmp_dir(&tmp_dir);
+            if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
+                error!("Failed to move verification to failed tmp: {:?}", move_err);
+            }
             return Err(anyhow::anyhow!("Compilation failed: {}", e));
         }
     };

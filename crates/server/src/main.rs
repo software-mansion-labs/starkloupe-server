@@ -115,9 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let external_class_cache =
                 internal_tracing::external_class_cache::ExternalClassCache::from_env();
 
-            // Initialize Voyager client with hardcoded API key
-            let voyager_config = verification::voyager::VoyagerConfig::hardcoded();
-            tracing::info!("Voyager configuration {:?}", voyager_config);
+            // Initialize Voyager client with API key
+            let voyager_config = verification::voyager::VoyagerConfig::get_voyager_config();
             let voyager_client = match verification::voyager::VoyagerClient::new(voyager_config) {
                 Ok(client) => {
                     tracing::info!("Voyager client initialized and enabled");

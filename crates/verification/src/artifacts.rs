@@ -4,8 +4,9 @@ use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
 use starknet_rust::core::types::contract::SierraClass;
+use std::fs;
 use std::path::PathBuf;
-use tracing::error;
+use tracing::{error, info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StarknetArtifacts {
@@ -60,12 +61,73 @@ pub fn read_starknet_artifacts(
     build_profile: &str,
     include_debug_info: bool,
 ) -> Result<Vec<(String, ContractClass, Option<PathBuf>)>> {
-    let artifacts_file_path = tmp_dir
-        .join("target")
-        .join(build_profile)
-        .join(format!("{}.starknet_artifacts.json", package_name));
+    let target_dir = tmp_dir.join("target").join(build_profile);
 
-    let artifacts_contents = read_file(&artifacts_file_path)?;
+    // First try the specific package artifact file
+    let specific_artifact_path = target_dir.join(format!("{}.starknet_artifacts.json", package_name));
+
+    if specific_artifact_path.exists() {
+        info!("Reading artifact file: {}", specific_artifact_path.display());
+        return read_single_artifact_file(&specific_artifact_path, tmp_dir, build_profile, include_debug_info);
+    }
+
+    // If not found, scan for all *.starknet_artifacts.json files (workspace case)
+    info!("Scanning for artifact files in: {}", target_dir.display());
+
+    let mut all_classes = Vec::new();
+    let mut found_any = false;
+
+    match fs::read_dir(&target_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |ext| ext == "json")
+                    && path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
+                {
+                    found_any = true;
+                    info!("Reading artifact file: {}", path.display());
+                    match read_single_artifact_file(&path, tmp_dir, build_profile, include_debug_info) {
+                        Ok(classes) => {
+                            all_classes.extend(classes);
+                        }
+                        Err(e) => {
+                            warn!("Failed to read artifact file {}: {:?}", path.display(), e);
+                            // Continue to next artifact file
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to read target directory: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to scan for artifact files: {:?}", e));
+        }
+    }
+
+    if !found_any {
+        return Err(anyhow::anyhow!(
+            "No artifact files found in {}",
+            target_dir.display()
+        ));
+    }
+
+    if all_classes.is_empty() {
+        return Err(anyhow::anyhow!("No contracts found in any artifact files"));
+    }
+
+    Ok(all_classes)
+}
+
+fn read_single_artifact_file(
+    artifact_path: &PathBuf,
+    tmp_dir: &PathBuf,
+    build_profile: &str,
+    include_debug_info: bool,
+) -> Result<Vec<(String, ContractClass, Option<PathBuf>)>> {
+    let artifacts_contents = read_file(artifact_path)?;
     let starknet_artifacts: StarknetArtifacts =
         deserialize_json(&artifacts_contents, "StarknetArtifacts")?;
 
@@ -81,8 +143,8 @@ pub fn read_starknet_artifacts(
                 classes.push((class_hash, contract_class, debug_info_path));
             }
             Err(e) => {
-                error!("Failed to process contract artifact: {:?}", e);
-                return Err(e);
+                warn!("Failed to process contract artifact {}: {:?}", contract_artifact.contract_name, e);
+                // Continue to next contract
             }
         }
     }

@@ -1,9 +1,36 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use tracing::error;
+use tracing::{error, info};
 use walnut_shared::parse_version_string_to_tuple;
 
 use crate::scarb::is_cairo_version_supported;
+
+/// Find Cairo version from workspace member Scarb.toml files
+fn find_cairo_version_from_workspace_members(
+    source_code: &HashMap<String, String>,
+) -> Option<(u32, u32, u32)> {
+    // Look for any Scarb.toml that has starknet dependency
+    for (path, content) in source_code {
+        if path.ends_with("Scarb.toml") && path != "Scarb.toml" {
+            if let Ok(toml_value) = content.parse::<toml::Value>() {
+                if let Some(version_str) = toml_value
+                    .get("dependencies")
+                    .and_then(|d| d.get("starknet"))
+                    .and_then(toml::Value::as_str)
+                {
+                    if let Ok(version) = parse_version_string_to_tuple(version_str) {
+                        info!(
+                            "Found Cairo version {} from workspace member: {}",
+                            version_str, path
+                        );
+                        return Some(version);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 
 #[derive(Debug, Clone)]
 pub struct Manifest {
@@ -84,7 +111,11 @@ impl Manifest {
                 }
             }
         }
+        // Detect if this is a workspace project (need to check before adding [cairo] section)
+        let is_workspace = scarb_config_toml.get("workspace").is_some();
+
         // Add the sierra-replace-ids and unstable-add-statements-code-locations-debug-info under [cairo]
+        // But only for non-workspace projects. Workspace projects should only use profile-level config.
         if let Some(cairo_table) = scarb_config_toml
             .get_mut("cairo")
             .and_then(toml::Value::as_table_mut)
@@ -93,7 +124,8 @@ impl Manifest {
             if is_cairo_inline_strategy_on(cairo_table) && !profiles.contains("dev") {
                 profile_with_inline_strategy.insert("dev".to_string(), true);
             }
-        } else {
+        } else if !is_workspace {
+            // Only add [cairo] section for non-workspace projects
             let mut cairo_table = toml::map::Map::new();
             insert_cairo_debug_info(&mut cairo_table);
             scarb_config_toml
@@ -146,9 +178,6 @@ impl Manifest {
         })?;
         source_code.insert("Scarb.toml".to_string(), updated_scarb_config);
 
-        // Detect if this is a workspace project
-        let is_workspace = scarb_config_toml.get("workspace").is_some();
-
         tracing::info!("Package toml {:?}", scarb_config_toml);
         let package_name = match scarb_config_toml
             .get("package")
@@ -171,22 +200,37 @@ impl Manifest {
             },
         };
 
-        // TODO
+        // Get Cairo version - either from parameter, root Scarb.toml, or workspace member
         let cairo_version = match cairo_version {
             Some(version) => version,
             None => {
-                let cairo_version = match scarb_config_toml
+                // First try root Scarb.toml
+                let version_from_root = scarb_config_toml
                     .get("dependencies")
                     .and_then(|d| d.get("starknet"))
                     .and_then(toml::Value::as_str)
-                {
-                    Some(version_str) => parse_version_string_to_tuple(version_str)?,
+                    .and_then(|v| parse_version_string_to_tuple(v).ok());
+
+                match version_from_root {
+                    Some(version) => version,
                     None => {
-                        error!("Starknet version not found in Scarb.toml");
-                        return Err(anyhow::anyhow!("Starknet version not found"));
+                        // For workspace projects, try to find version from member Scarb.toml
+                        if is_workspace {
+                            match find_cairo_version_from_workspace_members(source_code) {
+                                Some(version) => version,
+                                None => {
+                                    error!("Starknet version not found in workspace members");
+                                    return Err(anyhow::anyhow!(
+                                        "Starknet version not found in workspace"
+                                    ));
+                                }
+                            }
+                        } else {
+                            error!("Starknet version not found in Scarb.toml");
+                            return Err(anyhow::anyhow!("Starknet version not found"));
+                        }
                     }
-                };
-                cairo_version
+                }
             }
         };
 

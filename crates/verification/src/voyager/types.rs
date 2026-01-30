@@ -40,8 +40,8 @@ impl VoyagerConfig {
         }
     }
 
-    /// Create config with hardcoded API key (always enabled)
-    pub fn hardcoded() -> Self {
+    /// Create config with voyager API key (always enabled)
+    pub fn get_voyager_config() -> Self {
         Self {
             api_key: VOYAGER_API_KEY.to_string(),
             base_url: "https://api.voyager.online/beta".to_string(),

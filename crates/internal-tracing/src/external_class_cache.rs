@@ -105,7 +105,9 @@ impl ExternalClassCache {
             source: source.to_string(),
         };
 
-        self.cache.insert(class_hash.to_string(), Arc::new(entry)).await;
+        self.cache
+            .insert(class_hash.to_string(), Arc::new(entry))
+            .await;
         debug!("External cache set for {} (source: {})", class_hash, source);
     }
 
@@ -126,25 +128,6 @@ impl ExternalClassCache {
             capacity: self.capacity,
             ttl_hours: self.ttl.as_secs() / 3600,
         }
-    }
-
-    /// Get a cached entry or compute it if missing.
-    ///
-    /// This method ensures **in-flight deduplication**: if multiple concurrent
-    /// requests try to compute the same class hash, only one computation runs
-    /// and others wait for the result. This prevents duplicate compilations
-    /// for the same class when multiple debug requests arrive simultaneously.
-    pub async fn get_or_try_compute<F>(
-        &self,
-        class_hash: &str,
-        init: F,
-    ) -> Result<Arc<CachedExternalClass>, Arc<anyhow::Error>>
-    where
-        F: std::future::Future<Output = Result<Arc<CachedExternalClass>, anyhow::Error>>,
-    {
-        self.cache
-            .try_get_with(class_hash.to_string(), init)
-            .await
     }
 
     /// Invalidate a specific cache entry

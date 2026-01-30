@@ -37,7 +37,10 @@ impl VoyagerClient {
         class_hash: &str,
     ) -> Result<Option<VoyagerSourceResponse>> {
         if !self.config.enabled {
-            debug!("Voyager client is disabled, skipping fetch for {}", class_hash);
+            debug!(
+                "Voyager client is disabled, skipping fetch for {}",
+                class_hash
+            );
             return Ok(None);
         }
 
@@ -66,7 +69,10 @@ impl VoyagerClient {
                             Ok(Some(source_response))
                         }
                         Err(e) => {
-                            error!("Failed to parse Voyager response for {}: {:?}", class_hash, e);
+                            error!(
+                                "Failed to parse Voyager response for {}: {:?}",
+                                class_hash, e
+                            );
                             Err(anyhow::anyhow!("Failed to parse Voyager response: {}", e))
                         }
                     }
@@ -78,7 +84,7 @@ impl VoyagerClient {
                     Err(anyhow::anyhow!("Voyager API rate limited"))
                 } else {
                     let error_text = resp.text().await.unwrap_or_default();
-                    error!(
+                    warn!(
                         "Voyager API error for {}: status={}, body={}",
                         class_hash, status, error_text
                     );

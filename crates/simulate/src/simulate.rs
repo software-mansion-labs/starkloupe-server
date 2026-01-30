@@ -55,8 +55,6 @@ use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fe
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::external_class_cache::ExternalClassCache;
 use internal_tracing::SimulationDebuggerData;
-use std::collections::HashSet;
-use verification::voyager::VoyagerClient;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
 use sqlx::Postgres;
@@ -72,9 +70,11 @@ use starknet_rust::core::types::{
 };
 use starknet_rust::providers::Provider;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use tracing::warn;
 use url::Url;
+use verification::voyager::VoyagerClient;
 use walnut_shared::abi::{Enum, Event, Struct};
 use walnut_shared::abi_processor::AbiProcessor;
 use walnut_shared::fetch_tx_block_number_from_voyager;
@@ -104,7 +104,6 @@ pub async fn simulate(
     ),
     TransactionSimulationError,
 > {
-    tracing::info!("Starting simulation");
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
     let block_number = if let Some(bn) = args.block_number {
@@ -167,8 +166,13 @@ pub async fn simulate(
     // Check Voyager for classes not verified on Walnut to enable green debug button.
     // Also triggers background pre-compilation so the debug request gets a cache hit.
     let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
-    let voyager_verified =
-        check_voyager_verified_classes(voyager_client, &class_hashes, &already_verified, external_cache).await;
+    let voyager_verified = check_voyager_verified_classes(
+        voyager_client,
+        &class_hashes,
+        &already_verified,
+        external_cache,
+    )
+    .await;
     if !voyager_verified.is_empty() {
         for call in contract_calls_map.0.values_mut() {
             if let Some(class_hash) = &call.class_hash {
@@ -501,7 +505,15 @@ pub async fn simulate_by_calldata(
         total_transactions_in_block,
         l2_flamechart,
         l1_data_flamechart,
-    ) = simulate(db_pool, s3_client, None, args, voyager_client, external_cache).await?;
+    ) = simulate(
+        db_pool,
+        s3_client,
+        None,
+        args,
+        voyager_client,
+        external_cache,
+    )
+    .await?;
 
     let l2_transaction_data = L2TransactionData {
         simulation_result,

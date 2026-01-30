@@ -206,12 +206,17 @@ pub async fn fetch_classes_debugger_data_with_external(
                                                                 .file_path
                                                                 .replace("[contract]", "");
                                                         }
+                                                        // Extract path after tmp/verification/<id>/
+                                                        // e.g., /tmp/verification/abc123/layerzero/src/file.cairo
+                                                        // becomes layerzero/src/file.cairo
                                                         if let Some(pos) =
-                                                            code_location.file_path.find("/src/")
+                                                            code_location.file_path.find("tmp/verification/")
                                                         {
-                                                            code_location.file_path = code_location
-                                                                .file_path[(pos + 1)..]
-                                                                .to_string();
+                                                            let after_tmp = &code_location.file_path[pos + "tmp/verification/".len()..];
+                                                            // Skip the verification ID (first path segment)
+                                                            if let Some(slash_pos) = after_tmp.find('/') {
+                                                                code_location.file_path = after_tmp[slash_pos + 1..].to_string();
+                                                            }
                                                         }
                                                         Some(code_location)
                                                     } else {
@@ -491,9 +496,15 @@ fn extract_debugger_data_from_contract_class(
                                             code_location.file_path =
                                                 code_location.file_path.replace("[contract]", "");
                                         }
-                                        if let Some(pos) = code_location.file_path.find("/src/") {
-                                            code_location.file_path =
-                                                code_location.file_path[(pos + 1)..].to_string();
+                                        // Extract path after tmp/verification/<id>/
+                                        // e.g., /tmp/verification/voyager-abc123/layerzero/src/file.cairo
+                                        // becomes layerzero/src/file.cairo
+                                        if let Some(pos) = code_location.file_path.find("tmp/verification/") {
+                                            let after_tmp = &code_location.file_path[pos + "tmp/verification/".len()..];
+                                            // Skip the verification ID (first path segment)
+                                            if let Some(slash_pos) = after_tmp.find('/') {
+                                                code_location.file_path = after_tmp[slash_pos + 1..].to_string();
+                                            }
                                         }
                                         Some(code_location)
                                     } else {
