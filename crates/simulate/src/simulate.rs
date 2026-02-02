@@ -72,7 +72,7 @@ use starknet_rust::providers::Provider;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use tracing::warn;
+use tracing::{debug, info, warn};
 use url::Url;
 use verification::voyager::VoyagerClient;
 use walnut_shared::abi::{Enum, Event, Struct};
@@ -137,6 +137,7 @@ pub async fn simulate(
     let (cheatnet_state, post_exec_state_data) =
         run_simulation(block_info, args, &mut cached_fork_state_non_inlined_class)?;
 
+    info!("Simuation done..");
     let mut contract_flamechart: Vec<FlameChartNode> = Vec::new();
     let ContractCallsMapBuilder {
         mut contract_calls_map,
@@ -146,8 +147,8 @@ pub async fn simulate(
         ..
     } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
 
+    debug!("Fetching classes data");
     let class_hashes = contract_calls_map.collect_all_class_hashes();
-
     let classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
@@ -384,6 +385,7 @@ fn run_simulation(
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
 ) -> Result<(CheatnetState, Option<PostExecStateData>), TransactionSimulationError> {
+    info!("Running simulation...");
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);

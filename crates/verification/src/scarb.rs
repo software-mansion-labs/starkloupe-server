@@ -7,10 +7,26 @@ use cairo_lang_starknet_classes::contract_class::ContractClass;
 use semver::Version;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::sync::OnceLock;
+use std::time::Duration;
 use std::{env, fs};
-use tracing::{error, info};
+use tokio::process::Command;
+use tokio::sync::Semaphore;
+use tracing::{debug, error, info, warn};
 use walnut_shared::tuple_to_version_string;
+
+/// Global semaphore to limit concurrent builds
+/// Default is 2 parallel builds, configurable via BUILD_CONCURRENCY_LIMIT env var
+fn build_semaphore() -> &'static Semaphore {
+    static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| {
+        let limit = std::env::var("BUILD_CONCURRENCY_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        Semaphore::new(limit)
+    })
+}
 
 fn supported_old_cairo_versions() -> Vec<Version> {
     vec![
@@ -35,90 +51,90 @@ fn minimum_supported_new_dojo_version() -> Version {
     Version::parse("1.1.0").unwrap()
 }
 
-fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
-    // Default limit is 300s = 5min
+async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
+    // Acquire semaphore permit to limit concurrent builds
+    let _permit = build_semaphore()
+        .acquire()
+        .await
+        .map_err(|_| anyhow::anyhow!("Build semaphore closed"))?;
+
     let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
         .unwrap_or("300".to_string())
         .parse::<u64>()?;
 
-    let absolute_path = match fs::canonicalize(path) {
-        Ok(path) => Ok(path),
-        Err(e) => {
-            let binary = path
-                .split("binaries/")
-                .nth(1)
-                .unwrap_or("unknown component");
-            error!("{}", e);
-            Err(anyhow::anyhow!("Cannot find {} for verification", binary))
-        }
-    }?;
+    let build_timeout_secs: u64 = std::env::var("BUILD_TIMEOUT_SECS")
+        .unwrap_or("180".to_string())
+        .parse::<u64>()?;
+    let build_timeout = Duration::from_secs(build_timeout_secs);
+
+    let absolute_path = fs::canonicalize(path).map_err(|e| {
+        let binary = path
+            .split("binaries/")
+            .nth(1)
+            .unwrap_or("unknown component");
+        error!("{}", e);
+        anyhow::anyhow!("Cannot find {} for verification", binary)
+    })?;
 
     let mut cmd = Command::new(&absolute_path);
     cmd.current_dir(tmp_dir)
         .arg("--profile")
         .arg(profile)
-        .arg("build");
+        .arg("build")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
 
-    // Log the full command being executed
+    unsafe {
+        cmd.pre_exec(move || {
+            set_limits(cpu_limit).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to set resource limits: {}", e),
+                )
+            })
+        });
+    }
+
     info!(
         "Running build command: {} --profile {} build",
         absolute_path.display(),
         profile
     );
 
-    let child_result = unsafe {
-        cmd.stdout(Stdio::piped())
-            .pre_exec(move || {
-                if let Err(e) = set_limits(cpu_limit) {
-                    error!("Failed to set resource limits: {:?}", e);
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to set resource limits: {}", e),
-                    ));
-                }
+    let build_start = std::time::Instant::now();
+    let mut child = cmd.spawn()?;
+
+    match tokio::time::timeout(build_timeout, child.wait()).await {
+        Ok(Ok(status)) => {
+            let duration = build_start.elapsed();
+            if status.success() {
+                info!(
+                    "Build completed successfully in {:.2}s",
+                    duration.as_secs_f64()
+                );
                 Ok(())
-            })
-            .spawn()
-    };
-
-    let child = match child_result {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Failed to spawn process: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to run process: {:?}", e));
+            } else {
+                debug!(
+                    "Build failed after {:.2}s. Status: {:?}",
+                    duration.as_secs_f64(),
+                    status
+                );
+                Err(anyhow::anyhow!(
+                    "Project build failed with status: {:?}",
+                    status
+                ))
+            }
         }
-    };
-
-    let output = match child.wait_with_output() {
-        Ok(o) => o,
-        Err(e) => {
-            error!("Failed to wait for child process: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to wait for process: {:?}", e));
+        Ok(Err(e)) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),
+        Err(_) => {
+            warn!("Build timed out after {}s", build_timeout_secs);
+            Err(anyhow::anyhow!(
+                "Build timed out after {}s",
+                build_timeout_secs
+            ))
         }
-    };
-
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        // For other errors, show the actual Scarb error
-        error!(
-            "Build failed. Status: {:?}, Stdout: {:?}, Stderr: {:?}",
-            output.status, stdout, stderr
-        );
-
-        // Extract the actual error message from stderr (Scarb errors are usually in stderr)
-        let error_message = if !stderr.is_empty() {
-            stderr.to_string()
-        } else {
-            stdout.to_string()
-        };
-
-        // Return the actual Scarb error message to the user
-        return Err(anyhow::anyhow!("Project build failed: {}", error_message));
     }
-
-    Ok(())
 }
 
 /// Builds a project at a given path and with given profile using Scarb for Cairo version pre 2.8.0.
@@ -127,7 +143,7 @@ fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -
 ///
 /// A `Result` containing a vector of tuples with `ContractClass` and `Path`(to file that contain cairo locations) and a class hash (`String`)
 /// if successful, or an error if the build fails.
-pub fn compile_with_scarb_for_profile(
+pub async fn compile_with_scarb_for_profile(
     manifest: &Manifest,
     starknet_version: (u32, u32, u32),
     tmp_dir: &PathBuf,
@@ -147,7 +163,7 @@ pub fn compile_with_scarb_for_profile(
         binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
     );
 
-    run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
+    run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
 
     read_old_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -158,7 +174,7 @@ pub fn compile_with_scarb_for_profile(
 ///
 /// A `Result` containing a vector of tuples with `ContractClass` and a class hash (`String`)
 /// if successful, or an error if the build fails.
-pub fn build_with_scarb_for_profile(
+pub async fn build_with_scarb_for_profile(
     manifest: &Manifest,
     tmp_dir: &PathBuf,
     profile: &str,
@@ -184,7 +200,7 @@ pub fn build_with_scarb_for_profile(
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
-        run_project_build_for_profile(tmp_dir, &sozo_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile).await?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -195,7 +211,7 @@ pub fn build_with_scarb_for_profile(
             manifest.cairo_version.1,
             manifest.cairo_version.2
         );
-        run_project_build_for_profile(tmp_dir, &scarb_path, profile)?;
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }

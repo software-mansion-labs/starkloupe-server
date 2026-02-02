@@ -178,7 +178,6 @@ impl Manifest {
         })?;
         source_code.insert("Scarb.toml".to_string(), updated_scarb_config);
 
-        tracing::info!("Package toml {:?}", scarb_config_toml);
         let package_name = match scarb_config_toml
             .get("package")
             .and_then(|p| p.get("name"))
@@ -187,10 +186,8 @@ impl Manifest {
             Some(name) => name.to_string(),
             None => match verified_name {
                 Some(name) => {
-                    tracing::info!(
-                        "Package name not found in Scarb.toml, using verifiedName from Voyager: {}",
-                        name
-                    );
+                    // TODO: Check if it is workspace for package name in each member
+                    // of workspace inside it Scarb.toml check the package/artifact name
                     name.to_string()
                 }
                 None => {

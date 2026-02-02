@@ -94,16 +94,15 @@ pub async fn compile_voyager_source(
         .cloned()
         .unwrap_or_else(|| "walnut-debug".to_string());
 
-    info!("Building with profile: {}", profile);
-
     // Build with scarb
-    let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile) {
+    let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile).await {
         Ok(classes) => classes,
         Err(e) => {
-            error!("Failed to compile Voyager source: {:?}", e);
-            if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
-                error!("Failed to move verification to failed tmp: {:?}", move_err);
-            }
+            error!(
+                "Failed to compile Voyager source for class {}: {}",
+                original_class_hash, e
+            );
+            let _ = move_failed_verification_to_failed_tmp(&tmp_dir);
             return Err(anyhow::anyhow!("Compilation failed: {}", e));
         }
     };
