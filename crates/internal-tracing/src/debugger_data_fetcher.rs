@@ -119,7 +119,6 @@ pub async fn fetch_classes_debugger_data_with_external(
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
 ) -> HashMap<String, ClassDebuggerDataWithContractClass> {
-    info!("Fetching debugger data for classes {:?}", classes);
     let mut classes_debugger_data: HashMap<String, ClassDebuggerDataWithContractClass> =
         HashMap::new();
 
@@ -278,6 +277,12 @@ pub async fn fetch_classes_debugger_data_with_external(
         }
         if !missing_classes.is_empty() {
             for class_hash in missing_classes {
+                if class_hash
+                    == "0x0000000000000000000000000000000000000000000000000000000000000117"
+                {
+                    continue;
+                }
+
                 // 1. Check external cache first
                 if let Some(cache) = external_cache {
                     if let Some(cached) = cache.get(&class_hash).await {
@@ -297,10 +302,6 @@ pub async fn fetch_classes_debugger_data_with_external(
 
                     // 1c. Wait for pending compilation if one is in progress
                     if cache.is_compiling(&class_hash).await {
-                        info!(
-                            "Waiting for pending compilation of {} before debug",
-                            class_hash
-                        );
                         cache.wait_for_pending(&class_hash).await;
 
                         // Check cache again after waiting
@@ -434,6 +435,10 @@ pub async fn check_voyager_verified_classes(
     // Filter classes that need Voyager check
     let mut classes_to_check = Vec::new();
     for class_hash in class_hashes {
+        if class_hash == "0x0000000000000000000000000000000000000000000000000000000000000117" {
+            continue;
+        }
+
         if already_verified.contains(class_hash) {
             continue;
         }

@@ -40,6 +40,11 @@ impl VoyagerClient {
             return Ok(None);
         }
 
+        // Skip specific addresses that are known to not be on Voyager
+        if class_hash == "0x0000000000000000000000000000000000000000000000000000000000000117" {
+            return Ok(None);
+        }
+
         let url = format!("{}/classes/{}/source", self.config.base_url, class_hash);
 
         let response = self

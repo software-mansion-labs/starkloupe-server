@@ -11,6 +11,7 @@ use crate::SierraToCairoDebugInfo;
 use crate::{ClassVerificationData, EVerificationStatus};
 use anyhow::{Context, Result};
 use cairo_lang_starknet_classes::contract_class::ContractClass;
+use futures::future;
 use sqlx::{Pool, Postgres};
 use starknet_rust::core::types::{BlockId, BlockTag, ContractClass as CoreContractClass, Felt};
 use starknet_rust::providers::{
@@ -537,7 +538,8 @@ pub async fn process_old_cairo_version_verification(
     update_old_cairo_version_class_verification_data(
         class_verification_data,
         &classes_to_verify_map,
-    );
+    )
+    .await;
 
     Ok(())
 }
@@ -593,10 +595,12 @@ async fn handle_old_cairo_verision_class_verification_profiles(
     Ok(())
 }
 
-fn update_old_cairo_version_class_verification_data(
+async fn update_old_cairo_version_class_verification_data(
     class_verification_data: &mut ClassVerificationData,
     classes_to_verify_map: &HashMap<String, (ContractClass, PathBuf)>,
 ) {
+    let mut debug_info_tasks = Vec::new();
+
     for (class_hash, class_result) in class_verification_data.iter_mut() {
         if let Some((contract_class, cairo_debug_info_path)) = classes_to_verify_map.get(class_hash)
         {
@@ -608,7 +612,7 @@ fn update_old_cairo_version_class_verification_data(
                 ref mut existing_contract_class,
                 _,
                 ref mut existing_cairo_debug_info_path,
-                ref mut existing_cairo_debug_info,
+                _,
             )) = class_result
             {
                 *existing_contract_class = Some(contract_class.clone());
@@ -624,13 +628,8 @@ fn update_old_cairo_version_class_verification_data(
                     continue;
                 }
 
-                match load_cairo_debug_info(cairo_debug_info_path) {
-                    Ok(debug_info) => *existing_cairo_debug_info = Some(debug_info),
-                    Err(err) => {
-                        error!("{}", err);
-                        *class_result = Err(err);
-                    }
-                }
+                // Prepare task for loading debug info
+                debug_info_tasks.push((class_hash.clone(), cairo_debug_info_path.clone()));
             }
         } else {
             let error_message = format!(
@@ -639,6 +638,30 @@ fn update_old_cairo_version_class_verification_data(
             );
             error!("{}", error_message);
             *class_result = Err(anyhow::anyhow!(error_message));
+        }
+    }
+
+    // Load debug info in parallel
+    let loaded_debug_infos = future::join_all(debug_info_tasks.into_iter().map(
+        |(class_hash, path)| async move {
+            let res = load_cairo_debug_info(path).await;
+            (class_hash, res)
+        },
+    ))
+    .await;
+
+    // Apply loaded debug info
+    for (class_hash, res) in loaded_debug_infos {
+        if let Some(Ok((_, _, _, _, _, _, ref mut existing_cairo_debug_info))) =
+            class_verification_data.get_mut(&class_hash)
+        {
+            match res {
+                Ok(debug_info) => *existing_cairo_debug_info = Some(debug_info),
+                Err(err) => {
+                    error!("{}", err);
+                    *class_verification_data.get_mut(&class_hash).unwrap() = Err(err);
+                }
+            }
         }
     }
 }
@@ -655,16 +678,21 @@ fn programs_match(class: &ContractClass, program_from_blockchain: &[Felt]) -> bo
         .all(|(e1, e2)| e1.value.to_string() == e2.to_string())
 }
 
-pub fn load_cairo_debug_info(cairo_debug_info_path: &PathBuf) -> Result<SierraToCairoDebugInfo> {
-    let cairo_debug_info_file = File::open(cairo_debug_info_path).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to open debug info file {}: {:?}",
-            cairo_debug_info_path.display(),
-            e
-        )
-    })?;
+pub async fn load_cairo_debug_info(
+    cairo_debug_info_path: PathBuf,
+) -> Result<SierraToCairoDebugInfo> {
+    tokio::task::spawn_blocking(move || {
+        let cairo_debug_info_file = File::open(&cairo_debug_info_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to open debug info file {}: {:?}",
+                cairo_debug_info_path.display(),
+                e
+            )
+        })?;
 
-    let cairo_debug_info_reader = BufReader::new(cairo_debug_info_file);
-    serde_json::from_reader(cairo_debug_info_reader)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize debug info: {:?}", e))
+        let cairo_debug_info_reader = BufReader::new(cairo_debug_info_file);
+        serde_json::from_reader(cairo_debug_info_reader)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize debug info: {:?}", e))
+    })
+    .await?
 }

@@ -234,7 +234,6 @@ impl ExternalClassCache {
         // Remove from pending
         let mut pending = self.pending_compilations.write().await;
         pending.remove(class_hash);
-        info!("Finished compilation tracking for {}", class_hash);
     }
 
     /// Mark a compilation as failed.

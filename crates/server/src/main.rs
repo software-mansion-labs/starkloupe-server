@@ -101,13 +101,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Initialize simulation cache with configurable settings from environment
             let cache_capacity = std::env::var("CACHE_CAPACITY")
-                .unwrap_or_else(|_| "100".to_string()) // Production: 100 entries
+                .unwrap_or_else(|_| "500".to_string()) // Production: 100 entries
                 .parse::<u64>()
-                .unwrap_or(100);
+                .unwrap_or(500);
             let cache_ttl_minutes = std::env::var("CACHE_TTL_MINUTES")
-                .unwrap_or_else(|_| "1440".to_string()) // Production: 24 hours (24 * 60 = 1440 minutes)
+                .unwrap_or_else(|_| "2880".to_string()) // Production: 24 hours (40 * 60 = 2880 minutes)
                 .parse::<u64>()
-                .unwrap_or(1440);
+                .unwrap_or(2880);
 
             let simulation_cache = SimulationCache::new(cache_capacity, cache_ttl_minutes);
 

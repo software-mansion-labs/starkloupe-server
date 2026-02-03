@@ -63,7 +63,7 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
         .parse::<u64>()?;
 
     let build_timeout_secs: u64 = std::env::var("BUILD_TIMEOUT_SECS")
-        .unwrap_or("180".to_string())
+        .unwrap_or("120".to_string())
         .parse::<u64>()?;
     let build_timeout = Duration::from_secs(build_timeout_secs);
 
@@ -127,13 +127,10 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
             }
         }
         Ok(Err(e)) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),
-        Err(_) => {
-            warn!("Build timed out after {}s", build_timeout_secs);
-            Err(anyhow::anyhow!(
-                "Build timed out after {}s",
-                build_timeout_secs
-            ))
-        }
+        Err(_) => Err(anyhow::anyhow!(
+            "Build timed out after {}s",
+            build_timeout_secs
+        )),
     }
 }
 
