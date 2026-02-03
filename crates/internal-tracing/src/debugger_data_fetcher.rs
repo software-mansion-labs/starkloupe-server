@@ -5,6 +5,7 @@ use cairo_annotations::annotations::coverage::VersionedCoverageAnnotations;
 use cairo_annotations::annotations::TryFromDebugInfo;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use futures::future;
+use futures::stream::{self, StreamExt};
 use futures::FutureExt;
 use itertools::Itertools;
 use sqlx::{Pool, Postgres};
@@ -118,7 +119,6 @@ pub async fn fetch_classes_debugger_data_with_external(
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
 ) -> HashMap<String, ClassDebuggerDataWithContractClass> {
-    info!("Fetching debugger data for classes {:?}", classes);
     let mut classes_debugger_data: HashMap<String, ClassDebuggerDataWithContractClass> =
         HashMap::new();
 
@@ -209,13 +209,20 @@ pub async fn fetch_classes_debugger_data_with_external(
                                                         // Extract path after tmp/verification/<id>/
                                                         // e.g., /tmp/verification/abc123/layerzero/src/file.cairo
                                                         // becomes layerzero/src/file.cairo
-                                                        if let Some(pos) =
-                                                            code_location.file_path.find("tmp/verification/")
+                                                        if let Some(pos) = code_location
+                                                            .file_path
+                                                            .find("tmp/verification/")
                                                         {
-                                                            let after_tmp = &code_location.file_path[pos + "tmp/verification/".len()..];
+                                                            let after_tmp = &code_location
+                                                                .file_path
+                                                                [pos + "tmp/verification/".len()..];
                                                             // Skip the verification ID (first path segment)
-                                                            if let Some(slash_pos) = after_tmp.find('/') {
-                                                                code_location.file_path = after_tmp[slash_pos + 1..].to_string();
+                                                            if let Some(slash_pos) =
+                                                                after_tmp.find('/')
+                                                            {
+                                                                code_location.file_path = after_tmp
+                                                                    [slash_pos + 1..]
+                                                                    .to_string();
                                                             }
                                                         }
                                                         Some(code_location)
@@ -254,7 +261,6 @@ pub async fn fetch_classes_debugger_data_with_external(
         }
     }
 
-    info!("Some classes are not verified on Walnut, let check voyager api");
     // Voyager fallback for missing classes
     if external_cache.is_some() || voyager_client.is_some() {
         let missing_classes: Vec<String> = classes
@@ -263,14 +269,20 @@ pub async fn fetch_classes_debugger_data_with_external(
             .cloned()
             .collect();
 
-        info!("missing_classes {:?}", missing_classes);
         if !missing_classes.is_empty() {
-            debug!(
-                "Attempting Voyager fallback for {} missing classes",
-                missing_classes.len()
+            info!(
+                "Classes not found in Walnut DB, checking Voyager: {:?}",
+                missing_classes
             );
-
+        }
+        if !missing_classes.is_empty() {
             for class_hash in missing_classes {
+                if class_hash
+                    == "0x0000000000000000000000000000000000000000000000000000000000000117"
+                {
+                    continue;
+                }
+
                 // 1. Check external cache first
                 if let Some(cache) = external_cache {
                     if let Some(cached) = cache.get(&class_hash).await {
@@ -281,6 +293,33 @@ pub async fn fetch_classes_debugger_data_with_external(
                         classes_debugger_data.insert(class_hash.clone(), cached.data.clone());
                         continue;
                     }
+
+                    // 1b. Check if compilation previously failed
+                    if cache.has_failed(&class_hash).await {
+                        debug!("Skipping {} - compilation previously failed", class_hash);
+                        continue;
+                    }
+
+                    // 1c. Wait for pending compilation if one is in progress
+                    if cache.is_compiling(&class_hash).await {
+                        cache.wait_for_pending(&class_hash).await;
+
+                        // Check cache again after waiting
+                        if let Some(cached) = cache.get(&class_hash).await {
+                            debug!(
+                                "Found {} in external cache after waiting (source: {})",
+                                class_hash, cached.source
+                            );
+                            classes_debugger_data.insert(class_hash.clone(), cached.data.clone());
+                            continue;
+                        }
+                        // If still not in cache after waiting, compilation might have failed
+                        // Check failed status again
+                        if cache.has_failed(&class_hash).await {
+                            debug!("Skipping {} - compilation failed while waiting", class_hash);
+                            continue;
+                        }
+                    }
                 }
 
                 // 2. Try Voyager API if available
@@ -289,6 +328,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                         continue;
                     }
 
+                    debug!("Fetching source from Voyager for class {}", class_hash);
                     match client.fetch_source_code(&class_hash).await {
                         Ok(Some(source_response)) => {
                             info!(
@@ -296,10 +336,17 @@ pub async fn fetch_classes_debugger_data_with_external(
                                 class_hash, source_response.verified_name
                             );
 
-                            // 3. Compile the source code
+                            // 3. Mark compilation as in-progress (if cache available)
+                            let notifier = if let Some(cache) = external_cache {
+                                cache.start_compilation(&class_hash).await
+                            } else {
+                                None
+                            };
+
+                            // 4. Compile the source code
                             match compile_voyager_source(source_response).await {
                                 Ok(compiled) => {
-                                    // 4. Extract debugger data from compiled class
+                                    // 5. Extract debugger data from compiled class
                                     let class_debugger_data =
                                         extract_debugger_data_from_contract_class(
                                             &compiled.contract_class,
@@ -314,7 +361,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                                         contract_class: compiled.contract_class,
                                     };
 
-                                    // 5. Cache the result
+                                    // 6. Cache the result
                                     if let Some(cache) = external_cache {
                                         cache
                                             .set(
@@ -325,7 +372,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                                             .await;
                                     }
 
-                                    // 6. Add to result map with ORIGINAL class hash
+                                    // 7. Add to result map with ORIGINAL class hash
                                     classes_debugger_data
                                         .insert(compiled.original_class_hash, data);
 
@@ -339,15 +386,19 @@ pub async fn fetch_classes_debugger_data_with_external(
                                         "Failed to compile Voyager source for {}: {:?}",
                                         class_hash, e
                                     );
+                                    // Mark as failed so we don't retry
+                                    if let Some(cache) = external_cache {
+                                        cache.mark_failed(&class_hash).await;
+                                    }
                                 }
                             }
+
+                            // 8. Mark compilation as finished
+                            if let (Some(cache), Some(notifier)) = (external_cache, notifier) {
+                                cache.finish_compilation(&class_hash, notifier).await;
+                            }
                         }
-                        Ok(None) => {
-                            debug!("Class {} not found on Voyager", class_hash);
-                        }
-                        Err(e) => {
-                            warn!("Failed to fetch from Voyager for {}: {:?}", class_hash, e);
-                        }
+                        Ok(None) | Err(_) => {}
                     }
                 }
             }
@@ -381,54 +432,72 @@ pub async fn check_voyager_verified_classes(
         _ => return voyager_verified,
     };
 
-    let missing_classes: Vec<&String> = class_hashes
-        .iter()
-        .filter(|h| !already_verified.contains(*h))
-        .collect();
+    // Filter classes that need Voyager check
+    let mut classes_to_check = Vec::new();
+    for class_hash in class_hashes {
+        if class_hash == "0x0000000000000000000000000000000000000000000000000000000000000117" {
+            continue;
+        }
 
-    if missing_classes.is_empty() {
-        return voyager_verified;
-    }
+        if already_verified.contains(class_hash) {
+            continue;
+        }
 
-    debug!(
-        "Checking Voyager verification for {} missing classes",
-        missing_classes.len()
-    );
-
-    for class_hash in missing_classes {
-        // Skip if already in external cache (already compiled)
         if let Some(cache) = external_cache {
             if cache.contains(class_hash).await {
-                debug!("Class {} already in external cache, skipping Voyager check", class_hash);
                 voyager_verified.insert(class_hash.clone());
+                continue;
+            }
+            if cache.has_failed(class_hash).await {
                 continue;
             }
         }
 
-        match client.fetch_source_code(class_hash).await {
-            Ok(Some(source_response)) => {
-                info!(
-                    "Class {} is verified on Voyager (simulate path, name: {})",
-                    class_hash, source_response.verified_name
-                );
-                voyager_verified.insert(class_hash.clone());
+        classes_to_check.push(class_hash.clone());
+    }
 
-                // Spawn background compilation so debug request gets a cache hit
-                if let Some(cache) = external_cache {
-                    let cache = cache.clone();
-                    let class_hash = class_hash.clone();
+    if classes_to_check.is_empty() {
+        return voyager_verified;
+    }
+
+    debug!(
+        "Checking Voyager verification for {} classes in parallel",
+        classes_to_check.len()
+    );
+
+    // Fetch from Voyager in parallel with bounded concurrency
+    let concurrency_limit = std::env::var("VOYAGER_CONCURRENCY_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+
+    let results: Vec<_> = stream::iter(classes_to_check)
+        .map(|class_hash| async move {
+            let result = client.fetch_source_code(&class_hash).await;
+            (class_hash, result)
+        })
+        .buffer_unordered(concurrency_limit)
+        .collect()
+        .await;
+
+    // Process results and spawn background compilations
+    for (class_hash, result) in results {
+        if let Ok(Some(source_response)) = result {
+            voyager_verified.insert(class_hash.clone());
+
+            // Spawn background compilation
+            if let Some(cache) = external_cache {
+                let cache = cache.clone();
+                let class_hash_clone = class_hash.clone();
+
+                if let Some(notifier) = cache.start_compilation(&class_hash).await {
                     tokio::spawn(async move {
-                        info!(
-                            "Background pre-compilation started for Voyager class {}",
-                            class_hash
-                        );
                         match compile_voyager_source(source_response).await {
                             Ok(compiled) => {
-                                let class_debugger_data =
-                                    extract_debugger_data_from_contract_class(
-                                        &compiled.contract_class,
-                                        &compiled.source_code,
-                                    );
+                                let class_debugger_data = extract_debugger_data_from_contract_class(
+                                    &compiled.contract_class,
+                                    &compiled.source_code,
+                                );
 
                                 let data = ClassDebuggerDataWithContractClass {
                                     inline_strategy_class_hash: Some(compiled.inline_class_hash),
@@ -441,25 +510,21 @@ pub async fn check_voyager_verified_classes(
                                     .await;
 
                                 info!(
-                                    "Background pre-compilation completed for Voyager class {}",
-                                    class_hash
+                                    "Background pre-compilation completed for {}",
+                                    class_hash_clone
                                 );
                             }
                             Err(e) => {
                                 warn!(
                                     "Background pre-compilation failed for {}: {:?}",
-                                    class_hash, e
+                                    class_hash_clone, e
                                 );
+                                cache.mark_failed(&class_hash_clone).await;
                             }
                         }
+                        cache.finish_compilation(&class_hash_clone, notifier).await;
                     });
                 }
-            }
-            Ok(None) => {
-                debug!("Class {} not found on Voyager", class_hash);
-            }
-            Err(e) => {
-                warn!("Failed to check Voyager for class {}: {:?}", class_hash, e);
             }
         }
     }
@@ -499,11 +564,15 @@ fn extract_debugger_data_from_contract_class(
                                         // Extract path after tmp/verification/<id>/
                                         // e.g., /tmp/verification/voyager-abc123/layerzero/src/file.cairo
                                         // becomes layerzero/src/file.cairo
-                                        if let Some(pos) = code_location.file_path.find("tmp/verification/") {
-                                            let after_tmp = &code_location.file_path[pos + "tmp/verification/".len()..];
+                                        if let Some(pos) =
+                                            code_location.file_path.find("tmp/verification/")
+                                        {
+                                            let after_tmp = &code_location.file_path
+                                                [pos + "tmp/verification/".len()..];
                                             // Skip the verification ID (first path segment)
                                             if let Some(slash_pos) = after_tmp.find('/') {
-                                                code_location.file_path = after_tmp[slash_pos + 1..].to_string();
+                                                code_location.file_path =
+                                                    after_tmp[slash_pos + 1..].to_string();
                                             }
                                         }
                                         Some(code_location)

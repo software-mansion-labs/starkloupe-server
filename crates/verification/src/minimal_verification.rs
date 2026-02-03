@@ -161,7 +161,7 @@ async fn verify(
             "Processing inline strategy profile:",
         );
 
-        match build_with_scarb_for_profile(&manifest, &tmp_dir, inline_strategy_profile) {
+        match build_with_scarb_for_profile(&manifest, &tmp_dir, inline_strategy_profile).await {
             Ok(classes) => {
                 for (class_hash, contract_class) in classes {
                     inline_class_hashes.push((class_hash.clone(), contract_class.clone()));
@@ -202,7 +202,7 @@ async fn verify(
                 profile = profile,
                 "Processing profile",
             );
-            let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile);
+            let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile).await;
             match class_result {
                 Ok(classes) => {
                     let class_hashes: Vec<String> = classes

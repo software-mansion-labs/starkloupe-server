@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::{collections::HashMap, fs::File};
-use tracing::error;
+use tracing::{error, info};
 
 pub fn create_files_from_map(
     source_code: &HashMap<String, String>,
@@ -53,8 +53,8 @@ pub fn create_temp_directory(verification_id: String) -> Result<PathBuf> {
 pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
     let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
 
-    error!(
-        "Failed to verify classes - moving {} to {} for further investigation.",
+    info!(
+        "Moving failed verification {} to {}",
         &tmp_dir.display(),
         &failed_tmp_dir.display(),
     );

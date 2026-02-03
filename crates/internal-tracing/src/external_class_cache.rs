@@ -1,7 +1,9 @@
 use crate::ClassDebuggerDataWithContractClass;
 use moka::future::Cache;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::{watch, RwLock};
 use tracing::{debug, info};
 
 /// Cached entry for externally compiled class data
@@ -12,6 +14,9 @@ pub struct CachedExternalClass {
     pub source: String,
 }
 
+/// Sender for notifying when a compilation completes
+type CompilationNotifier = watch::Sender<bool>;
+
 /// Cache for externally compiled class data (e.g., from Voyager API)
 ///
 /// This cache stores compiled debug data for classes that are not verified
@@ -19,7 +24,15 @@ pub struct CachedExternalClass {
 #[derive(Clone)]
 pub struct ExternalClassCache {
     cache: Cache<String, Arc<CachedExternalClass>>,
+    /// Tracks classes that are currently being compiled
+    /// When a compilation starts, we insert a watch channel
+    /// When it finishes, we send a signal and remove the entry
+    pending_compilations: Arc<RwLock<HashMap<String, watch::Receiver<bool>>>>,
+    /// Tracks classes whose compilation has failed
+    /// This prevents repeated compilation attempts for classes that are known to fail
+    failed_compilations: Cache<String, Instant>,
     ttl: Duration,
+    failed_ttl: Duration,
     capacity: u64,
 }
 
@@ -29,22 +42,32 @@ impl ExternalClassCache {
     /// # Arguments
     /// * `capacity` - Maximum number of entries to store
     /// * `ttl_hours` - Time-to-live in hours for cached entries
-    pub fn new(capacity: u64, ttl_hours: u64) -> Self {
+    /// * `failed_ttl_hours` - Time-to-live in hours for failed compilation entries
+    pub fn new(capacity: u64, ttl_hours: u64, failed_ttl_hours: u64) -> Self {
         let ttl = Duration::from_secs(ttl_hours * 3600);
+        let failed_ttl = Duration::from_secs(failed_ttl_hours * 3600);
 
         let cache = Cache::builder()
             .max_capacity(capacity)
             .time_to_live(ttl)
             .build();
 
+        let failed_compilations = Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(failed_ttl)
+            .build();
+
         info!(
-            "External class cache initialized with capacity={}, ttl={}h",
-            capacity, ttl_hours
+            "External class cache initialized with capacity={}, ttl={}h, failed_ttl={}h",
+            capacity, ttl_hours, failed_ttl_hours
         );
 
         Self {
             cache,
+            pending_compilations: Arc::new(RwLock::new(HashMap::new())),
+            failed_compilations,
             ttl,
+            failed_ttl,
             capacity,
         }
     }
@@ -54,6 +77,7 @@ impl ExternalClassCache {
     /// Uses:
     /// - `EXTERNAL_CLASS_CACHE_CAPACITY` (default: 500)
     /// - `EXTERNAL_CLASS_CACHE_TTL_HOURS` (default: 24)
+    /// - `EXTERNAL_CLASS_CACHE_FAILED_TTL_HOURS` (default: 1)
     pub fn from_env() -> Self {
         let capacity = std::env::var("EXTERNAL_CLASS_CACHE_CAPACITY")
             .ok()
@@ -65,7 +89,12 @@ impl ExternalClassCache {
             .and_then(|v| v.parse().ok())
             .unwrap_or(24);
 
-        Self::new(capacity, ttl_hours)
+        let failed_ttl_hours = std::env::var("EXTERNAL_CLASS_CACHE_FAILED_TTL_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+
+        Self::new(capacity, ttl_hours, failed_ttl_hours)
     }
 
     /// Get a cached entry by class hash
@@ -140,6 +169,96 @@ impl ExternalClassCache {
     pub async fn clear(&self) {
         self.cache.invalidate_all();
         info!("External class cache cleared");
+    }
+
+    /// Mark a class as being compiled. Returns a notifier to signal when done.
+    /// If another compilation is already in progress, returns None.
+    pub async fn start_compilation(&self, class_hash: &str) -> Option<CompilationNotifier> {
+        let mut pending = self.pending_compilations.write().await;
+
+        // Check if already being compiled
+        if pending.contains_key(class_hash) {
+            info!(
+                "Compilation already in progress for {}, skipping",
+                class_hash
+            );
+            return None;
+        }
+
+        // Create a watch channel - initial value is false (not done)
+        let (tx, rx) = watch::channel(false);
+        pending.insert(class_hash.to_string(), rx);
+        debug!("Started compilation tracking for {}", class_hash);
+        Some(tx)
+    }
+
+    /// Wait for a pending compilation to complete.
+    /// Returns true if there was a pending compilation and it completed.
+    /// Returns false if no compilation was pending.
+    pub async fn wait_for_pending(&self, class_hash: &str) -> bool {
+        // Get a clone of the receiver if compilation is pending
+        let receiver = {
+            let pending = self.pending_compilations.read().await;
+            pending.get(class_hash).cloned()
+        };
+
+        if let Some(mut rx) = receiver {
+            info!("Waiting for pending compilation of {}", class_hash);
+            // Wait for the compilation to complete (value becomes true)
+            loop {
+                if *rx.borrow() {
+                    return true;
+                }
+                if rx.changed().await.is_err() {
+                    // Sender was dropped, compilation might have failed
+                    return false;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a class is currently being compiled
+    pub async fn is_compiling(&self, class_hash: &str) -> bool {
+        let pending = self.pending_compilations.read().await;
+        pending.contains_key(class_hash)
+    }
+
+    /// Mark a compilation as finished and remove from pending.
+    /// This should be called after the compilation result is cached.
+    pub async fn finish_compilation(&self, class_hash: &str, notifier: CompilationNotifier) {
+        // Signal completion
+        let _ = notifier.send(true);
+
+        // Remove from pending
+        let mut pending = self.pending_compilations.write().await;
+        pending.remove(class_hash);
+    }
+
+    /// Mark a compilation as failed.
+    /// This prevents repeated compilation attempts for the same class.
+    /// The failed status will be cached for `failed_ttl` duration.
+    pub async fn mark_failed(&self, class_hash: &str) {
+        self.failed_compilations
+            .insert(class_hash.to_string(), Instant::now())
+            .await;
+        info!(
+            "Marked compilation as failed for {} (will retry after {:?})",
+            class_hash, self.failed_ttl
+        );
+    }
+
+    /// Check if a compilation has previously failed for this class.
+    /// Returns true if the class is in the failed cache (and TTL hasn't expired).
+    pub async fn has_failed(&self, class_hash: &str) -> bool {
+        self.failed_compilations.contains_key(class_hash)
+    }
+
+    /// Clear the failed status for a class (e.g., to force a retry).
+    pub async fn clear_failed(&self, class_hash: &str) {
+        self.failed_compilations.invalidate(class_hash).await;
+        debug!("Cleared failed status for {}", class_hash);
     }
 }
 

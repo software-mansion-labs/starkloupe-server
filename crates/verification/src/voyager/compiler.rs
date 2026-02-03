@@ -54,7 +54,7 @@ pub async fn compile_voyager_source(
     // Create temporary directory
     let verification_id = format!("voyager-{}", Uuid::new_v4());
     let tmp_dir = PathBuf::from("tmp/verification").join(&verification_id);
-    fs::create_dir_all(&tmp_dir)?;
+    let tmp_dir_clone = tmp_dir.clone();
 
     info!(
         "Compiling Voyager source for class {} (version {}) in {}",
@@ -63,53 +63,79 @@ pub async fn compile_voyager_source(
         tmp_dir.display()
     );
 
-    // Clone source code so we can modify it
-    let mut source_code = source_response.source_code.clone();
+    let source_response_clone = source_response.clone();
+    let verified_name = source_response.verified_name.clone();
 
-    // Parse manifest (this modifies Scarb.toml to add debug flags and walnut-debug profile)
-    // Use verified_name from Voyager as fallback if package name not in Scarb.toml
-    let manifest = match Manifest::new_with_verified_name(
-        &mut source_code,
-        Some(version_tuple),
-        Some(&source_response.verified_name),
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            cleanup_tmp_dir(&tmp_dir);
-            return Err(anyhow::anyhow!("Failed to parse manifest: {}", e));
+    // 1. Prepare files in blocking task
+    let (manifest, profile, prepared_source_code) = tokio::task::spawn_blocking(move || {
+        fs::create_dir_all(&tmp_dir_clone).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create temp directory {}: {}",
+                tmp_dir_clone.display(),
+                e
+            )
+        })?;
+
+        let mut source_code = source_response_clone.source_code.clone();
+
+        // Parse manifest (this modifies Scarb.toml to add debug flags and walnut-debug profile)
+        let manifest = match Manifest::new_with_verified_name(
+            &mut source_code,
+            Some(version_tuple),
+            Some(&verified_name),
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                let _ = fs::remove_dir_all(&tmp_dir_clone);
+                return Err(anyhow::anyhow!("Failed to parse manifest: {}", e));
+            }
+        };
+
+        // Write source files to temp directory
+        if let Err(e) = create_files_from_map(&source_code, &tmp_dir_clone) {
+            let _ = fs::remove_dir_all(&tmp_dir_clone);
+            return Err(anyhow::anyhow!("Failed to write source files: {}", e));
         }
-    };
 
-    // Write source files to temp directory
-    if let Err(e) = create_files_from_map(&source_code, &tmp_dir) {
-        cleanup_tmp_dir(&tmp_dir);
-        return Err(anyhow::anyhow!("Failed to write source files: {}", e));
-    }
+        // Find the walnut-debug profile (or inline strategy profile)
+        let profile = manifest
+            .profile_with_inline_strategy
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| "walnut-debug".to_string());
 
-    // Find the walnut-debug profile (or inline strategy profile)
-    let profile = manifest
-        .profile_with_inline_strategy
-        .keys()
-        .next()
-        .cloned()
-        .unwrap_or_else(|| "walnut-debug".to_string());
+        Ok::<_, anyhow::Error>((manifest, profile, source_code))
+    })
+    .await??;
 
-    info!("Building with profile: {}", profile);
-
-    // Build with scarb
-    let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile) {
+    // 2. Build with scarb (Async)
+    let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile).await {
         Ok(classes) => classes,
         Err(e) => {
-            error!("Failed to compile Voyager source: {:?}", e);
-            if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir) {
-                error!("Failed to move verification to failed tmp: {:?}", move_err);
-            }
+            // Attempt to move to failed tmp, but do it non-blocking if possible or just log error
+            // Since move_failed... might do I/O, let's just cleanup for now to avoid complexity or spawn another blocking task
+            // Ideally we preserve failed builds for debugging, so let's try to preserve it
+            let tmp_dir_clone = tmp_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir_clone) {
+                    error!("Failed to move verification to failed tmp: {:?}", move_err);
+                }
+            })
+            .await;
             return Err(anyhow::anyhow!("Compilation failed: {}", e));
         }
     };
 
-    // Clean up temp directory
-    cleanup_tmp_dir(&tmp_dir);
+    // 3. Clean up temp directory (Blocking)
+    let tmp_dir_cleanup = tmp_dir.clone();
+    if let Err(e) = tokio::task::spawn_blocking(move || {
+        cleanup_tmp_dir(&tmp_dir_cleanup);
+    })
+    .await
+    {
+        error!("Failed to cleanup temp dir task: {:?}", e);
+    }
 
     // Find the matching contract class
     // The compiled classes will have different hashes due to debug info

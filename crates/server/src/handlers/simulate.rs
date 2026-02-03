@@ -343,7 +343,10 @@ pub async fn simulate_transaction(
                         info!("Cache hit for tx hash! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));
                     }
-                    info!("Cache miss for tx hash, proceeding with simulation");
+                    info!(
+                        "Cache miss for tx_hash={}, starting simulation",
+                        args.tx_hash
+                    );
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
                         if let Err(err) = send_telegram_notification_custom_rpc(
@@ -478,7 +481,10 @@ pub async fn simulate_transaction_by_hash_handler(
                 info!("Cache hit for tx hash handler! Returning cached result");
                 return Ok(cached_result);
             }
-            info!("Cache miss for tx hash handler, proceeding with simulation");
+            info!(
+                "Cache miss for tx_hash={}, starting simulation",
+                tx_hash
+            );
 
             let result = simulate_transaction_by_hash(
                 &db_pool,

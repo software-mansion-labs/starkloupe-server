@@ -21,16 +21,16 @@ use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_clas
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data_with_external;
 use internal_tracing::external_class_cache::ExternalClassCache;
 use internal_tracing::SimulationDebuggerData;
-use verification::voyager::VoyagerClient;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet_api::block::BlockInfo;
 use starknet_api::execution_resources::GasAmount;
 use starknet_rust::core::types::Felt;
 use starknet_rust::providers::Provider;
+use verification::voyager::VoyagerClient;
 use walnut_shared::create_rpc_client_from_url;
 
-pub async fn simulate_to_get_debug_info(
+async fn simulate_to_get_debug_info(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
     args: SimulationArgs,

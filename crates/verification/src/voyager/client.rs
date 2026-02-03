@@ -37,15 +37,15 @@ impl VoyagerClient {
         class_hash: &str,
     ) -> Result<Option<VoyagerSourceResponse>> {
         if !self.config.enabled {
-            debug!(
-                "Voyager client is disabled, skipping fetch for {}",
-                class_hash
-            );
+            return Ok(None);
+        }
+
+        // Skip specific addresses that are known to not be on Voyager
+        if class_hash == "0x0000000000000000000000000000000000000000000000000000000000000117" {
             return Ok(None);
         }
 
         let url = format!("{}/classes/{}/source", self.config.base_url, class_hash);
-        debug!("Fetching source code from Voyager: {}", url);
 
         let response = self
             .client
@@ -80,14 +80,9 @@ impl VoyagerClient {
                     debug!("Class {} not found on Voyager (404)", class_hash);
                     Ok(None)
                 } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    warn!("Voyager API rate limited (429) for class {}", class_hash);
                     Err(anyhow::anyhow!("Voyager API rate limited"))
                 } else {
                     let error_text = resp.text().await.unwrap_or_default();
-                    warn!(
-                        "Voyager API error for {}: status={}, body={}",
-                        class_hash, status, error_text
-                    );
                     Err(anyhow::anyhow!(
                         "Voyager API error: status={}, body={}",
                         status,

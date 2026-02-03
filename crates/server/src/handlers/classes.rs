@@ -72,11 +72,8 @@ pub async fn get_class_handler_with_chain_id(
                 )
                     .into_response();
             }
-            Ok(None) => {
+            Ok(None) | Err(_) => {
                 warn!("Class {} not found on Voyager", class_hash);
-            }
-            Err(e) => {
-                warn!("Failed to fetch from Voyager: {}", e);
             }
         }
     }
@@ -167,9 +164,11 @@ pub async fn get_class_handler(
                     // Fallback to Voyager
                     if let Some(voyager_client) = &state.voyager_client {
                         match voyager_client.fetch_source_code(&class_hash_fixed).await {
-                            Ok(Some(voyager_response)) => {
-                                (Some(voyager_response.source_code), Some("voyager".to_string()), true)
-                            }
+                            Ok(Some(voyager_response)) => (
+                                Some(voyager_response.source_code),
+                                Some("voyager".to_string()),
+                                true,
+                            ),
                             _ => (None, None, true), // Still verified locally even if no source code
                         }
                     } else {
@@ -181,9 +180,11 @@ pub async fn get_class_handler(
             // Not verified locally, try Voyager
             if let Some(voyager_client) = &state.voyager_client {
                 match voyager_client.fetch_source_code(&class_hash_fixed).await {
-                    Ok(Some(voyager_response)) => {
-                        (Some(voyager_response.source_code), Some("voyager".to_string()), true)
-                    }
+                    Ok(Some(voyager_response)) => (
+                        Some(voyager_response.source_code),
+                        Some("voyager".to_string()),
+                        true,
+                    ),
                     _ => (None, None, false),
                 }
             } else {
