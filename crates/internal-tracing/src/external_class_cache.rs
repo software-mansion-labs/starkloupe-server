@@ -21,7 +21,7 @@ type CompilationNotifier = watch::Sender<bool>;
 ///
 /// This cache stores compiled debug data for classes that are not verified
 /// in the Walnut database but were found on external verification services.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ExternalClassCache {
     cache: Cache<String, Arc<CachedExternalClass>>,
     /// Tracks classes that are currently being compiled

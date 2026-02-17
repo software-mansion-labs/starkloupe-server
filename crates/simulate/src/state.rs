@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use tracing::error;
 use universal_sierra_compiler_api::{compile_sierra, SierraType};
+use internal_tracing::external_class_cache::ExternalClassCache;
 use verification::s3::fetch_verified_class_hash_with_contract_class_data;
 use walnut_shared::create_rpc_client_from_url;
 
@@ -178,6 +179,7 @@ pub struct ForkStateReader {
     pub in_memory_fork_cache: RefCell<InMemoryForkCache>, // Wrap in RefCell
     db_pool: Pool<Postgres>,
     s3_client: aws_sdk_s3::Client,
+    external_cache: Option<ExternalClassCache>,
 }
 
 impl ForkStateReader {
@@ -189,6 +191,7 @@ impl ForkStateReader {
         only_non_inlined_class: bool,
         db_pool: &Pool<Postgres>,
         s3_client: &aws_sdk_s3::Client,
+        external_cache: Option<ExternalClassCache>,
     ) -> anyhow::Result<Self> {
         let block_id = BlockId::Number(block_number);
         let adjusted_block_number = block_number - 1;
@@ -201,6 +204,7 @@ impl ForkStateReader {
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
             db_pool: db_pool.clone(),
             s3_client: s3_client.clone(),
+            external_cache,
         };
 
         if tx_number_in_block > 1 {
@@ -708,6 +712,33 @@ impl StateReader for ForkStateReader {
             return Ok(cache_hit);
         }
 
+        // Check Voyager external cache for inline strategy class (before DB check,
+        // since unverified classes cause fetch_verified_class_hash to return Err)
+        if !self.only_non_inlined_class {
+            if let Some(ref external_cache) = self.external_cache {
+                let class_hash_hex = class_hash.to_fixed_hex_string();
+                if let Some(cached) = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(external_cache.get(&class_hash_hex))
+                }) {
+                    self.fetch_and_compile_verified_contract_class(
+                        class_hash,
+                        cached.data.contract_class.clone(),
+                    )?;
+                    return self
+                        .in_memory_fork_cache
+                        .borrow()
+                        .get_compiled_class(class_hash)
+                        .map_err(|_| {
+                            StateError::StateReadError(format!(
+                                "Failed to retrieve compiled contract class for class_hash: {}",
+                                class_hash_hex
+                            ))
+                        });
+                }
+            }
+        }
+
         match tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(
                 fetch_verified_class_hash_with_contract_class_data(
@@ -741,24 +772,21 @@ impl StateReader for ForkStateReader {
                         ))
                     })
             }
-            Ok((class_hash, None)) => {
-                let class_hash_felt = Felt::from_hex(&class_hash).unwrap();
-
+            _ => {
                 self.fetch_and_compile_contract_class(
-                    ClassHash(class_hash_felt),
+                    class_hash,
                     self.adjusted_block_id(),
                 )?;
                 self.in_memory_fork_cache
                     .borrow()
-                    .get_compiled_class(ClassHash(class_hash_felt))
+                    .get_compiled_class(class_hash)
                     .map_err(|_| {
                         StateError::StateReadError(format!(
                             "Failed to retrieve compiled contract class for class_hash: {}",
-                            class_hash
+                            class_hash.to_fixed_hex_string()
                         ))
                     })
             }
-            Err(e) => Err(StateError::StateReadError(format!("{}", e))),
         }
     }
 

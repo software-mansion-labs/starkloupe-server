@@ -128,6 +128,7 @@ pub async fn simulate(
             true,
             db_pool,
             s3_client,
+            None,
         )
         .map_err(|e| {
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))

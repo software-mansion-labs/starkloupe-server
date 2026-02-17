@@ -152,6 +152,45 @@ fn read_single_artifact_file(
     Ok(classes)
 }
 
+/// Find the compiled class hash for a specific contract name in the build artifacts.
+/// Used by Voyager compiler to select the correct contract from multi-contract projects.
+pub fn find_class_hash_by_contract_name(
+    tmp_dir: &PathBuf,
+    package_name: &str,
+    build_profile: &str,
+    contract_name: &str,
+) -> Result<Option<String>> {
+    let target_dir = tmp_dir.join("target").join(build_profile);
+    let artifact_path =
+        target_dir.join(format!("{}.starknet_artifacts.json", package_name));
+
+    if !artifact_path.exists() {
+        return Ok(None);
+    }
+
+    let contents = read_file(&artifact_path)?;
+    let starknet_artifacts: StarknetArtifacts =
+        deserialize_json(&contents, "StarknetArtifacts")?;
+
+    for contract_artifact in &starknet_artifacts.contracts {
+        if contract_artifact.contract_name == contract_name {
+            if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
+                let contract_sierra_path = target_dir.join(sierra_path);
+                let contract_class_contents = read_file(&contract_sierra_path)?;
+                let contract_class_v1: SierraClass =
+                    deserialize_json(&contract_class_contents, "SierraClass")?;
+                let class_hash = contract_class_v1
+                    .class_hash()
+                    .map(|hash| hash.to_fixed_hex_string())
+                    .map_err(|e| anyhow::anyhow!("Failed to compute class hash: {:?}", e))?;
+                return Ok(Some(class_hash));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn process_contract_artifact(
     tmp_dir: &PathBuf,
     build_profile: &str,
