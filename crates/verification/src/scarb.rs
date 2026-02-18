@@ -1,4 +1,7 @@
-use crate::artifacts::{read_new_cairo_version_artifacts, read_old_cairo_version_artifacts};
+use crate::artifacts::{
+    read_artifacts_without_validation, read_new_cairo_version_artifacts,
+    read_old_cairo_version_artifacts,
+};
 use crate::manifest::Manifest;
 use crate::utils::set_limits;
 
@@ -211,6 +214,46 @@ pub async fn build_with_scarb_for_profile(
         run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
+}
+
+/// Like `build_with_scarb_for_profile` but reads artifacts without coverage info validation.
+/// Used for non-inline builds where we just need to match the on-chain class hash.
+pub async fn build_with_scarb_for_profile_no_validation(
+    manifest: &Manifest,
+    tmp_dir: &PathBuf,
+    profile: &str,
+) -> Result<Vec<(String, ContractClass)>> {
+    if !is_new_cairo_version_supported(manifest.cairo_version) {
+        return Err(anyhow::anyhow!(
+            "Unsupported Cairo version {}",
+            tuple_to_version_string(manifest.cairo_version)
+        ));
+    }
+
+    if let Some(dojo_version) = &manifest.dojo_version {
+        if !is_dojo_version_supported(dojo_version) {
+            return Err(anyhow::anyhow!(
+                "Unsupported Dojo version {}.",
+                dojo_version
+            ));
+        }
+        let binaries_save_directory_path =
+            env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+        let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile).await?;
+    } else {
+        let binaries_save_directory_path =
+            env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
+        let scarb_path = format!(
+            "{}/scarb/scarb_cairo_v{}.{}.{}",
+            binaries_save_directory_path,
+            manifest.cairo_version.0,
+            manifest.cairo_version.1,
+            manifest.cairo_version.2
+        );
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
+    }
+    read_artifacts_without_validation(tmp_dir, &manifest.package_name, profile)
 }
 
 pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {

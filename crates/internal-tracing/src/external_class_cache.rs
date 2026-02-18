@@ -1,4 +1,5 @@
 use crate::ClassDebuggerDataWithContractClass;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
 use moka::future::Cache;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,6 +11,9 @@ use tracing::{debug, info};
 #[derive(Debug, Clone)]
 pub struct CachedExternalClass {
     pub data: ClassDebuggerDataWithContractClass,
+    /// Non-inline compiled class with debug info (CASM matches original).
+    /// Used for simple trace function calls.
+    pub non_inline_contract_class: Option<ContractClass>,
     pub cached_at: Instant,
     pub source: String,
 }
@@ -117,19 +121,16 @@ impl ExternalClassCache {
     }
 
     /// Store a compiled class in the cache
-    ///
-    /// # Arguments
-    /// * `class_hash` - The original class hash (cache key)
-    /// * `data` - The compiled class data with debug info
-    /// * `source` - The source of the data (e.g., "voyager")
     pub async fn set(
         &self,
         class_hash: &str,
         data: ClassDebuggerDataWithContractClass,
+        non_inline_contract_class: Option<ContractClass>,
         source: &str,
     ) {
         let entry = CachedExternalClass {
             data,
+            non_inline_contract_class,
             cached_at: Instant::now(),
             source: source.to_string(),
         };

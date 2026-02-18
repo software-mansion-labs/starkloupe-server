@@ -1,7 +1,10 @@
 use super::types::{CompilerVersion, VoyagerSourceResponse};
 use crate::artifacts::find_class_hash_by_contract_name;
 use crate::manifest::Manifest;
-use crate::scarb::{build_with_scarb_for_profile, is_new_cairo_version_supported};
+use crate::scarb::{
+    build_with_scarb_for_profile, build_with_scarb_for_profile_no_validation,
+    is_new_cairo_version_supported,
+};
 use crate::utils::{
     create_files_from_map, move_failed_verification_to_failed_tmp, remove_walnut_debug_from_scarb,
 };
@@ -22,6 +25,9 @@ pub struct CompiledExternalClass {
     pub inline_class_hash: String,
     /// Compiled Sierra contract class (contains debug info in sierra_program_debug_info)
     pub contract_class: ContractClass,
+    /// Non-inline compiled Sierra contract class (has debug info, CASM matches original).
+    /// Used for simple trace function calls where PCs must match the original execution.
+    pub non_inline_contract_class: Option<ContractClass>,
     /// Original source code (cleaned, without walnut-debug profile)
     pub source_code: HashMap<String, String>,
 }
@@ -92,14 +98,12 @@ pub async fn compile_voyager_source(
         ) {
             Ok(m) => m,
             Err(e) => {
-                let _ = fs::remove_dir_all(&tmp_dir_clone);
                 return Err(anyhow::anyhow!("Failed to parse manifest: {}", e));
             }
         };
 
         // Write source files to temp directory
         if let Err(e) = create_files_from_map(&source_code, &tmp_dir_clone) {
-            let _ = fs::remove_dir_all(&tmp_dir_clone);
             return Err(anyhow::anyhow!("Failed to write source files: {}", e));
         }
 
@@ -115,13 +119,19 @@ pub async fn compile_voyager_source(
     })
     .await??;
 
+    info!(
+        "Inline profile selected: '{}', profiles_with_inline_strategy: {:?}",
+        profile,
+        manifest
+            .profile_with_inline_strategy
+            .keys()
+            .collect::<Vec<_>>()
+    );
+
     // 2. Build with scarb (Async)
     let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile).await {
         Ok(classes) => classes,
         Err(e) => {
-            // Attempt to move to failed tmp, but do it non-blocking if possible or just log error
-            // Since move_failed... might do I/O, let's just cleanup for now to avoid complexity or spawn another blocking task
-            // Ideally we preserve failed builds for debugging, so let's try to preserve it
             let tmp_dir_clone = tmp_dir.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 if let Err(move_err) = move_failed_verification_to_failed_tmp(&tmp_dir_clone) {
@@ -135,8 +145,6 @@ pub async fn compile_voyager_source(
 
     // 3. Find the matching contract class from compiled output
     if compiled_classes.is_empty() {
-        let tmp_dir_cleanup = tmp_dir.clone();
-        let _ = tokio::task::spawn_blocking(move || cleanup_tmp_dir(&tmp_dir_cleanup)).await;
         return Err(anyhow::anyhow!("No contracts found in compiled output"));
     }
 
@@ -179,10 +187,80 @@ pub async fn compile_voyager_source(
         }
     };
 
-    // 4. Clean up temp directory (Blocking)
+    // 4. Build with dev and release profiles (non-inline) to find the one matching on-chain class.
+    // The non-inline class has debug info but no inlining-strategy, so CASM matches original.
+    // We try both profiles because we don't know which was used to deploy the original contract.
+    let non_inline_contract_class = {
+        let profiles_to_try: Vec<&str> = ["dev", "release"]
+            .iter()
+            .filter(|p| **p != profile.as_str())
+            .copied()
+            .collect();
+
+        let mut matched_class: Option<ContractClass> = None;
+        for non_inline_profile in &profiles_to_try {
+            info!(
+                "Building with '{}' profile to find non-inline class matching on-chain hash {}",
+                non_inline_profile, original_class_hash
+            );
+            match build_with_scarb_for_profile_no_validation(
+                &manifest,
+                &tmp_dir,
+                non_inline_profile,
+            )
+            .await
+            {
+                Ok(classes) if !classes.is_empty() => {
+                    info!(
+                        "'{}' profile produced {} classes with hashes: {:?}",
+                        non_inline_profile,
+                        classes.len(),
+                        classes.iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>()
+                    );
+                    // Check if any compiled class hash matches the original on-chain class hash
+                    if let Some((_, contract_class)) = classes
+                        .into_iter()
+                        .find(|(hash, _)| hash == &original_class_hash)
+                    {
+                        info!(
+                            "Non-inline class from '{}' profile matches on-chain hash {}. has debug_info={}",
+                            non_inline_profile,
+                            original_class_hash,
+                            contract_class.sierra_program_debug_info.is_some()
+                        );
+                        matched_class = Some(contract_class);
+                        break;
+                    } else {
+                        info!(
+                            "'{}' profile: no class hash matched on-chain hash {}",
+                            non_inline_profile, original_class_hash
+                        );
+                    }
+                }
+                Ok(_) => {
+                    info!("'{}' profile produced no classes", non_inline_profile);
+                }
+                Err(e) => {
+                    info!(
+                        "'{}' profile build failed (non-critical): {}",
+                        non_inline_profile, e
+                    );
+                }
+            }
+        }
+        if matched_class.is_none() {
+            info!(
+                "No non-inline profile matched on-chain hash {} for simple trace",
+                original_class_hash
+            );
+        }
+        matched_class
+    };
+
+    // 5. Clean up temp directory (Blocking)
     let tmp_dir_cleanup = tmp_dir.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || {
-        cleanup_tmp_dir(&tmp_dir_cleanup);
+        // cleanup_tmp_dir(&tmp_dir_cleanup);
     })
     .await
     {
@@ -202,6 +280,7 @@ pub async fn compile_voyager_source(
         original_class_hash,
         inline_class_hash,
         contract_class,
+        non_inline_contract_class,
         source_code: clean_source_code,
     })
 }
@@ -217,8 +296,8 @@ fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
     }
 }
 
-/// Pin version range dependencies to exact compiler version for Voyager builds.
-/// Handles cases where Scarb.toml uses ranges like ">=2.15.0" without a Scarb.lock.
+/// Pin version range dependencies to exact compiler version and remove
+/// dev-dependencies/scripts that can't be resolved without a Scarb.lock.
 fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_version: &str) {
     let scarb_toml = match source_code.get("Scarb.toml") {
         Some(contents) => contents.clone(),
@@ -257,6 +336,18 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
                 *cairo_ver = toml::Value::String(format!("={}", compiler_version));
                 modified = true;
             }
+        }
+    }
+
+    // Remove [dev-dependencies] - not needed for contract compilation and
+    // can't be resolved without a Scarb.lock (e.g. snforge_std = ">=0.55.0")
+    if let Some(table) = toml_value.as_table_mut() {
+        if table.remove("dev-dependencies").is_some() {
+            info!("Removed [dev-dependencies] from Scarb.toml (not needed for build)");
+            modified = true;
+        }
+        if table.remove("scripts").is_some() {
+            modified = true;
         }
     }
 

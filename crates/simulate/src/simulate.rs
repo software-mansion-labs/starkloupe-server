@@ -54,6 +54,7 @@ use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_d
 use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fetch_classes_data};
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::external_class_cache::ExternalClassCache;
+use internal_tracing::DataWithContractClass;
 use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
@@ -148,9 +149,101 @@ pub async fn simulate(
         ..
     } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
 
-    debug!("Fetching classes data");
+    info!("Fetching classes data");
     let class_hashes = contract_calls_map.collect_all_class_hashes();
-    let classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+    let mut classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+
+    info!(
+        "Walnut DB classes_data: {} entries, class_hashes: {:?}",
+        classes_data.len(),
+        classes_data.keys().collect::<Vec<_>>()
+    );
+
+    // Check Voyager for classes not verified on Walnut.
+    // This triggers synchronous compilation so function calls are available on first request.
+    let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
+    let voyager_verified = check_voyager_verified_classes(
+        voyager_client,
+        &class_hashes,
+        &already_verified,
+        external_cache,
+    )
+    .await;
+
+    // Wait for Voyager compilations to finish and add non-inline classes to classes_data
+    if let Some(cache) = external_cache {
+        let mut missing_class_hashes: Vec<String> = Vec::new();
+        let mut seen = HashSet::new();
+        for call in contract_calls_map.0.values() {
+            if let Some(class_hash_str) = &call.class_hash {
+                if !classes_data.contains_key(class_hash_str)
+                    && seen.insert(class_hash_str.clone())
+                {
+                    missing_class_hashes.push(class_hash_str.clone());
+                }
+            }
+        }
+
+        info!(
+            "Missing class hashes (not in Walnut DB): {:?}",
+            missing_class_hashes
+        );
+
+        for class_hash_str in &missing_class_hashes {
+            // Wait for any pending compilation to complete
+            if cache.is_compiling(class_hash_str).await {
+                info!("Waiting for pending compilation of {}", class_hash_str);
+                cache.wait_for_pending(class_hash_str).await;
+            }
+        }
+
+        for class_hash_str in missing_class_hashes {
+            if let Some(cached) = cache.get(&class_hash_str).await {
+                info!(
+                    "Cache HIT for {}: has non_inline_contract_class={}, has debug_info={}, source={}",
+                    class_hash_str,
+                    cached.non_inline_contract_class.is_some(),
+                    cached.non_inline_contract_class.as_ref()
+                        .map(|c| c.sierra_program_debug_info.is_some())
+                        .unwrap_or(false),
+                    cached.source
+                );
+                if let Some(non_inline_class) = &cached.non_inline_contract_class {
+                    classes_data.insert(
+                        class_hash_str.clone(),
+                        DataWithContractClass {
+                            inline_strategy_class_hash: cached
+                                .data
+                                .inline_strategy_class_hash
+                                .clone(),
+                            contract_class: non_inline_class.clone(),
+                        },
+                    );
+                    info!("Added Voyager non-inline class {} to classes_data", class_hash_str);
+                } else {
+                    info!("No non_inline_contract_class for {}, skipping", class_hash_str);
+                }
+            } else {
+                info!("Cache MISS for {} after waiting", class_hash_str);
+            }
+        }
+
+        info!(
+            "classes_data after Voyager cache: {} entries",
+            classes_data.len()
+        );
+    }
+
+    // Mark Voyager-verified classes for debug button
+    if !voyager_verified.is_empty() {
+        for call in contract_calls_map.0.values_mut() {
+            if let Some(class_hash) = &call.class_hash {
+                if voyager_verified.contains(class_hash) {
+                    call.call_debugger_data_available = true;
+                }
+            }
+        }
+    }
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
@@ -164,26 +257,6 @@ pub async fn simulate(
             true,
             build_simple_contract_call_debugger_data_adapter,
         )?;
-
-    // Check Voyager for classes not verified on Walnut to enable green debug button.
-    // Also triggers background pre-compilation so the debug request gets a cache hit.
-    let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
-    let voyager_verified = check_voyager_verified_classes(
-        voyager_client,
-        &class_hashes,
-        &already_verified,
-        external_cache,
-    )
-    .await;
-    if !voyager_verified.is_empty() {
-        for call in contract_calls_map.0.values_mut() {
-            if let Some(class_hash) = &call.class_hash {
-                if voyager_verified.contains(class_hash) {
-                    call.call_debugger_data_available = true;
-                }
-            }
-        }
-    }
 
     // Set the deepest function call that panic to true
     if let Some(deepest_func_call_id) = deepest_function_call_id_with_panic {

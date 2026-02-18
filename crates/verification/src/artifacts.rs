@@ -161,34 +161,74 @@ pub fn find_class_hash_by_contract_name(
     contract_name: &str,
 ) -> Result<Option<String>> {
     let target_dir = tmp_dir.join("target").join(build_profile);
-    let artifact_path =
-        target_dir.join(format!("{}.starknet_artifacts.json", package_name));
 
-    if !artifact_path.exists() {
-        return Ok(None);
+    // Collect all artifact files to search: specific package first, then all others
+    let mut artifact_paths = Vec::new();
+    let specific_path = target_dir.join(format!("{}.starknet_artifacts.json", package_name));
+    if specific_path.exists() {
+        artifact_paths.push(specific_path.clone());
     }
 
-    let contents = read_file(&artifact_path)?;
-    let starknet_artifacts: StarknetArtifacts =
-        deserialize_json(&contents, "StarknetArtifacts")?;
+    // Also scan all artifact files (for workspace projects)
+    if let Ok(entries) = fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
+                && path != specific_path
+            {
+                artifact_paths.push(path);
+            }
+        }
+    }
 
-    for contract_artifact in &starknet_artifacts.contracts {
-        if contract_artifact.contract_name == contract_name {
-            if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
-                let contract_sierra_path = target_dir.join(sierra_path);
-                let contract_class_contents = read_file(&contract_sierra_path)?;
-                let contract_class_v1: SierraClass =
-                    deserialize_json(&contract_class_contents, "SierraClass")?;
-                let class_hash = contract_class_v1
-                    .class_hash()
-                    .map(|hash| hash.to_fixed_hex_string())
-                    .map_err(|e| anyhow::anyhow!("Failed to compute class hash: {:?}", e))?;
-                return Ok(Some(class_hash));
+    for artifact_path in artifact_paths {
+        let contents = read_file(&artifact_path)?;
+        let starknet_artifacts: StarknetArtifacts =
+            deserialize_json(&contents, "StarknetArtifacts")?;
+
+        for contract_artifact in &starknet_artifacts.contracts {
+            if contract_artifact.contract_name == contract_name {
+                if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
+                    let contract_sierra_path = target_dir.join(sierra_path);
+                    let contract_class_contents = read_file(&contract_sierra_path)?;
+                    let contract_class_v1: SierraClass =
+                        deserialize_json(&contract_class_contents, "SierraClass")?;
+                    let class_hash = contract_class_v1
+                        .class_hash()
+                        .map(|hash| hash.to_fixed_hex_string())
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to compute class hash: {:?}", e)
+                        })?;
+                    info!(
+                        "Found contract '{}' in {} with class hash {}",
+                        contract_name,
+                        artifact_path.display(),
+                        class_hash
+                    );
+                    return Ok(Some(class_hash));
+                }
             }
         }
     }
 
     Ok(None)
+}
+
+/// Read artifacts without coverage info validation.
+/// Returns class hash and ContractClass regardless of debug info presence.
+/// Used for non-inline builds where we just need to match the on-chain class hash.
+pub fn read_artifacts_without_validation(
+    tmp_dir: &PathBuf,
+    package_name: &str,
+    build_profile: &str,
+) -> Result<Vec<(String, ContractClass)>> {
+    read_starknet_artifacts(tmp_dir, package_name, build_profile, true)?
+        .into_iter()
+        .map(|(class_hash, contract_class, _)| Ok((class_hash, contract_class)))
+        .collect()
 }
 
 fn process_contract_artifact(
