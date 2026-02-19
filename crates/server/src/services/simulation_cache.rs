@@ -365,7 +365,6 @@ impl SimulationCache {
                 }
             }
             None => {
-                info!("[CACHE MISS] simulation {}", key.display_id());
                 let mut misses = self.misses.write().await;
                 *misses += 1;
                 drop(misses);
@@ -503,7 +502,6 @@ impl SimulationCache {
                 }
             }
             None => {
-                info!("[CACHE MISS] debug {}", key.display_id());
                 let mut misses = self.misses.write().await;
                 *misses += 1;
                 drop(misses);

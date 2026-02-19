@@ -13,7 +13,7 @@ pub struct CachedExternalClass {
     pub data: ClassDebuggerDataWithContractClass,
     /// Non-inline compiled class with debug info (CASM matches original).
     /// Used for simple trace function calls.
-    pub non_inline_contract_class: Option<ContractClass>,
+    pub original_contract_class: Option<ContractClass>,
     pub cached_at: Instant,
     pub source: String,
 }
@@ -125,12 +125,12 @@ impl ExternalClassCache {
         &self,
         class_hash: &str,
         data: ClassDebuggerDataWithContractClass,
-        non_inline_contract_class: Option<ContractClass>,
+        original_contract_class: Option<ContractClass>,
         source: &str,
     ) {
         let entry = CachedExternalClass {
             data,
-            non_inline_contract_class,
+            original_contract_class,
             cached_at: Instant::now(),
             source: source.to_string(),
         };

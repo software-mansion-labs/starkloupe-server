@@ -63,10 +63,16 @@ pub async fn debug_transaction(
             );
 
             if let Some(cached_result) = cache.get_debug(&cache_key, Some(&db_pool)).await {
-                info!("Debug cache hit! Returning cached result");
+                info!(
+                    "Debug cache hit - {}! Returning cached result",
+                    cache_key.display_id()
+                );
                 return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
             }
-            info!("Debug cache miss, proceeding with debug simulation");
+            info!(
+                "Debug cache {} miss, proceeding with debug simulation",
+                cache_key.display_id()
+            );
 
             // Run debug simulation
             match debug_by_calldata(

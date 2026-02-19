@@ -1,10 +1,7 @@
 use super::types::{CompilerVersion, VoyagerSourceResponse};
 use crate::artifacts::find_class_hash_by_contract_name;
 use crate::manifest::Manifest;
-use crate::scarb::{
-    build_with_scarb_for_profile, build_with_scarb_for_profile_no_validation,
-    is_new_cairo_version_supported,
-};
+use crate::scarb::{build_with_scarb_for_profile, is_new_cairo_version_supported};
 use crate::utils::{
     create_files_from_map, move_failed_verification_to_failed_tmp, remove_walnut_debug_from_scarb,
 };
@@ -13,7 +10,7 @@ use cairo_lang_starknet_classes::contract_class::ContractClass;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Result of compiling external source code from Voyager
@@ -27,7 +24,7 @@ pub struct CompiledExternalClass {
     pub contract_class: ContractClass,
     /// Non-inline compiled Sierra contract class (has debug info, CASM matches original).
     /// Used for simple trace function calls where PCs must match the original execution.
-    pub non_inline_contract_class: Option<ContractClass>,
+    pub original_contract_class: Option<ContractClass>,
     /// Original source code (cleaned, without walnut-debug profile)
     pub source_code: HashMap<String, String>,
 }
@@ -73,10 +70,9 @@ pub async fn compile_voyager_source(
     let source_response_clone = source_response.clone();
     let verified_name = source_response.verified_name.clone();
     let compiler_version_str = source_response.compiler_version.clone();
-    let verified_name_for_prepare = verified_name.clone();
 
     // 1. Prepare files in blocking task
-    let (manifest, profile, prepared_source_code) = tokio::task::spawn_blocking(move || {
+    let (manifest, profile) = tokio::task::spawn_blocking(move || {
         fs::create_dir_all(&tmp_dir_clone).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to create temp directory {}: {}",
@@ -85,7 +81,7 @@ pub async fn compile_voyager_source(
             )
         })?;
 
-        let mut source_code = source_response_clone.source_code.clone();
+        let mut source_code = source_response_clone.source_code;
 
         // Pin version ranges to exact compiler version (handles missing Scarb.lock)
         pin_dependency_versions(&mut source_code, &compiler_version_str);
@@ -94,7 +90,7 @@ pub async fn compile_voyager_source(
         let manifest = match Manifest::new_with_verified_name(
             &mut source_code,
             Some(version_tuple),
-            Some(&verified_name_for_prepare),
+            Some(&source_response_clone.verified_name),
         ) {
             Ok(m) => m,
             Err(e) => {
@@ -115,7 +111,7 @@ pub async fn compile_voyager_source(
             .cloned()
             .unwrap_or_else(|| "walnut-debug".to_string());
 
-        Ok::<_, anyhow::Error>((manifest, profile, source_code))
+        Ok::<_, anyhow::Error>((manifest, profile))
     })
     .await??;
 
@@ -190,7 +186,7 @@ pub async fn compile_voyager_source(
     // 4. Build with dev and release profiles (non-inline) to find the one matching on-chain class.
     // The non-inline class has debug info but no inlining-strategy, so CASM matches original.
     // We try both profiles because we don't know which was used to deploy the original contract.
-    let non_inline_contract_class = {
+    let original_contract_class = {
         let profiles_to_try: Vec<&str> = ["dev", "release"]
             .iter()
             .filter(|p| **p != profile.as_str())
@@ -199,19 +195,14 @@ pub async fn compile_voyager_source(
 
         let mut matched_class: Option<ContractClass> = None;
         for non_inline_profile in &profiles_to_try {
-            info!(
+            debug!(
                 "Building with '{}' profile to find non-inline class matching on-chain hash {}",
                 non_inline_profile, original_class_hash
             );
-            match build_with_scarb_for_profile_no_validation(
-                &manifest,
-                &tmp_dir,
-                non_inline_profile,
-            )
-            .await
+            match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await
             {
                 Ok(classes) if !classes.is_empty() => {
-                    info!(
+                    debug!(
                         "'{}' profile produced {} classes with hashes: {:?}",
                         non_inline_profile,
                         classes.len(),
@@ -222,7 +213,7 @@ pub async fn compile_voyager_source(
                         .into_iter()
                         .find(|(hash, _)| hash == &original_class_hash)
                     {
-                        info!(
+                        debug!(
                             "Non-inline class from '{}' profile matches on-chain hash {}. has debug_info={}",
                             non_inline_profile,
                             original_class_hash,
@@ -241,7 +232,7 @@ pub async fn compile_voyager_source(
                     info!("'{}' profile produced no classes", non_inline_profile);
                 }
                 Err(e) => {
-                    info!(
+                    warn!(
                         "'{}' profile build failed (non-critical): {}",
                         non_inline_profile, e
                     );
@@ -249,7 +240,7 @@ pub async fn compile_voyager_source(
             }
         }
         if matched_class.is_none() {
-            info!(
+            warn!(
                 "No non-inline profile matched on-chain hash {} for simple trace",
                 original_class_hash
             );
@@ -258,9 +249,8 @@ pub async fn compile_voyager_source(
     };
 
     // 5. Clean up temp directory (Blocking)
-    let tmp_dir_cleanup = tmp_dir.clone();
     if let Err(e) = tokio::task::spawn_blocking(move || {
-        // cleanup_tmp_dir(&tmp_dir_cleanup);
+        cleanup_tmp_dir(&tmp_dir);
     })
     .await
     {
@@ -280,7 +270,7 @@ pub async fn compile_voyager_source(
         original_class_hash,
         inline_class_hash,
         contract_class,
-        non_inline_contract_class,
+        original_contract_class,
         source_code: clean_source_code,
     })
 }
@@ -343,7 +333,6 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
     // can't be resolved without a Scarb.lock (e.g. snforge_std = ">=0.55.0")
     if let Some(table) = toml_value.as_table_mut() {
         if table.remove("dev-dependencies").is_some() {
-            info!("Removed [dev-dependencies] from Scarb.toml (not needed for build)");
             modified = true;
         }
         if table.remove("scripts").is_some() {
@@ -354,7 +343,7 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
     if modified {
         if let Ok(updated) = toml::to_string(&toml_value) {
             source_code.insert("Scarb.toml".to_string(), updated);
-            info!(
+            debug!(
                 "Pinned version ranges in Scarb.toml to exact version {}",
                 compiler_version
             );

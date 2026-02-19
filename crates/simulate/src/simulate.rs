@@ -149,18 +149,18 @@ pub async fn simulate(
         ..
     } = ContractCallsMapBuilder::new_from_cheatnet_state(cheatnet_state, &mut contract_flamechart);
 
-    info!("Fetching classes data");
+    debug!("Fetching classes data");
     let class_hashes = contract_calls_map.collect_all_class_hashes();
     let mut classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
 
-    info!(
+    debug!(
         "Walnut DB classes_data: {} entries, class_hashes: {:?}",
         classes_data.len(),
         classes_data.keys().collect::<Vec<_>>()
     );
 
-    // Check Voyager for classes not verified on Walnut.
-    // This triggers synchronous compilation so function calls are available on first request.
+    // Check Voyager for classes not verified on Walnut
+    // This triggers synchronous compilation so function calls are available on simple(non inline) trace
     let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
     let voyager_verified = check_voyager_verified_classes(
         voyager_client,
@@ -170,69 +170,12 @@ pub async fn simulate(
     )
     .await;
 
-    // Wait for Voyager compilations to finish and add non-inline classes to classes_data
-    if let Some(cache) = external_cache {
-        let mut missing_class_hashes: Vec<String> = Vec::new();
-        let mut seen = HashSet::new();
-        for call in contract_calls_map.0.values() {
-            if let Some(class_hash_str) = &call.class_hash {
-                if !classes_data.contains_key(class_hash_str)
-                    && seen.insert(class_hash_str.clone())
-                {
-                    missing_class_hashes.push(class_hash_str.clone());
-                }
-            }
-        }
-
-        info!(
-            "Missing class hashes (not in Walnut DB): {:?}",
-            missing_class_hashes
-        );
-
-        for class_hash_str in &missing_class_hashes {
-            // Wait for any pending compilation to complete
-            if cache.is_compiling(class_hash_str).await {
-                info!("Waiting for pending compilation of {}", class_hash_str);
-                cache.wait_for_pending(class_hash_str).await;
-            }
-        }
-
-        for class_hash_str in missing_class_hashes {
-            if let Some(cached) = cache.get(&class_hash_str).await {
-                info!(
-                    "Cache HIT for {}: has non_inline_contract_class={}, has debug_info={}, source={}",
-                    class_hash_str,
-                    cached.non_inline_contract_class.is_some(),
-                    cached.non_inline_contract_class.as_ref()
-                        .map(|c| c.sierra_program_debug_info.is_some())
-                        .unwrap_or(false),
-                    cached.source
-                );
-                if let Some(non_inline_class) = &cached.non_inline_contract_class {
-                    classes_data.insert(
-                        class_hash_str.clone(),
-                        DataWithContractClass {
-                            inline_strategy_class_hash: cached
-                                .data
-                                .inline_strategy_class_hash
-                                .clone(),
-                            contract_class: non_inline_class.clone(),
-                        },
-                    );
-                    info!("Added Voyager non-inline class {} to classes_data", class_hash_str);
-                } else {
-                    info!("No non_inline_contract_class for {}, skipping", class_hash_str);
-                }
-            } else {
-                info!("Cache MISS for {} after waiting", class_hash_str);
-            }
-        }
-
-        info!(
-            "classes_data after Voyager cache: {} entries",
-            classes_data.len()
-        );
-    }
+    populate_classes_data_from_voyager_cache(
+        &contract_calls_map,
+        &mut classes_data,
+        external_cache,
+    )
+    .await;
 
     // Mark Voyager-verified classes for debug button
     if !voyager_verified.is_empty() {
@@ -454,12 +397,90 @@ fn filter_and_hide_unlinked_function_calls(
     }
 }
 
+/// Wait for any pending Voyager compilations and populate `classes_data`
+/// with the original contract class (matching on-chain CASM) from the cache.
+async fn populate_classes_data_from_voyager_cache(
+    contract_calls_map: &ContractCallsMap,
+    classes_data: &mut HashMap<String, DataWithContractClass>,
+    external_cache: Option<&ExternalClassCache>,
+) {
+    let Some(cache) = external_cache else {
+        return;
+    };
+
+    let missing_class_hashes: Vec<String> = {
+        let mut seen = HashSet::new();
+        contract_calls_map
+            .0
+            .values()
+            .filter_map(|call| call.class_hash.as_ref())
+            .filter(|h| !classes_data.contains_key(*h) && seen.insert((*h).clone()))
+            .cloned()
+            .collect()
+    };
+
+    debug!(
+        "Missing class hashes (not in Walnut DB): {:?}",
+        missing_class_hashes
+    );
+
+    for class_hash_str in &missing_class_hashes {
+        if cache.is_compiling(class_hash_str).await {
+            cache.wait_for_pending(class_hash_str).await;
+        }
+    }
+
+    for class_hash_str in missing_class_hashes {
+        if let Some(cached) = cache.get(&class_hash_str).await {
+            info!(
+                "Cache HIT for {}: has original_contract_class={}, has debug_info={}, source={}",
+                class_hash_str,
+                cached.original_contract_class.is_some(),
+                cached
+                    .original_contract_class
+                    .as_ref()
+                    .map(|c| c.sierra_program_debug_info.is_some())
+                    .unwrap_or(false),
+                cached.source
+            );
+            if let Some(original_class) = &cached.original_contract_class {
+                classes_data.insert(
+                    class_hash_str.clone(),
+                    DataWithContractClass {
+                        inline_strategy_class_hash: cached.data.inline_strategy_class_hash.clone(),
+                        contract_class: original_class.clone(),
+                    },
+                );
+                info!(
+                    "Added Voyager original class {} to classes_data",
+                    class_hash_str
+                );
+            } else {
+                info!(
+                    "No original_contract_class for {}, skipping",
+                    class_hash_str
+                );
+            }
+        } else {
+            debug!(
+                "Cache miss for {} after waiting for compilation",
+                class_hash_str
+            );
+        }
+    }
+
+    debug!(
+        "classes_data after Voyager cache: {} entries",
+        classes_data.len()
+    );
+}
+
 fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
 ) -> Result<(CheatnetState, Option<PostExecStateData>), TransactionSimulationError> {
-    info!("Running simulation...");
+    debug!("Running simulation...");
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);

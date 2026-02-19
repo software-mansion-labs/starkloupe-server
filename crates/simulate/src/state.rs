@@ -749,22 +749,16 @@ impl StateReader for ForkStateReader {
             )
         }) {
             Ok((class_hash, Some(contract_class))) => {
-                let class_hash_felt = Felt::from_hex(&class_hash).unwrap();
+                let class_hash = ClassHash(Felt::from_hex(&class_hash).unwrap());
 
                 if !self.only_non_inlined_class {
-                    self.fetch_and_compile_verified_contract_class(
-                        ClassHash(class_hash_felt),
-                        contract_class,
-                    )?;
+                    self.fetch_and_compile_verified_contract_class(class_hash, contract_class)?;
                 } else {
-                    self.fetch_and_compile_contract_class(
-                        ClassHash(class_hash_felt),
-                        self.adjusted_block_id(),
-                    )?;
+                    self.fetch_and_compile_contract_class(class_hash, self.adjusted_block_id())?;
                 }
                 self.in_memory_fork_cache
                     .borrow()
-                    .get_compiled_class(ClassHash(class_hash_felt))
+                    .get_compiled_class(class_hash)
                     .map_err(|_| {
                         StateError::StateReadError(format!(
                             "Failed to retrieve compiled contract class for class_hash: {}",

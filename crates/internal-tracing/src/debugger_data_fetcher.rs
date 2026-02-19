@@ -367,7 +367,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                                             .set(
                                                 &compiled.original_class_hash,
                                                 data.clone(),
-                                                compiled.non_inline_contract_class.clone(),
+                                                compiled.original_contract_class.clone(),
                                                 "voyager",
                                             )
                                             .await;
@@ -510,7 +510,7 @@ pub async fn check_voyager_verified_classes(
                                     .set(
                                         &compiled.original_class_hash,
                                         data,
-                                        compiled.non_inline_contract_class,
+                                        compiled.original_contract_class,
                                         "voyager-precompile",
                                     )
                                     .await;

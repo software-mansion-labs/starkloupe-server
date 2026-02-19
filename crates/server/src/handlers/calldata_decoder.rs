@@ -11,7 +11,7 @@ use crate::abi_fetcher::fetch_contract_abi;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use utoipa::ToSchema;
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -197,7 +197,7 @@ fn decode_calldata_with_abi(
     let decoded_values =
         match decode_calldata(calldata, &types_cow, &names_cow, &structs_vec, &enums_vec) {
             Some(values) => {
-                info!("Successfully decoded values: {:?}", values);
+                debug!("Successfully decoded values: {:?}", values);
                 values
             }
             None => {
@@ -263,7 +263,7 @@ pub async fn decode_calldata_handler(
         for (call_idx, (contract_addr, func_selector, call_calldata)) in
             calls.into_iter().enumerate()
         {
-            info!(
+            debug!(
                 "Processing call {}: contract={}, selector={}, calldata_len={}",
                 call_idx,
                 contract_addr,
@@ -328,7 +328,7 @@ pub async fn decode_calldata_handler(
     }
 
     // Log for debugging
-    info!(
+    debug!(
         "Decode calldata - Network: {}, Sender: {}, Raw calldata: {:?}, Decoded: {:?}",
         request.chain_id, request.sender_address, raw_calldata, contract_calls
     );

@@ -217,19 +217,6 @@ pub fn find_class_hash_by_contract_name(
     Ok(None)
 }
 
-/// Read artifacts without coverage info validation.
-/// Returns class hash and ContractClass regardless of debug info presence.
-/// Used for non-inline builds where we just need to match the on-chain class hash.
-pub fn read_artifacts_without_validation(
-    tmp_dir: &PathBuf,
-    package_name: &str,
-    build_profile: &str,
-) -> Result<Vec<(String, ContractClass)>> {
-    read_starknet_artifacts(tmp_dir, package_name, build_profile, true)?
-        .into_iter()
-        .map(|(class_hash, contract_class, _)| Ok((class_hash, contract_class)))
-        .collect()
-}
 
 fn process_contract_artifact(
     tmp_dir: &PathBuf,
@@ -272,20 +259,14 @@ fn process_contract_artifact(
                             .unwrap()
                             .contains_key("statements_code_locations")
                         {
-                            error!("No statements code locations found in coverage info");
-                            return Err(anyhow::anyhow!(
-                                "No statements code locations found in coverage info"
-                            ));
+                            error!("No statements_code_locations in coverage info for {}", sierra_path);
                         }
                     } else {
-                        error!("No coverage info found in contract class");
-                        return Err(anyhow::anyhow!("No coverage info found in contract class"));
+                        error!("No cairo-coverage annotation in sierra_program_debug_info for {}", sierra_path);
                     }
                 }
                 None => {
-                    let error_message = "No debug info found in contract class";
-                    error!("{}", error_message);
-                    return Err(anyhow::anyhow!(error_message));
+                    error!("No sierra_program_debug_info for {}", sierra_path);
                 }
             };
             None
