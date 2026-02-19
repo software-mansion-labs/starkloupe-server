@@ -713,7 +713,8 @@ impl StateReader for ForkStateReader {
         }
 
         // Check Voyager external cache for inline strategy class (before DB check,
-        // since unverified classes cause fetch_verified_class_hash to return Err)
+        // since unverified classes cause fetch_verified_class_hash to return Err).
+        // Only use the inline class if Phase 2 data is available (data = Some).
         if !self.only_non_inlined_class {
             if let Some(ref external_cache) = self.external_cache {
                 let class_hash_hex = class_hash.to_fixed_hex_string();
@@ -721,20 +722,24 @@ impl StateReader for ForkStateReader {
                     tokio::runtime::Handle::current()
                         .block_on(external_cache.get(&class_hash_hex))
                 }) {
-                    self.fetch_and_compile_verified_contract_class(
-                        class_hash,
-                        cached.data.contract_class.clone(),
-                    )?;
-                    return self
-                        .in_memory_fork_cache
-                        .borrow()
-                        .get_compiled_class(class_hash)
-                        .map_err(|_| {
-                            StateError::StateReadError(format!(
-                                "Failed to retrieve compiled contract class for class_hash: {}",
-                                class_hash_hex
-                            ))
-                        });
+                    if let Some(ref data) = cached.data {
+                        // Phase 2 complete — use the inline class for simulation
+                        self.fetch_and_compile_verified_contract_class(
+                            class_hash,
+                            data.contract_class.clone(),
+                        )?;
+                        return self
+                            .in_memory_fork_cache
+                            .borrow()
+                            .get_compiled_class(class_hash)
+                            .map_err(|_| {
+                                StateError::StateReadError(format!(
+                                    "Failed to retrieve compiled contract class for class_hash: {}",
+                                    class_hash_hex
+                                ))
+                            });
+                    }
+                    // data = None means Phase 2 not yet complete — fall through to original class
                 }
             }
         }

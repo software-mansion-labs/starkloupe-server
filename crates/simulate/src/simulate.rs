@@ -73,7 +73,8 @@ use starknet_rust::providers::Provider;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use tracing::{debug, info, warn};
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 use url::Url;
 use verification::voyager::VoyagerClient;
 use walnut_shared::abi::{Enum, Event, Struct};
@@ -397,8 +398,11 @@ fn filter_and_hide_unlinked_function_calls(
     }
 }
 
-/// Wait for any pending Voyager compilations and populate `classes_data`
+/// Wait for Phase 1 (non-inline build) to complete, then populate `classes_data`
 /// with the original contract class (matching on-chain CASM) from the cache.
+///
+/// Waits at most 60 seconds for Phase 1; logs an error if it times out.
+/// Phase 2 (inline build) runs in the background and is not awaited here.
 async fn populate_classes_data_from_voyager_cache(
     contract_calls_map: &ContractCallsMap,
     classes_data: &mut HashMap<String, DataWithContractClass>,
@@ -424,30 +428,40 @@ async fn populate_classes_data_from_voyager_cache(
         missing_class_hashes
     );
 
+    // Wait for Phase 1 (non-inline) to complete, with a 45s timeout
     for class_hash_str in &missing_class_hashes {
-        if cache.is_compiling(class_hash_str).await {
-            cache.wait_for_pending(class_hash_str).await;
+        if cache.is_phase1_pending(class_hash_str).await {
+            match tokio::time::timeout(
+                Duration::from_secs(45),
+                cache.wait_for_phase1_ready(class_hash_str),
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(_) => {
+                    error!(
+                        "Timeout (45s) waiting for Phase 1 compilation of {} — function calls unavailable for simple trace",
+                        class_hash_str
+                    );
+                }
+            }
         }
     }
 
     for class_hash_str in missing_class_hashes {
         if let Some(cached) = cache.get(&class_hash_str).await {
             info!(
-                "Cache HIT for {}: has original_contract_class={}, has debug_info={}, source={}",
+                "Cache HIT for {}: has original_contract_class={}, has inline_data={}, source={}",
                 class_hash_str,
                 cached.original_contract_class.is_some(),
-                cached
-                    .original_contract_class
-                    .as_ref()
-                    .map(|c| c.sierra_program_debug_info.is_some())
-                    .unwrap_or(false),
+                cached.data.is_some(),
                 cached.source
             );
             if let Some(original_class) = &cached.original_contract_class {
                 classes_data.insert(
                     class_hash_str.clone(),
                     DataWithContractClass {
-                        inline_strategy_class_hash: cached.data.inline_strategy_class_hash.clone(),
+                        inline_strategy_class_hash: cached.inline_strategy_class_hash.clone(),
                         contract_class: original_class.clone(),
                     },
                 );
@@ -463,7 +477,7 @@ async fn populate_classes_data_from_voyager_cache(
             }
         } else {
             debug!(
-                "Cache miss for {} after waiting for compilation",
+                "Cache miss for {} after waiting for Phase 1",
                 class_hash_str
             );
         }

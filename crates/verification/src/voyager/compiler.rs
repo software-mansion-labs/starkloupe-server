@@ -18,36 +18,58 @@ use uuid::Uuid;
 pub struct CompiledExternalClass {
     /// Original class hash from Voyager (used as cache key)
     pub original_class_hash: String,
-    /// Class hash after compilation with debug info (inline strategy)
+    /// Class hash after compilation with inline avoid strategy
     pub inline_class_hash: String,
-    /// Compiled Sierra contract class (contains debug info in sierra_program_debug_info)
+    /// Compiled Sierra contract class with inline avoid strategy (has coverage annotations)
     pub contract_class: ContractClass,
-    /// Non-inline compiled Sierra contract class (has debug info, CASM matches original).
+    /// Non-inline compiled Sierra contract class (CASM matches original on-chain).
     /// Used for simple trace function calls where PCs must match the original execution.
     pub original_contract_class: Option<ContractClass>,
     /// Original source code (cleaned, without walnut-debug profile)
     pub source_code: HashMap<String, String>,
 }
 
-/// Compile source code fetched from Voyager API
+/// Result of Phase 1 (non-inline) compilation.
 ///
-/// This function:
-/// 1. Creates a temporary directory
-/// 2. Writes source files
-/// 3. Modifies Scarb.toml to add walnut-debug profile
-/// 4. Compiles with scarb
-/// 5. Extracts debug info from compiled artifacts
-/// 6. Cleans up temporary directory
-pub async fn compile_voyager_source(
-    source_response: VoyagerSourceResponse,
-) -> Result<CompiledExternalClass> {
-    let original_class_hash = source_response.class_hash.clone();
+/// Phase 1 builds release (and optionally dev) profiles to find the class
+/// whose CASM matches the original on-chain class.
+///
+/// If the matching profile already had inline avoid strategy, `inline_already_built`
+/// is populated and Phase 2 is not needed (both original and inline class are available).
+#[derive(Debug)]
+pub struct Phase1Result {
+    pub original_class_hash: String,
+    /// Non-inline class whose CASM matches the on-chain original. None if no profile matched.
+    pub original_contract_class: Option<ContractClass>,
+    /// Set when the matching profile already had inline avoid strategy —
+    /// contains (inline_class_hash, inline_contract_class). Phase 2 not needed.
+    pub inline_already_built: Option<(String, ContractClass)>,
+    /// Manifest parsed from Scarb.toml (needed for Phase 2 build)
+    pub manifest: Manifest,
+    /// Profile to build in Phase 2 (inline avoid strategy profile)
+    pub inline_profile: String,
+    /// Temporary directory containing the project files (kept alive until Phase 2 cleans up)
+    pub tmp_dir: PathBuf,
+    /// Source code cleaned of walnut-debug profile (for storing in cache)
+    pub source_code: HashMap<String, String>,
+    /// Contract name from Voyager (for multi-contract project selection)
+    pub verified_name: String,
+}
 
-    // Parse compiler version
+/// Phase 1: prepare source files and build non-inline profiles (release, dev) to find
+/// the class matching the original on-chain hash.
+///
+/// Returns `Phase1Result` which always succeeds even if no profile matched the on-chain hash
+/// (in that case `original_contract_class` is None). Errors only on preparation failure.
+pub async fn compile_voyager_phase1(
+    source_response: VoyagerSourceResponse,
+) -> Result<Phase1Result> {
+    let original_class_hash = source_response.class_hash.clone();
+    let verified_name = source_response.verified_name.clone();
+
     let compiler_version = CompilerVersion::parse(&source_response.compiler_version)?;
     let version_tuple = compiler_version.as_tuple();
 
-    // Check if version is supported
     if !is_new_cairo_version_supported(version_tuple) {
         return Err(anyhow::anyhow!(
             "Unsupported Cairo version {} from Voyager. Minimum supported is 2.8.2",
@@ -55,24 +77,19 @@ pub async fn compile_voyager_source(
         ));
     }
 
-    // Create temporary directory
     let verification_id = format!("voyager-{}", Uuid::new_v4());
     let tmp_dir = PathBuf::from("tmp/verification").join(&verification_id);
     let tmp_dir_clone = tmp_dir.clone();
+    let compiler_version_str = source_response.compiler_version.clone();
 
     info!(
-        "Compiling Voyager source for class {} (version {}) in {}",
+        "Phase 1: preparing Voyager source for class {} in {}",
         original_class_hash,
-        source_response.compiler_version,
         tmp_dir.display()
     );
 
-    let source_response_clone = source_response.clone();
-    let verified_name = source_response.verified_name.clone();
-    let compiler_version_str = source_response.compiler_version.clone();
-
-    // 1. Prepare files in blocking task
-    let (manifest, profile) = tokio::task::spawn_blocking(move || {
+    // Prepare: pin versions, parse manifest, write files to disk
+    let prepare_result = tokio::task::spawn_blocking(move || {
         fs::create_dir_all(&tmp_dir_clone).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to create temp directory {}: {}",
@@ -81,51 +98,152 @@ pub async fn compile_voyager_source(
             )
         })?;
 
-        let mut source_code = source_response_clone.source_code;
-
-        // Pin version ranges to exact compiler version (handles missing Scarb.lock)
+        let mut source_code = source_response.source_code;
         pin_dependency_versions(&mut source_code, &compiler_version_str);
 
-        // Parse manifest (this modifies Scarb.toml to add debug flags and walnut-debug profile)
         let manifest = match Manifest::new_with_verified_name(
             &mut source_code,
             Some(version_tuple),
-            Some(&source_response_clone.verified_name),
+            Some(&source_response.verified_name),
         ) {
             Ok(m) => m,
             Err(e) => {
+                let _ = fs::remove_dir_all(&tmp_dir_clone);
                 return Err(anyhow::anyhow!("Failed to parse manifest: {}", e));
             }
         };
 
-        // Write source files to temp directory
         if let Err(e) = create_files_from_map(&source_code, &tmp_dir_clone) {
+            let _ = fs::remove_dir_all(&tmp_dir_clone);
             return Err(anyhow::anyhow!("Failed to write source files: {}", e));
         }
 
-        // Find the walnut-debug profile (or inline strategy profile)
-        let profile = manifest
+        let inline_profile = manifest
             .profile_with_inline_strategy
             .keys()
             .next()
             .cloned()
             .unwrap_or_else(|| "walnut-debug".to_string());
 
-        Ok::<_, anyhow::Error>((manifest, profile))
+        // Clean source: remove walnut-debug profile added by manifest parsing
+        let mut source_code_clean = source_code;
+        remove_walnut_debug_from_scarb(&mut source_code_clean);
+
+        Ok::<_, anyhow::Error>((manifest, inline_profile, source_code_clean))
     })
-    .await??;
+    .await?;
+
+    let (manifest, inline_profile, source_code) = match prepare_result {
+        Ok(r) => r,
+        Err(e) => {
+            // Clean up temp dir on preparation failure
+            let tmp_dir_clone = tmp_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || cleanup_tmp_dir(&tmp_dir_clone)).await;
+            return Err(anyhow::anyhow!("Phase 1 preparation failed: {}", e));
+        }
+    };
+
+    // Build release profile first, then dev if release doesn't match.
+    // For each profile: if it matches AND has inline avoid strategy → both phases done at once.
+    let mut original_contract_class: Option<ContractClass> = None;
+    let mut inline_already_built: Option<(String, ContractClass)> = None;
+
+    'outer: for non_inline_profile in &["release", "dev"] {
+        // Skip if this profile is the designated inline profile
+        // (we'd be building it again unnecessarily in phase 2 anyway)
+        if *non_inline_profile == inline_profile.as_str() {
+            continue;
+        }
+
+        debug!(
+            "Phase 1: building '{}' profile for class {}",
+            non_inline_profile, original_class_hash
+        );
+
+        match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await {
+            Ok(classes) if !classes.is_empty() => {
+                for (hash, contract_class) in classes {
+                    if hash == original_class_hash {
+                        debug!(
+                            "Phase 1: '{}' profile matched on-chain hash {}",
+                            non_inline_profile, original_class_hash
+                        );
+                        original_contract_class = Some(contract_class.clone());
+
+                        // Check if this profile already has inline avoid strategy
+                        if manifest
+                            .profile_with_inline_strategy
+                            .contains_key(*non_inline_profile)
+                        {
+                            info!(
+                                "Phase 1: '{}' profile has inline strategy AND matches on-chain hash — no Phase 2 needed",
+                                non_inline_profile
+                            );
+                            inline_already_built = Some((hash, contract_class));
+                        }
+                        break 'outer;
+                    }
+                }
+                info!(
+                    "Phase 1: '{}' profile produced classes but none matched on-chain hash {}",
+                    non_inline_profile, original_class_hash
+                );
+            }
+            Ok(_) => {
+                info!(
+                    "Phase 1: '{}' profile produced no classes",
+                    non_inline_profile
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Phase 1: '{}' profile build failed (non-critical): {}",
+                    non_inline_profile, e
+                );
+            }
+        }
+    }
+
+    if original_contract_class.is_none() {
+        warn!(
+            "Phase 1: no non-inline profile matched on-chain hash {} — function calls unavailable for simple trace",
+            original_class_hash
+        );
+    }
+
+    Ok(Phase1Result {
+        original_class_hash,
+        original_contract_class,
+        inline_already_built,
+        manifest,
+        inline_profile,
+        tmp_dir,
+        source_code,
+        verified_name,
+    })
+}
+
+/// Phase 2: build the inline (walnut-debug or equivalent) profile to get coverage annotations.
+/// Consumes `Phase1Result` and cleans up the temp directory when done.
+///
+/// Only call this when `phase1.inline_already_built` is None.
+pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExternalClass> {
+    let tmp_dir = phase1.tmp_dir.clone();
+    let original_class_hash = phase1.original_class_hash.clone();
+    let verified_name = phase1.verified_name.clone();
 
     info!(
-        "Inline profile selected: '{}', profiles_with_inline_strategy: {:?}",
-        profile,
-        manifest
-            .profile_with_inline_strategy
-            .keys()
-            .collect::<Vec<_>>()
+        "Phase 2: building '{}' profile for class {}",
+        phase1.inline_profile, original_class_hash
     );
 
-    // 2. Build with scarb (Async)
-    let compiled_classes = match build_with_scarb_for_profile(&manifest, &tmp_dir, &profile).await {
+    let compiled_classes = match build_with_scarb_for_profile(
+        &phase1.manifest,
+        &tmp_dir,
+        &phase1.inline_profile,
+    )
+    .await
+    {
         Ok(classes) => classes,
         Err(e) => {
             let tmp_dir_clone = tmp_dir.clone();
@@ -135,28 +253,30 @@ pub async fn compile_voyager_source(
                 }
             })
             .await;
-            return Err(anyhow::anyhow!("Compilation failed: {}", e));
+            return Err(anyhow::anyhow!("Phase 2 inline compilation failed: {}", e));
         }
     };
 
-    // 3. Find the matching contract class from compiled output
     if compiled_classes.is_empty() {
-        return Err(anyhow::anyhow!("No contracts found in compiled output"));
+        cleanup_tmp_dir(&tmp_dir);
+        return Err(anyhow::anyhow!(
+            "No contracts found in Phase 2 inline compiled output"
+        ));
     }
 
+    // Find the matching inline class (by verified_name for multi-contract, or use the only one)
     let (inline_class_hash, contract_class) = if compiled_classes.len() == 1 {
         compiled_classes.into_iter().next().unwrap()
     } else {
-        // Multi-contract project: match by verified_name from artifacts
         let verified_name_clone = verified_name.clone();
         let tmp_dir_clone = tmp_dir.clone();
-        let package_name = manifest.package_name.clone();
-        let profile_clone = profile.clone();
+        let package_name = phase1.manifest.package_name.clone();
+        let inline_profile_clone = phase1.inline_profile.clone();
         let target_class_hash = tokio::task::spawn_blocking(move || {
             find_class_hash_by_contract_name(
                 &tmp_dir_clone,
                 &package_name,
-                &profile_clone,
+                &inline_profile_clone,
                 &verified_name_clone,
             )
         })
@@ -168,14 +288,14 @@ pub async fn compile_voyager_source(
                 .find(|(h, _)| h == &hash)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Compiled class hash {} for contract '{}' not found in output",
+                        "Phase 2: compiled class hash {} for contract '{}' not found in output",
                         hash,
                         verified_name
                     )
                 })?,
             None => {
-                tracing::warn!(
-                    "Could not find contract '{}' in artifacts, using first compiled class",
+                warn!(
+                    "Phase 2: could not find contract '{}' in artifacts, using first class",
                     verified_name
                 );
                 compiled_classes.into_iter().next().unwrap()
@@ -183,72 +303,7 @@ pub async fn compile_voyager_source(
         }
     };
 
-    // 4. Build with dev and release profiles (non-inline) to find the one matching on-chain class.
-    // The non-inline class has debug info but no inlining-strategy, so CASM matches original.
-    // We try both profiles because we don't know which was used to deploy the original contract.
-    let original_contract_class = {
-        let profiles_to_try: Vec<&str> = ["dev", "release"]
-            .iter()
-            .filter(|p| **p != profile.as_str())
-            .copied()
-            .collect();
-
-        let mut matched_class: Option<ContractClass> = None;
-        for non_inline_profile in &profiles_to_try {
-            debug!(
-                "Building with '{}' profile to find non-inline class matching on-chain hash {}",
-                non_inline_profile, original_class_hash
-            );
-            match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await
-            {
-                Ok(classes) if !classes.is_empty() => {
-                    debug!(
-                        "'{}' profile produced {} classes with hashes: {:?}",
-                        non_inline_profile,
-                        classes.len(),
-                        classes.iter().map(|(h, _)| h.as_str()).collect::<Vec<_>>()
-                    );
-                    // Check if any compiled class hash matches the original on-chain class hash
-                    if let Some((_, contract_class)) = classes
-                        .into_iter()
-                        .find(|(hash, _)| hash == &original_class_hash)
-                    {
-                        debug!(
-                            "Non-inline class from '{}' profile matches on-chain hash {}. has debug_info={}",
-                            non_inline_profile,
-                            original_class_hash,
-                            contract_class.sierra_program_debug_info.is_some()
-                        );
-                        matched_class = Some(contract_class);
-                        break;
-                    } else {
-                        info!(
-                            "'{}' profile: no class hash matched on-chain hash {}",
-                            non_inline_profile, original_class_hash
-                        );
-                    }
-                }
-                Ok(_) => {
-                    info!("'{}' profile produced no classes", non_inline_profile);
-                }
-                Err(e) => {
-                    warn!(
-                        "'{}' profile build failed (non-critical): {}",
-                        non_inline_profile, e
-                    );
-                }
-            }
-        }
-        if matched_class.is_none() {
-            warn!(
-                "No non-inline profile matched on-chain hash {} for simple trace",
-                original_class_hash
-            );
-        }
-        matched_class
-    };
-
-    // 5. Clean up temp directory (Blocking)
+    // Cleanup temp directory
     if let Err(e) = tokio::task::spawn_blocking(move || {
         cleanup_tmp_dir(&tmp_dir);
     })
@@ -257,12 +312,8 @@ pub async fn compile_voyager_source(
         error!("Failed to cleanup temp dir task: {:?}", e);
     }
 
-    // Remove walnut-debug from source code before storing (to match original)
-    let mut clean_source_code = source_response.source_code;
-    remove_walnut_debug_from_scarb(&mut clean_source_code);
-
     info!(
-        "Successfully compiled Voyager source for class {} -> inline hash {}",
+        "Phase 2: completed inline build for {} → inline hash {}",
         original_class_hash, inline_class_hash
     );
 
@@ -270,15 +321,51 @@ pub async fn compile_voyager_source(
         original_class_hash,
         inline_class_hash,
         contract_class,
-        original_contract_class,
-        source_code: clean_source_code,
+        original_contract_class: phase1.original_contract_class,
+        source_code: phase1.source_code,
     })
+}
+
+/// Compile source code fetched from Voyager API (Phase 1 + Phase 2).
+///
+/// Used by the debug trace fallback path when no pre-compilation has happened.
+pub async fn compile_voyager_source(
+    source_response: VoyagerSourceResponse,
+) -> Result<CompiledExternalClass> {
+    let phase1 = compile_voyager_phase1(source_response).await?;
+
+    if let Some((inline_class_hash, contract_class)) = phase1.inline_already_built.clone() {
+        // Matching profile already had inline strategy — no Phase 2 needed
+        let tmp_dir = phase1.tmp_dir.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            cleanup_tmp_dir(&tmp_dir);
+        })
+        .await
+        {
+            error!("Failed to cleanup temp dir task: {:?}", e);
+        }
+
+        info!(
+            "compile_voyager_source: both phases done from single build for {}",
+            phase1.original_class_hash
+        );
+
+        Ok(CompiledExternalClass {
+            original_class_hash: phase1.original_class_hash,
+            inline_class_hash,
+            contract_class,
+            original_contract_class: phase1.original_contract_class,
+            source_code: phase1.source_code,
+        })
+    } else {
+        compile_voyager_phase2(phase1).await
+    }
 }
 
 /// Clean up temporary directory
 fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
     if let Err(e) = fs::remove_dir_all(tmp_dir) {
-        tracing::warn!(
+        warn!(
             "Failed to clean up temp directory {}: {:?}",
             tmp_dir.display(),
             e
@@ -329,8 +416,8 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
         }
     }
 
-    // Remove [dev-dependencies] - not needed for contract compilation and
-    // can't be resolved without a Scarb.lock (e.g. snforge_std = ">=0.55.0")
+    // Remove [dev-dependencies] — can't be resolved without Scarb.lock
+    // (e.g. snforge_std = ">=0.55.0")
     if let Some(table) = toml_value.as_table_mut() {
         if table.remove("dev-dependencies").is_some() {
             modified = true;
