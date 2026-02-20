@@ -362,14 +362,23 @@ pub async fn compile_voyager_source(
     }
 }
 
-/// Clean up temporary directory
-fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
+/// Clean up temporary directory.
+/// Tries `fs::remove_dir_all` first; on failure, moves the directory to
+/// `tmp/failed-verification` for post-mortem investigation.
+pub fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
     if let Err(e) = fs::remove_dir_all(tmp_dir) {
         warn!(
-            "Failed to clean up temp directory {}: {:?}",
+            "Failed to clean up temp directory {}: {:?}, moving to failed-verification",
             tmp_dir.display(),
             e
         );
+        if let Err(move_err) = move_failed_verification_to_failed_tmp(tmp_dir) {
+            error!(
+                "Failed to move {} to failed-verification: {:?}",
+                tmp_dir.display(),
+                move_err
+            );
+        }
     }
 }
 

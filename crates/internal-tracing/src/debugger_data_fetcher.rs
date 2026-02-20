@@ -14,7 +14,10 @@ use tracing::{debug, error, info, warn};
 use verification::{
     db::fetch_verified_classes_with_inlining_classes,
     s3::key_for_class_hash,
-    voyager::{compile_voyager_phase1, compile_voyager_phase2, compile_voyager_source, VoyagerClient},
+    voyager::{
+        cleanup_tmp_dir, compile_voyager_phase1, compile_voyager_phase2, compile_voyager_source,
+        VoyagerClient,
+    },
     CodeLocation, SierraStatementToCairoDebugInfo, VerifiedClassData,
 };
 
@@ -544,13 +547,7 @@ pub async fn check_voyager_verified_classes(
                             // Cleanup temp dir (phase2 won't do it)
                             let tmp_dir = phase1.tmp_dir.clone();
                             let _ = tokio::task::spawn_blocking(move || {
-                                if let Err(e) = std::fs::remove_dir_all(&tmp_dir) {
-                                    warn!(
-                                        "Failed to clean up temp directory {}: {:?}",
-                                        tmp_dir.display(),
-                                        e
-                                    );
-                                }
+                                cleanup_tmp_dir(&tmp_dir);
                             })
                             .await;
 

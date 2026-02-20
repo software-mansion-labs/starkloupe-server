@@ -178,17 +178,6 @@ pub async fn simulate(
     )
     .await;
 
-    // Mark Voyager-verified classes for debug button
-    if !voyager_verified.is_empty() {
-        for call in contract_calls_map.0.values_mut() {
-            if let Some(class_hash) = &call.class_hash {
-                if voyager_verified.contains(class_hash) {
-                    call.call_debugger_data_available = true;
-                }
-            }
-        }
-    }
-
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
     let (mut function_calls_map, event_calls_map, incomplete_storage_changes) =
@@ -201,6 +190,20 @@ pub async fn simulate(
             true,
             build_simple_contract_call_debugger_data_adapter,
         )?;
+
+    // Mark Voyager-verified classes for debug button.
+    // Must be done AFTER create_function_calls_map_generic, which overwrites
+    // call_debugger_data_available based on inline_strategy_class_hash presence.
+    // TODO: Refactor logic
+    if !voyager_verified.is_empty() {
+        for call in contract_calls_map.0.values_mut() {
+            if let Some(class_hash) = &call.class_hash {
+                if voyager_verified.contains(class_hash) {
+                    call.call_debugger_data_available = true;
+                }
+            }
+        }
+    }
 
     // Set the deepest function call that panic to true
     if let Some(deepest_func_call_id) = deepest_function_call_id_with_panic {
@@ -428,19 +431,20 @@ async fn populate_classes_data_from_voyager_cache(
         missing_class_hashes
     );
 
-    // Wait for Phase 1 (non-inline) to complete, with a 45s timeout
+    // Wait for Phase 1 (non-inline) to complete, with a 15s timeout.
+    // If compilation doesn't finish in time, return without function calls.
     for class_hash_str in &missing_class_hashes {
         if cache.is_phase1_pending(class_hash_str).await {
             match tokio::time::timeout(
-                Duration::from_secs(45),
+                Duration::from_secs(15),
                 cache.wait_for_phase1_ready(class_hash_str),
             )
             .await
             {
                 Ok(_) => {}
                 Err(_) => {
-                    error!(
-                        "Timeout (45s) waiting for Phase 1 compilation of {} — function calls unavailable for simple trace",
+                    warn!(
+                        "Timeout (15s) waiting for Phase 1 compilation of {} — function calls unavailable for this simulation",
                         class_hash_str
                     );
                 }
