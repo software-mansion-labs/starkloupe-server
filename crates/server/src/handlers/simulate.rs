@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task;
 use tokio::time::timeout;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use walnut_shared::{create_rpc_client_from_url, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -167,12 +167,15 @@ pub async fn simulate_transaction(
                                 .simulation_cache
                                 .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
                                 .await;
-                            info!("Cached simulation result");
+                            info!(
+                                "Adding simulation result to cache - {}",
+                                cache_key.display_id()
+                            );
 
                             Ok((StatusCode::OK, sim_info_arc))
                         }
                         Err(e) => {
-                            info!("Simulation failed after: {}", e);
+                            error!("Simulation failed after: {}", e);
                             Err((
                                 StatusCode::BAD_REQUEST,
                                 Json(SimulationErrorResponse {
@@ -283,10 +286,16 @@ pub async fn simulate_transaction(
                     if let Some(cached_result) =
                         state.simulation_cache.get(&cache_key, Some(&db_pool)).await
                     {
-                        info!("Cache hit! Returning cached result");
+                        info!(
+                            "Cache hit - {}! Returning cached result",
+                            cache_key.display_id()
+                        );
                         return Ok((StatusCode::OK, cached_result));
                     }
-                    info!("Cache miss, proceeding with simulation");
+                    info!(
+                        "Cache miss - {} , proceeding with simulation",
+                        cache_key.display_id()
+                    );
 
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
@@ -340,13 +349,9 @@ pub async fn simulate_transaction(
                     if let Some(cached_result) =
                         state.simulation_cache.get(&cache_key, Some(&db_pool)).await
                     {
-                        info!("Cache hit for tx hash! Returning cached result");
+                        debug!("Cache hit for tx hash! Returning cached result");
                         return Ok((StatusCode::OK, cached_result));
                     }
-                    info!(
-                        "Cache miss for tx_hash={}, starting simulation",
-                        args.tx_hash
-                    );
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
                         if let Err(err) = send_telegram_notification_custom_rpc(
@@ -478,13 +483,13 @@ pub async fn simulate_transaction_by_hash_handler(
             let cache_key = CacheKey::from_tx_hash(&tx_hash, &chain_id_clone);
 
             if let Some(cached_result) = cache.get(&cache_key, Some(&db_pool)).await {
-                info!("Cache hit for tx hash handler! Returning cached result");
+                info!(
+                    "Cache hit for tx hash={} handler! Returning cached result",
+                    tx_hash
+                );
                 return Ok(cached_result);
             }
-            info!(
-                "Cache miss for tx_hash={}, starting simulation",
-                tx_hash
-            );
+            info!("Cache miss for tx_hash={}, starting simulation", tx_hash);
 
             let result = simulate_transaction_by_hash(
                 &db_pool,
@@ -506,12 +511,12 @@ pub async fn simulate_transaction_by_hash_handler(
                     cache
                         .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
                         .await;
-                    info!("Cached simulation by hash result");
+                    info!("Adding simulation by tx hash: {} result to cache", tx_hash);
 
                     Ok(sim_info_arc)
                 }
                 Err(e) => {
-                    info!("Simulation by hash failed after: {}", e);
+                    info!("Simulation by tx hash: {} failed after: {}", tx_hash, e);
                     Err(e)
                 }
             }

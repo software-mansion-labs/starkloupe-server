@@ -54,6 +54,7 @@ use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_d
 use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fetch_classes_data};
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::external_class_cache::ExternalClassCache;
+use internal_tracing::DataWithContractClass;
 use internal_tracing::SimulationDebuggerData;
 use num_traits::ToPrimitive;
 use sqlx::Pool;
@@ -72,7 +73,8 @@ use starknet_rust::providers::Provider;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use tracing::{debug, info, warn};
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
 use url::Url;
 use verification::voyager::VoyagerClient;
 use walnut_shared::abi::{Enum, Event, Struct};
@@ -128,6 +130,7 @@ pub async fn simulate(
             true,
             db_pool,
             s3_client,
+            None,
         )
         .map_err(|e| {
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))
@@ -149,7 +152,31 @@ pub async fn simulate(
 
     debug!("Fetching classes data");
     let class_hashes = contract_calls_map.collect_all_class_hashes();
-    let classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+    let mut classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+
+    debug!(
+        "Walnut DB classes_data: {} entries, class_hashes: {:?}",
+        classes_data.len(),
+        classes_data.keys().collect::<Vec<_>>()
+    );
+
+    // Check Voyager for classes not verified on Walnut
+    // This triggers synchronous compilation so function calls are available on simple(non inline) trace
+    let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
+    let voyager_verified = check_voyager_verified_classes(
+        voyager_client,
+        &class_hashes,
+        &already_verified,
+        external_cache,
+    )
+    .await;
+
+    populate_classes_data_from_voyager_cache(
+        &contract_calls_map,
+        &mut classes_data,
+        external_cache,
+    )
+    .await;
 
     let mut deepest_function_call_id_with_panic: Option<u32> = None;
 
@@ -164,16 +191,10 @@ pub async fn simulate(
             build_simple_contract_call_debugger_data_adapter,
         )?;
 
-    // Check Voyager for classes not verified on Walnut to enable green debug button.
-    // Also triggers background pre-compilation so the debug request gets a cache hit.
-    let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
-    let voyager_verified = check_voyager_verified_classes(
-        voyager_client,
-        &class_hashes,
-        &already_verified,
-        external_cache,
-    )
-    .await;
+    // Mark Voyager-verified classes for debug button.
+    // Must be done AFTER create_function_calls_map_generic, which overwrites
+    // call_debugger_data_available based on inline_strategy_class_hash presence.
+    // TODO: Refactor logic
     if !voyager_verified.is_empty() {
         for call in contract_calls_map.0.values_mut() {
             if let Some(class_hash) = &call.class_hash {
@@ -380,12 +401,104 @@ fn filter_and_hide_unlinked_function_calls(
     }
 }
 
+/// Wait for Phase 1 (non-inline build) to complete, then populate `classes_data`
+/// with the original contract class (matching on-chain CASM) from the cache.
+///
+/// Waits at most 60 seconds for Phase 1; logs an error if it times out.
+/// Phase 2 (inline build) runs in the background and is not awaited here.
+async fn populate_classes_data_from_voyager_cache(
+    contract_calls_map: &ContractCallsMap,
+    classes_data: &mut HashMap<String, DataWithContractClass>,
+    external_cache: Option<&ExternalClassCache>,
+) {
+    let Some(cache) = external_cache else {
+        return;
+    };
+
+    let missing_class_hashes: Vec<String> = {
+        let mut seen = HashSet::new();
+        contract_calls_map
+            .0
+            .values()
+            .filter_map(|call| call.class_hash.as_ref())
+            .filter(|h| !classes_data.contains_key(*h) && seen.insert((*h).clone()))
+            .cloned()
+            .collect()
+    };
+
+    debug!(
+        "Missing class hashes (not in Walnut DB): {:?}",
+        missing_class_hashes
+    );
+
+    // Wait for Phase 1 (non-inline) to complete, with a 15s timeout.
+    // If compilation doesn't finish in time, return without function calls.
+    for class_hash_str in &missing_class_hashes {
+        if cache.is_phase1_pending(class_hash_str).await {
+            match tokio::time::timeout(
+                Duration::from_secs(15),
+                cache.wait_for_phase1_ready(class_hash_str),
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(_) => {
+                    warn!(
+                        "Timeout (15s) waiting for Phase 1 compilation of {} — function calls unavailable for this simulation",
+                        class_hash_str
+                    );
+                }
+            }
+        }
+    }
+
+    for class_hash_str in missing_class_hashes {
+        if let Some(cached) = cache.get(&class_hash_str).await {
+            info!(
+                "Cache HIT for {}: has original_contract_class={}, has inline_data={}, source={}",
+                class_hash_str,
+                cached.original_contract_class.is_some(),
+                cached.data.is_some(),
+                cached.source
+            );
+            if let Some(original_class) = &cached.original_contract_class {
+                classes_data.insert(
+                    class_hash_str.clone(),
+                    DataWithContractClass {
+                        inline_strategy_class_hash: cached.inline_strategy_class_hash.clone(),
+                        contract_class: original_class.clone(),
+                    },
+                );
+                info!(
+                    "Added Voyager original class {} to classes_data",
+                    class_hash_str
+                );
+            } else {
+                info!(
+                    "No original_contract_class for {}, skipping",
+                    class_hash_str
+                );
+            }
+        } else {
+            debug!(
+                "Cache miss for {} after waiting for Phase 1",
+                class_hash_str
+            );
+        }
+    }
+
+    debug!(
+        "classes_data after Voyager cache: {} entries",
+        classes_data.len()
+    );
+}
+
 fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
     cached_fork_state_non_inlined_class: &mut CachedState<ForkStateReader>,
 ) -> Result<(CheatnetState, Option<PostExecStateData>), TransactionSimulationError> {
-    info!("Running simulation...");
+    debug!("Running simulation...");
     let signature_len = args.transaction_signature.as_ref().map_or(0, |s| s.0.len());
     let calldata_len = args.calldata.0.len();
     let transaction_context = extract_transaction_contex(&args, &block_info);

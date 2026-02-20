@@ -152,6 +152,72 @@ fn read_single_artifact_file(
     Ok(classes)
 }
 
+/// Find the compiled class hash for a specific contract name in the build artifacts.
+/// Used by Voyager compiler to select the correct contract from multi-contract projects.
+pub fn find_class_hash_by_contract_name(
+    tmp_dir: &PathBuf,
+    package_name: &str,
+    build_profile: &str,
+    contract_name: &str,
+) -> Result<Option<String>> {
+    let target_dir = tmp_dir.join("target").join(build_profile);
+
+    // Collect all artifact files to search: specific package first, then all others
+    let mut artifact_paths = Vec::new();
+    let specific_path = target_dir.join(format!("{}.starknet_artifacts.json", package_name));
+    if specific_path.exists() {
+        artifact_paths.push(specific_path.clone());
+    }
+
+    // Also scan all artifact files (for workspace projects)
+    if let Ok(entries) = fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
+                && path != specific_path
+            {
+                artifact_paths.push(path);
+            }
+        }
+    }
+
+    for artifact_path in artifact_paths {
+        let contents = read_file(&artifact_path)?;
+        let starknet_artifacts: StarknetArtifacts =
+            deserialize_json(&contents, "StarknetArtifacts")?;
+
+        for contract_artifact in &starknet_artifacts.contracts {
+            if contract_artifact.contract_name == contract_name {
+                if let Some(sierra_path) = &contract_artifact.artifacts.sierra {
+                    let contract_sierra_path = target_dir.join(sierra_path);
+                    let contract_class_contents = read_file(&contract_sierra_path)?;
+                    let contract_class_v1: SierraClass =
+                        deserialize_json(&contract_class_contents, "SierraClass")?;
+                    let class_hash = contract_class_v1
+                        .class_hash()
+                        .map(|hash| hash.to_fixed_hex_string())
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to compute class hash: {:?}", e)
+                        })?;
+                    info!(
+                        "Found contract '{}' in {} with class hash {}",
+                        contract_name,
+                        artifact_path.display(),
+                        class_hash
+                    );
+                    return Ok(Some(class_hash));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+
 fn process_contract_artifact(
     tmp_dir: &PathBuf,
     build_profile: &str,
@@ -193,20 +259,14 @@ fn process_contract_artifact(
                             .unwrap()
                             .contains_key("statements_code_locations")
                         {
-                            error!("No statements code locations found in coverage info");
-                            return Err(anyhow::anyhow!(
-                                "No statements code locations found in coverage info"
-                            ));
+                            error!("No statements_code_locations in coverage info for {}", sierra_path);
                         }
                     } else {
-                        error!("No coverage info found in contract class");
-                        return Err(anyhow::anyhow!("No coverage info found in contract class"));
+                        error!("No cairo-coverage annotation in sierra_program_debug_info for {}", sierra_path);
                     }
                 }
                 None => {
-                    let error_message = "No debug info found in contract class";
-                    error!("{}", error_message);
-                    return Err(anyhow::anyhow!(error_message));
+                    error!("No sierra_program_debug_info for {}", sierra_path);
                 }
             };
             None

@@ -60,6 +60,7 @@ async fn simulate_to_get_debug_info(
             false,
             db_pool,
             s3_client,
+            external_cache.cloned(),
         )
         .map_err(|e| {
             TransactionSimulationError::StateError(StateError::StateReadError(e.to_string()))

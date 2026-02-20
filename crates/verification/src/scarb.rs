@@ -213,6 +213,7 @@ pub async fn build_with_scarb_for_profile(
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
 
+
 pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
     is_old_cairo_version_supported(version) || is_new_cairo_version_supported(version)
 }
