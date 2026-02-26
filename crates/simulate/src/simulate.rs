@@ -67,7 +67,7 @@ use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use starknet_rust::core::types::{
-    BlockId, ContractClass, ExecutionResult, Felt, ReceiptBlock, Transaction,
+    BlockId, ContractClass, ExecutionResources, ExecutionResult, Felt, ReceiptBlock, Transaction,
 };
 use starknet_rust::providers::Provider;
 use std::collections::HashMap;
@@ -103,6 +103,7 @@ pub async fn simulate(
         usize,
         Option<FlameChartNode>,
         Option<FlameChartNode>,
+        Option<ExecutionResources>,
     ),
     TransactionSimulationError,
 > {
@@ -356,6 +357,12 @@ pub async fn simulate(
         }
     }
 
+    let execution_resources = post_exec_state_data.as_ref().map(|psd| ExecutionResources {
+        l1_gas: psd.detailed_receipt.gas.l1_gas.0,
+        l1_data_gas: psd.detailed_receipt.gas.l1_data_gas.0,
+        l2_gas: psd.detailed_receipt.gas.l2_gas.0,
+    });
+
     let simulation_info = SimulationInfo {
         contract_calls_map,
         function_calls_map,
@@ -378,6 +385,7 @@ pub async fn simulate(
         total_txs_in_block,
         l2_flamechart,
         l1_data_flamechart,
+        execution_resources,
     ))
 }
 
@@ -620,6 +628,7 @@ pub async fn simulate_by_calldata(
         total_transactions_in_block,
         l2_flamechart,
         l1_data_flamechart,
+        execution_resources,
     ) = simulate(
         db_pool,
         s3_client,
@@ -647,7 +656,7 @@ pub async fn simulate_by_calldata(
         flamechart: l2_flamechart,
         l1_data_flamechart,
         actual_fee: None,
-        execution_resources: None,
+        execution_resources,
         latest_block,
     };
     Ok(TransactionSimulationResult {
@@ -843,6 +852,7 @@ async fn simulate_starknet_transaction_by_hash(
                             total_transactions_in_block,
                             l2_flamechart,
                             l1_data_flamechart,
+                            _,
                         ) = simulate(
                             db_pool,
                             s3_client,
@@ -1012,6 +1022,7 @@ async fn process_l1_handler_transaction(
         block_timestamp,
         transaction_index_in_block,
         total_transactions_in_block,
+        _,
         _,
         _,
     ) = simulate(
