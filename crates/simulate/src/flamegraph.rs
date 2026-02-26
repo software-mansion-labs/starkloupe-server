@@ -5,7 +5,6 @@ use crate::FlameChartNode;
 use crate::FlameChartNodeType;
 use blockifier::fee::eth_gas_constants::DATA_GAS_PER_FIELD_ELEMENT;
 use blockifier::state::cached_state::StorageEntry;
-use semver::Version;
 use starknet_api::core::ContractAddress;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -121,39 +120,15 @@ fn normalize_with_sqrt(
     }
 }
 
-fn contains_old_sierra_version(
-    node: &FlameChartNode,
-    contract_calls_map: &ContractCallsMap,
-) -> bool {
-    if let Some(contract_call) = contract_calls_map.0.get(&node.call_id) {
-        if let Some(version) = &contract_call.sierra_version {
-            if is_version_less_than(version, "1.7.0") {
-                return true;
-            }
-        }
-    }
-
-    node.children
-        .iter()
-        .any(|child| contains_old_sierra_version(child, contract_calls_map))
-}
-
-fn is_version_less_than(version: &str, threshold: &str) -> bool {
-    Version::parse(version)
-        .and_then(|v| Version::parse(threshold).map(|t| v < t))
-        .unwrap_or(false)
-}
-
 pub fn build_flamegraph(
     detailed_tx_receipt: &DetailedTransactionReceipt,
     contract_calls_map: &ContractCallsMap,
     contract_flamechart: &mut [FlameChartNode],
 ) -> Option<FlameChartNode> {
-    // Early return if any call has sierra_version < 1.7.0
-    if contract_flamechart
-        .iter()
-        .any(|node| contains_old_sierra_version(node, contract_calls_map))
-    {
+    // Block only if there is no L2 gas (non-V3 txs or pure CairoSteps).
+    // Old Sierra contracts (< 1.7.0) have raw_value = 0 and are treated as
+    // invisible by normalize_with_sqrt, so mixed traces are handled correctly.
+    if detailed_tx_receipt.gas.l2_gas.0 == 0 {
         return None;
     }
 
