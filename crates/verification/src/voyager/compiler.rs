@@ -83,7 +83,7 @@ pub async fn compile_voyager_phase1(
     let compiler_version_str = source_response.compiler_version.clone();
 
     info!(
-        "Phase 1: preparing Voyager source for class {} in {}",
+        "Phase 1: Proceeding with Voyager source compilation for class {} in {}",
         original_class_hash,
         tmp_dir.display()
     );
@@ -191,14 +191,14 @@ pub async fn compile_voyager_phase1(
             }
             Ok(_) => {
                 info!(
-                    "Phase 1: '{}' profile produced no classes",
-                    non_inline_profile
+                    "Phase 1: Class {} with '{}' profile produced no classes",
+                    original_class_hash, non_inline_profile
                 );
             }
             Err(e) => {
                 warn!(
-                    "Phase 1: '{}' profile build failed (non-critical): {}",
-                    non_inline_profile, e
+                    "BUILD FAILED for class {} with '{}' profile: {}",
+                    original_class_hash, non_inline_profile, e
                 );
             }
         }
@@ -232,7 +232,7 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
     let original_class_hash = phase1.original_class_hash.clone();
     let verified_name = phase1.verified_name.clone();
 
-    info!(
+    debug!(
         "Phase 2: building '{}' profile for class {}",
         phase1.inline_profile, original_class_hash
     );
@@ -288,7 +288,7 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
                 .find(|(h, _)| h == &hash)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Phase 2: compiled class hash {} for contract '{}' not found in output",
+                        "Compiled class hash {} for contract '{}' not found in output",
                         hash,
                         verified_name
                     )
@@ -313,7 +313,7 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
     }
 
     info!(
-        "Phase 2: completed inline build for {} → inline hash {}",
+        "Completed inline build for {} → inline hash {}",
         original_class_hash, inline_class_hash
     );
 
@@ -346,7 +346,7 @@ pub async fn compile_voyager_source(
         }
 
         info!(
-            "compile_voyager_source: both phases done from single build for {}",
+            "Compile_voyager_source: both phases done from single build for {}",
             phase1.original_class_hash
         );
 
@@ -397,28 +397,59 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
 
     let mut modified = false;
 
-    // Pin [dependencies].starknet
+    // Pin [dependencies].starknet to exact compiler version.
+    // Handles both explicit ranges (>=, ^, etc.) and bare versions ("2.11.4" == ^2.11.4 in Scarb).
     if let Some(starknet) = toml_value
         .get_mut("dependencies")
         .and_then(|d| d.as_table_mut())
         .and_then(|deps| deps.get_mut("starknet"))
     {
         if let Some(version_str) = starknet.as_str() {
-            if is_version_range(version_str) {
+            if is_version_range(version_str) || is_plain_version(version_str) {
                 *starknet = toml::Value::String(format!("={}", compiler_version));
                 modified = true;
             }
         }
     }
 
-    // Pin [package].cairo-version
+    // Pin all other plain version string dependencies to exact.
+    // In Scarb, "2.0.0" is treated as ^2.0.0 and resolves to the latest compatible version
+    // (e.g. openzeppelin "2.0.0" may resolve to 2.1.0 which requires a newer starknet).
+    if let Some(deps) = toml_value
+        .get_mut("dependencies")
+        .and_then(|d| d.as_table_mut())
+    {
+        for (name, value) in deps.iter_mut() {
+            if name == "starknet" {
+                continue; // already handled above
+            }
+            if let Some(version_str) = value.as_str() {
+                if is_plain_version(version_str) {
+                    *value = toml::Value::String(format!("={}", version_str));
+                    modified = true;
+                }
+            }
+        }
+    }
+
+    // Proactively pin all transitive deps by reading manifests from the local Scarb registry
+    // cache. For each pinned direct dep (=X.Y.Z), we read its Scarb.toml and add its deps
+    // at the minimum satisfying version. This prevents the resolver from picking a newer
+    // version that may require a starknet version unavailable in the current compiler.
+    // Falls back gracefully if the registry cache is not available yet.
+    if pin_transitive_deps_from_registry(&mut toml_value) {
+        modified = true;
+    }
+
+    // Pin [package].cairo-version to exact compiler version.
+    // Same logic: bare "2.11.4" is treated as ^2.11.4 by Scarb.
     if let Some(cairo_ver) = toml_value
         .get_mut("package")
         .and_then(|p| p.as_table_mut())
         .and_then(|pkg| pkg.get_mut("cairo-version"))
     {
         if let Some(ver_str) = cairo_ver.as_str() {
-            if is_version_range(ver_str) {
+            if is_version_range(ver_str) || is_plain_version(ver_str) {
                 *cairo_ver = toml::Value::String(format!("={}", compiler_version));
                 modified = true;
             }
@@ -454,4 +485,155 @@ fn is_version_range(version_str: &str) -> bool {
         || version_str.starts_with('<')
         || version_str.starts_with('^')
         || version_str.starts_with('~')
+}
+
+/// Returns true for bare version strings like "2.0.0" (no operator prefix).
+/// Scarb treats these as ^X.Y.Z (compatible with major), so without a Scarb.lock
+/// the resolver can pick a newer minor version that may require a newer starknet.
+fn is_plain_version(version_str: &str) -> bool {
+    version_str
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+}
+
+/// BFS through the local Scarb registry cache starting from the directly-pinned deps.
+/// For each package manifest found, adds its deps at the minimum satisfying version
+/// if they are not already declared in the top-level Scarb.toml.
+///
+/// This prevents the resolver from picking a newer transitive dep that requires a starknet
+/// version unavailable in the current compiler binary (e.g. openzeppelin@2.0.0 declares
+/// openzeppelin_utils = "^2.0.0" which resolves to 2.1.0 — needing starknet 2.13.1).
+///
+/// Falls back gracefully (returns false) when the registry cache is not yet available.
+fn pin_transitive_deps_from_registry(toml_value: &mut toml::Value) -> bool {
+    let registry_src = match find_scarb_registry_src_dir() {
+        Some(p) => p,
+        None => {
+            warn!("Scarb registry cache not found; skipping proactive transitive dep pinning");
+            return false;
+        }
+    };
+
+    debug!("Looking into scarb registry {}", registry_src.display());
+    // Seed the queue with directly pinned deps (=X.Y.Z after the earlier pass)
+    let mut queue: Vec<(String, String)> = toml_value
+        .get("dependencies")
+        .and_then(|d| d.as_table())
+        .map(|deps| {
+            deps.iter()
+                .filter(|(name, _)| *name != "starknet")
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|v| (name.clone(), min_version_from_constraint(v).to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    debug!("Initial queue: {:?}", queue);
+    let mut visited: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut modified = false;
+
+    while let Some((pkg_name, pkg_version)) = queue.pop() {
+        if !visited.insert((pkg_name.clone(), pkg_version.clone())) {
+            continue;
+        }
+
+        let manifest_path = registry_src
+            .join(format!("{}-{}", pkg_name, pkg_version))
+            .join("Scarb.toml");
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(_) => continue, // not in registry (git dep, path dep, etc.)
+        };
+        let manifest = match content.parse::<toml::Value>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let sub_deps = match manifest.get("dependencies").and_then(|d| d.as_table()) {
+            Some(d) => d.clone(),
+            None => continue,
+        };
+
+        for (dep_name, dep_value) in &sub_deps {
+            if dep_name == "starknet" {
+                continue;
+            }
+            // Registry manifests use two formats:
+            //   string: openzeppelin_utils = "^2.0.0"
+            //   table:  [dependencies.openzeppelin_utils]\n version = "^2.0.0"
+            // Skip git/path deps (tables without a "version" string key).
+            let constraint = if let Some(s) = dep_value.as_str() {
+                s
+            } else if let Some(v) = dep_value
+                .as_table()
+                .and_then(|t| t.get("version"))
+                .and_then(|v| v.as_str())
+            {
+                v
+            } else {
+                continue; // git dep, path dep, or unrecognised format
+            };
+
+            // Don't override an existing explicit declaration
+            if toml_value
+                .get("dependencies")
+                .and_then(|d| d.as_table())
+                .map(|deps| deps.contains_key(dep_name))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let min_ver = min_version_from_constraint(constraint).to_string();
+            if let Some(top_deps) = toml_value
+                .get_mut("dependencies")
+                .and_then(|d| d.as_table_mut())
+            {
+                top_deps.insert(
+                    dep_name.clone(),
+                    toml::Value::String(format!("={}", min_ver)),
+                );
+                modified = true;
+                queue.push((dep_name.clone(), min_ver));
+            }
+        }
+    }
+
+    modified
+}
+
+/// Locates the `src/` directory inside the local Scarb registry cache.
+/// Checks `XDG_CACHE_HOME`, then macOS and Linux default paths.
+fn find_scarb_registry_src_dir() -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var("HOME").ok()?);
+    let mut candidates = Vec::new();
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        candidates.push(PathBuf::from(xdg).join("scarb/registry/src"));
+    }
+    candidates.push(home.join("Library/Caches/com.swmansion.scarb/registry/src")); // macOS
+    candidates.push(home.join(".cache/scarb/registry/src")); // Linux
+    candidates.into_iter().find_map(try_find_registry_src_in)
+}
+
+fn try_find_registry_src_in(src_dir: PathBuf) -> Option<PathBuf> {
+    std::fs::read_dir(&src_dir)
+        .ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with("scarbs.xyz"))
+        .map(|e| e.path())
+}
+
+/// Returns the minimum version string from a Scarb version constraint.
+/// `"^2.0.0"` → `"2.0.0"`, `">=2.1.0"` → `"2.1.0"`, `"=2.0.0"` → `"2.0.0"`, `"2.0.0"` → `"2.0.0"`.
+fn min_version_from_constraint(constraint: &str) -> &str {
+    constraint
+        .trim_start_matches('^')
+        .trim_start_matches('~')
+        .trim_start_matches(">=")
+        .trim_start_matches('=')
 }

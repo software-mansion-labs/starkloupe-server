@@ -5,14 +5,13 @@ use crate::utils::set_limits;
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use semver::Version;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, fs};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 use walnut_shared::tuple_to_version_string;
 
 /// Global semaphore to limit concurrent builds
@@ -96,34 +95,33 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
         });
     }
 
-    info!(
-        "Running build command: {} --profile {} build",
-        absolute_path.display(),
-        profile
-    );
-
     let build_start = std::time::Instant::now();
     let mut child = cmd.spawn()?;
 
-    match tokio::time::timeout(build_timeout, child.wait()).await {
-        Ok(Ok(status)) => {
+    match tokio::time::timeout(build_timeout, child.wait_with_output()).await {
+        Ok(Ok(output)) => {
             let duration = build_start.elapsed();
-            if status.success() {
+            if output.status.success() {
                 info!(
-                    "Build completed successfully in {:.2}s",
-                    duration.as_secs_f64()
+                    "Build completed successfully in {:.2}s with command: {:?} --profile {} build on {:?} ",
+                    duration.as_secs_f64(),
+                    absolute_path.display(),
+                    profile,
+                    tmp_dir
                 );
                 Ok(())
             } else {
-                debug!(
-                    "Build failed after {:.2}s. Status: {:?}",
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                error!(
+                    "Build failed after {:.2}s with command: {:?} --profile {} build on {:?}. Status: {:?}\nStderr: {}",
                     duration.as_secs_f64(),
-                    status
+                    absolute_path.display(),
+                    profile,
+                    tmp_dir,
+                    output.status,
+                    stderr
                 );
-                Err(anyhow::anyhow!(
-                    "Project build failed with status: {:?}",
-                    status
-                ))
+                Err(anyhow::anyhow!("Project build failed: {}", stderr))
             }
         }
         Ok(Err(e)) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),
@@ -212,7 +210,6 @@ pub async fn build_with_scarb_for_profile(
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
-
 
 pub fn is_cairo_version_supported(version: (u32, u32, u32)) -> bool {
     is_old_cairo_version_supported(version) || is_new_cairo_version_supported(version)

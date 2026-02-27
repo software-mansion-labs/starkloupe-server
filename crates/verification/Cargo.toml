@@ -42,5 +42,4 @@ async-tar.workspace = true
 semver.workspace = true
 async-compression.workspace = true
 lazy-regex.workspace = true
-fs_extra.workspace = true
 libc = "0.2"

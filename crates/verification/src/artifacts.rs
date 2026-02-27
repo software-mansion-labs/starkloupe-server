@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use starknet_rust::core::types::contract::SierraClass;
 use std::fs;
 use std::path::PathBuf;
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StarknetArtifacts {
@@ -64,15 +64,24 @@ pub fn read_starknet_artifacts(
     let target_dir = tmp_dir.join("target").join(build_profile);
 
     // First try the specific package artifact file
-    let specific_artifact_path = target_dir.join(format!("{}.starknet_artifacts.json", package_name));
+    let specific_artifact_path =
+        target_dir.join(format!("{}.starknet_artifacts.json", package_name));
 
     if specific_artifact_path.exists() {
-        info!("Reading artifact file: {}", specific_artifact_path.display());
-        return read_single_artifact_file(&specific_artifact_path, tmp_dir, build_profile, include_debug_info);
+        debug!(
+            "Reading artifact file: {}",
+            specific_artifact_path.display()
+        );
+        return read_single_artifact_file(
+            &specific_artifact_path,
+            tmp_dir,
+            build_profile,
+            include_debug_info,
+        );
     }
 
     // If not found, scan for all *.starknet_artifacts.json files (workspace case)
-    info!("Scanning for artifact files in: {}", target_dir.display());
+    debug!("Scanning for artifact files in: {}", target_dir.display());
 
     let mut all_classes = Vec::new();
     let mut found_any = false;
@@ -88,8 +97,13 @@ pub fn read_starknet_artifacts(
                         .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
                 {
                     found_any = true;
-                    info!("Reading artifact file: {}", path.display());
-                    match read_single_artifact_file(&path, tmp_dir, build_profile, include_debug_info) {
+                    debug!("Reading artifact file: {}", path.display());
+                    match read_single_artifact_file(
+                        &path,
+                        tmp_dir,
+                        build_profile,
+                        include_debug_info,
+                    ) {
                         Ok(classes) => {
                             all_classes.extend(classes);
                         }
@@ -103,7 +117,10 @@ pub fn read_starknet_artifacts(
         }
         Err(e) => {
             error!("Failed to read target directory: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to scan for artifact files: {:?}", e));
+            return Err(anyhow::anyhow!(
+                "Failed to scan for artifact files: {:?}",
+                e
+            ));
         }
     }
 
@@ -143,7 +160,10 @@ fn read_single_artifact_file(
                 classes.push((class_hash, contract_class, debug_info_path));
             }
             Err(e) => {
-                warn!("Failed to process contract artifact {}: {:?}", contract_artifact.contract_name, e);
+                warn!(
+                    "Failed to process contract artifact {}: {:?}",
+                    contract_artifact.contract_name, e
+                );
                 // Continue to next contract
             }
         }
@@ -199,10 +219,8 @@ pub fn find_class_hash_by_contract_name(
                     let class_hash = contract_class_v1
                         .class_hash()
                         .map(|hash| hash.to_fixed_hex_string())
-                        .map_err(|e| {
-                            anyhow::anyhow!("Failed to compute class hash: {:?}", e)
-                        })?;
-                    info!(
+                        .map_err(|e| anyhow::anyhow!("Failed to compute class hash: {:?}", e))?;
+                    debug!(
                         "Found contract '{}' in {} with class hash {}",
                         contract_name,
                         artifact_path.display(),
@@ -216,7 +234,6 @@ pub fn find_class_hash_by_contract_name(
 
     Ok(None)
 }
-
 
 fn process_contract_artifact(
     tmp_dir: &PathBuf,
@@ -259,10 +276,16 @@ fn process_contract_artifact(
                             .unwrap()
                             .contains_key("statements_code_locations")
                         {
-                            error!("No statements_code_locations in coverage info for {}", sierra_path);
+                            error!(
+                                "No statements_code_locations in coverage info for {}",
+                                sierra_path
+                            );
                         }
                     } else {
-                        error!("No cairo-coverage annotation in sierra_program_debug_info for {}", sierra_path);
+                        error!(
+                            "No cairo-coverage annotation in sierra_program_debug_info for {}",
+                            sierra_path
+                        );
                     }
                 }
                 None => {
