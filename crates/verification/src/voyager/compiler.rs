@@ -511,7 +511,7 @@ fn pin_transitive_deps_from_registry(toml_value: &mut toml::Value) -> bool {
     let registry_src = match find_scarb_registry_src_dir() {
         Some(p) => p,
         None => {
-            debug!("Scarb registry cache not found; skipping proactive transitive dep pinning");
+            warn!("Scarb registry cache not found; skipping proactive transitive dep pinning");
             return false;
         }
     };
@@ -608,15 +608,16 @@ fn pin_transitive_deps_from_registry(toml_value: &mut toml::Value) -> bool {
 }
 
 /// Locates the `src/` directory inside the local Scarb registry cache.
-/// Checks macOS and Linux default paths.
+/// Checks `XDG_CACHE_HOME`, then macOS and Linux default paths.
 fn find_scarb_registry_src_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var("HOME").ok()?);
-    [
-        home.join("Library/Caches/com.swmansion.scarb/registry/src"), // macOS
-        home.join(".cache/com.swmansion.scarb/registry/src"),         // Linux
-    ]
-    .into_iter()
-    .find_map(try_find_registry_src_in)
+    let mut candidates = Vec::new();
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        candidates.push(PathBuf::from(xdg).join("scarb/registry/src"));
+    }
+    candidates.push(home.join("Library/Caches/com.swmansion.scarb/registry/src")); // macOS
+    candidates.push(home.join(".cache/scarb/registry/src")); // Linux
+    candidates.into_iter().find_map(try_find_registry_src_in)
 }
 
 fn try_find_registry_src_in(src_dir: PathBuf) -> Option<PathBuf> {
