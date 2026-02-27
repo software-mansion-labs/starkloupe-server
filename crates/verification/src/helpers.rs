@@ -317,7 +317,10 @@ pub async fn process_new_cairo_version_verification(
     .await
     {
         if let Err(move_err) = move_failed_verification_to_failed_tmp(tmp_dir) {
-            let err = format!("Failed to move verification to failed tmp: {:?}", move_err);
+            let err = format!(
+                "Failed to move verification {:?} to failed tmp: {:?}",
+                tmp_dir, move_err
+            );
             error!("{:?}", err);
             return Err(anyhow::anyhow!(err));
         }

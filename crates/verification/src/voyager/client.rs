@@ -62,7 +62,7 @@ impl VoyagerClient {
                 if status.is_success() {
                     match resp.json::<VoyagerSourceResponse>().await {
                         Ok(source_response) => {
-                            info!(
+                            debug!(
                                 "Successfully fetched source code from Voyager for class {} ({})",
                                 class_hash, source_response.verified_name
                             );

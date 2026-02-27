@@ -154,7 +154,7 @@ impl ExternalClassCache {
             self.cache
                 .insert(class_hash.to_string(), Arc::new(updated))
                 .await;
-            info!("Updated inline data for {}", class_hash);
+            debug!("Updated inline data for {}", class_hash);
         } else {
             warn!(
                 "Cannot update inline data for {} - not in cache",
@@ -242,7 +242,7 @@ impl ExternalClassCache {
         };
 
         if let Some(mut rx) = receiver {
-            info!("Waiting for phase 1 completion of {}", class_hash);
+            debug!("Waiting for phase 1 completion of {}", class_hash);
             loop {
                 if *rx.borrow() {
                     return true;

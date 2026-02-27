@@ -263,9 +263,7 @@ pub async fn fetch_classes_debugger_data_with_external(
         }
 
         for class_hash in missing_classes {
-            if class_hash
-                == "0x0000000000000000000000000000000000000000000000000000000000000117"
-            {
+            if class_hash == "0x0000000000000000000000000000000000000000000000000000000000000117" {
                 continue;
             }
 
@@ -283,7 +281,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                             continue;
                         }
                         None => {
-                            // Phase 1 done but Phase 2 still in progress
+                            // Phase 1 done but Phase 2 still in progress or failed
                             if cache.is_compiling(&class_hash).await {
                                 info!(
                                     "Phase 2 in progress for {}, waiting for inline data",
@@ -297,23 +295,33 @@ pub async fn fetch_classes_debugger_data_with_external(
                                             .insert(class_hash.clone(), data.clone());
                                     }
                                 }
+                            } else {
+                                // Phase 2 already finished but data=None → Phase 2 failed.
+                                // The failure is likely deterministic (e.g. compiler panic).
+                                debug!(
+                                    "Phase 2 failed for {} (cached but no inline data, not compiling) — skipping",
+                                    class_hash
+                                );
                             }
-                            // If not compiling but data=None → Phase 2 failed, fall through
-                            // to try Voyager API for a fresh compile
-                            if classes_debugger_data.contains_key(&class_hash) {
-                                continue;
-                            }
+                            continue;
                         }
                     }
                 } else {
-                    // Cache miss — check if compilation previously failed
-                    if cache.has_failed(&class_hash).await {
+                    // Cache miss — not in cache at all
+                    let is_compiling = cache.is_compiling(&class_hash).await;
+                    let has_failed = cache.has_failed(&class_hash).await;
+                    debug!(
+                        "External cache miss for {} (is_compiling={}, has_failed={})",
+                        class_hash, is_compiling, has_failed
+                    );
+
+                    if has_failed {
                         debug!("Skipping {} - compilation previously failed", class_hash);
                         continue;
                     }
 
-                    // Wait if Phase 1 is currently in progress (compilation just started)
-                    if cache.is_compiling(&class_hash).await {
+                    // Wait if compilation is currently in progress
+                    if is_compiling {
                         info!(
                             "Compilation in progress for {}, waiting for full completion",
                             class_hash
@@ -377,13 +385,9 @@ pub async fn fetch_classes_debugger_data_with_external(
                                         .await;
                                 }
 
-                                classes_debugger_data
-                                    .insert(compiled.original_class_hash, data);
+                                classes_debugger_data.insert(compiled.original_class_hash, data);
 
-                                info!(
-                                    "Successfully compiled Voyager source for {}",
-                                    class_hash
-                                );
+                                info!("Successfully compiled Voyager source for {}", class_hash);
                             }
                             Err(e) => {
                                 warn!(
@@ -401,9 +405,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                                 cache
                                     .signal_phase1_ready(&class_hash, phase1_notifier)
                                     .await;
-                                cache
-                                    .finish_compilation(&class_hash, phase2_notifier)
-                                    .await;
+                                cache.finish_compilation(&class_hash, phase2_notifier).await;
                             }
                         }
                     }
@@ -497,25 +499,20 @@ pub async fn check_voyager_verified_classes(
                 {
                     tokio::spawn(async move {
                         // Phase 1: non-inline build (release / dev)
-                        let phase1 =
-                            match compile_voyager_phase1(source_response).await {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    warn!(
-                                        "Phase 1 failed for {}: {:?}",
-                                        class_hash_clone, e
-                                    );
-                                    cache.mark_failed(&class_hash_clone).await;
-                                    // Signal both so waiters don't hang
-                                    cache
-                                        .signal_phase1_ready(&class_hash_clone, phase1_notifier)
-                                        .await;
-                                    cache
-                                        .finish_compilation(&class_hash_clone, phase2_notifier)
-                                        .await;
-                                    return;
-                                }
-                            };
+                        let phase1 = match compile_voyager_phase1(source_response).await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!("Phase 1 failed for {}: {:?}", class_hash_clone, e);
+                                cache.mark_failed(&class_hash_clone).await;
+                                cache
+                                    .signal_phase1_ready(&class_hash_clone, phase1_notifier)
+                                    .await;
+                                cache
+                                    .finish_compilation(&class_hash_clone, phase2_notifier)
+                                    .await;
+                                return;
+                            }
+                        };
 
                         let original_class_hash = phase1.original_class_hash.clone();
 
@@ -606,14 +603,11 @@ pub async fn check_voyager_verified_classes(
                                             Some(compiled.inline_class_hash),
                                         )
                                         .await;
-                                    info!(
-                                        "Phase 2 complete for {}",
-                                        class_hash_clone
-                                    );
+                                    info!("Phase 2 complete for {}", class_hash_clone);
                                 }
                                 Err(e) => {
                                     warn!(
-                                        "Phase 2 failed for {}: {:?}",
+                                        "Phase 2: BUILD FAILED for {}: {:?}",
                                         class_hash_clone, e
                                     );
                                     // Don't mark_failed — Phase 1 data (original_contract_class)

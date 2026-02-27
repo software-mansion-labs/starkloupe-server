@@ -1,5 +1,4 @@
 use anyhow::Result;
-use fs_extra::dir::{copy, CopyOptions};
 use libc::{rlimit, setrlimit, RLIMIT_AS, RLIMIT_CPU};
 use std::fs;
 use std::io::Write;
@@ -53,21 +52,23 @@ pub fn create_temp_directory(verification_id: String) -> Result<PathBuf> {
 pub fn move_failed_verification_to_failed_tmp(tmp_dir: &PathBuf) -> Result<()> {
     let failed_tmp_dir = PathBuf::from("tmp/failed-verification");
 
-    info!(
-        "Moving failed verification {} to {}",
-        &tmp_dir.display(),
-        &failed_tmp_dir.display(),
-    );
     if !failed_tmp_dir.exists() {
         fs::create_dir_all(&failed_tmp_dir)?;
     }
 
-    let mut options = CopyOptions::new();
-    options.copy_inside = true;
+    let dir_name = tmp_dir
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Cannot get directory name from {:?}", tmp_dir))?;
+    let dest = failed_tmp_dir.join(dir_name);
 
-    copy(tmp_dir, failed_tmp_dir, &options)?;
+    info!(
+        "Moving failed verification {} to {}",
+        tmp_dir.display(),
+        dest.display(),
+    );
 
-    fs::remove_dir_all(tmp_dir)?;
+    fs::rename(tmp_dir, &dest)
+        .map_err(|e| anyhow::anyhow!("rename {:?} -> {:?} failed: {}", tmp_dir, dest, e))?;
 
     Ok(())
 }

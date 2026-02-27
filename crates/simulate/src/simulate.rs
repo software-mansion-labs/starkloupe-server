@@ -50,6 +50,7 @@ use ethers::types::H256;
 use ethers::types::U256;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
+use futures::future;
 use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_data_adapter;
 use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fetch_classes_data};
 use internal_tracing::event_calls_map::EventCallsMap;
@@ -87,6 +88,8 @@ use walnut_shared::{
     chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
     to_chain_id, EChainId, ENetwork, ETransactionHashType,
 };
+
+const VOYAGER_PHASE_1_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
@@ -412,7 +415,7 @@ fn filter_and_hide_unlinked_function_calls(
 /// Wait for Phase 1 (non-inline build) to complete, then populate `classes_data`
 /// with the original contract class (matching on-chain CASM) from the cache.
 ///
-/// Waits at most 60 seconds for Phase 1; logs an error if it times out.
+/// Waits at most 30 seconds for Phase 1; logs an error if it times out.
 /// Phase 2 (inline build) runs in the background and is not awaited here.
 async fn populate_classes_data_from_voyager_cache(
     contract_calls_map: &ContractCallsMap,
@@ -439,26 +442,34 @@ async fn populate_classes_data_from_voyager_cache(
         missing_class_hashes
     );
 
-    // Wait for Phase 1 (non-inline) to complete, with a 15s timeout.
+    // Wait for Phase 1 (non-inline) to complete for all classes in parallel.
     // If compilation doesn't finish in time, return without function calls.
-    for class_hash_str in &missing_class_hashes {
-        if cache.is_phase1_pending(class_hash_str).await {
-            match tokio::time::timeout(
-                Duration::from_secs(15),
-                cache.wait_for_phase1_ready(class_hash_str),
-            )
-            .await
-            {
-                Ok(_) => {}
-                Err(_) => {
-                    warn!(
-                        "Timeout (15s) waiting for Phase 1 compilation of {} — function calls unavailable for this simulation",
-                        class_hash_str
-                    );
+    let phase1_waits: Vec<_> = missing_class_hashes
+        .iter()
+        .map(|class_hash_str| {
+            let cache = cache.clone();
+            let class_hash_str = class_hash_str.clone();
+            async move {
+                if cache.is_phase1_pending(&class_hash_str).await {
+                    match tokio::time::timeout(
+                        VOYAGER_PHASE_1_TIMEOUT,
+                        cache.wait_for_phase1_ready(&class_hash_str),
+                    )
+                    .await
+                    {
+                        Ok(_) => {}
+                        Err(_) => {
+                            warn!(
+                                "Timeout ({:?}) waiting for Phase 1 compilation of {} — function calls are unavailable for this simulation",
+                                VOYAGER_PHASE_1_TIMEOUT, class_hash_str
+                            );
+                        }
+                    }
                 }
             }
-        }
-    }
+        })
+        .collect();
+    future::join_all(phase1_waits).await;
 
     for class_hash_str in missing_class_hashes {
         if let Some(cached) = cache.get(&class_hash_str).await {
