@@ -7,6 +7,7 @@ use crate::utils::{
 };
 use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
+use scarb_dep_resolver::{is_dep_resolution_error, resolve_registry_deps};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -143,65 +144,116 @@ pub async fn compile_voyager_phase1(
         }
     };
 
+    // Proactively resolve transitive registry deps before the first build attempt.
+    // This avoids a wasted first build that fails with a dep resolution error and
+    // triggers the same fallback reactively (saving ~1s + the resolver round-trip).
+    // If the resolver returns nothing or fails we proceed anyway; the reactive
+    // fallback in the build loop will still trigger if needed.
+    let mut dep_resolution_fallback_applied =
+        match apply_dep_resolution_fallback(&manifest, &tmp_dir).await {
+            Ok(()) => {
+                info!("Phase 1: proactive dep resolution applied for starknet {}.{}.{}", manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2);
+                true
+            }
+            Err(e) => {
+                info!("Phase 1: proactive dep resolution skipped ({})", e);
+                false
+            }
+        };
+
     // Build release profile first, then dev if release doesn't match.
     // For each profile: if it matches AND has inline avoid strategy → both phases done at once.
+    //
+    // Reactive fallback: on the first dep-resolution error (only if proactive pass was not
+    // applied) we query the scarbs.xyz registry API again and restart the profile loop once.
     let mut original_contract_class: Option<ContractClass> = None;
     let mut inline_already_built: Option<(String, ContractClass)> = None;
 
-    'outer: for non_inline_profile in &["release", "dev"] {
-        // Skip if this profile is the designated inline profile
-        // (we'd be building it again unnecessarily in phase 2 anyway)
-        if *non_inline_profile == inline_profile.as_str() {
-            continue;
-        }
+    'retry: loop {
+        'outer: for non_inline_profile in &["release", "dev"] {
+            // Skip if this profile is the designated inline profile
+            // (we'd be building it again unnecessarily in phase 2 anyway)
+            if *non_inline_profile == inline_profile.as_str() {
+                continue;
+            }
 
-        debug!(
-            "Phase 1: building '{}' profile for class {}",
-            non_inline_profile, original_class_hash
-        );
+            info!(
+                "Phase 1: building '{}' profile for class {}",
+                non_inline_profile, original_class_hash
+            );
 
-        match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await {
-            Ok(classes) if !classes.is_empty() => {
-                for (hash, contract_class) in classes {
-                    if hash == original_class_hash {
-                        debug!(
-                            "Phase 1: '{}' profile matched on-chain hash {}",
-                            non_inline_profile, original_class_hash
-                        );
-                        original_contract_class = Some(contract_class.clone());
-
-                        // Check if this profile already has inline avoid strategy
-                        if manifest
-                            .profile_with_inline_strategy
-                            .contains_key(*non_inline_profile)
-                        {
+            match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await {
+                Ok(classes) if !classes.is_empty() => {
+                    for (hash, contract_class) in classes {
+                        if hash == original_class_hash {
                             info!(
-                                "Phase 1: '{}' profile has inline strategy AND matches on-chain hash — no Phase 2 needed",
-                                non_inline_profile
+                                "Phase 1: '{}' profile matched on-chain hash {}",
+                                non_inline_profile, original_class_hash
                             );
-                            inline_already_built = Some((hash, contract_class));
+                            original_contract_class = Some(contract_class.clone());
+
+                            // Check if this profile already has inline avoid strategy
+                            if manifest
+                                .profile_with_inline_strategy
+                                .contains_key(*non_inline_profile)
+                            {
+                                info!(
+                                    "Phase 1: '{}' profile has inline strategy AND matches on-chain hash — no Phase 2 needed",
+                                    non_inline_profile
+                                );
+                                inline_already_built = Some((hash, contract_class));
+                            }
+                            break 'outer;
                         }
-                        break 'outer;
+                    }
+                    info!(
+                        "Phase 1: '{}' profile produced classes but none matched on-chain hash {}",
+                        non_inline_profile, original_class_hash
+                    );
+                }
+                Ok(_) => {
+                    info!(
+                        "Phase 1: Class {} with '{}' profile produced no classes",
+                        original_class_hash, non_inline_profile
+                    );
+                }
+                Err(e)
+                    if !dep_resolution_fallback_applied
+                        && is_dep_resolution_error(&e.to_string()) =>
+                {
+                    info!(
+                        "Phase 1: dep resolution error detected for class {} '{}' profile, triggering scarbs.xyz fallback. Error: {}",
+                        original_class_hash, non_inline_profile, e
+                    );
+                    dep_resolution_fallback_applied = true;
+                    match apply_dep_resolution_fallback(&manifest, &tmp_dir).await {
+                        Ok(()) => {
+                            info!(
+                                "Phase 1: scarbs.xyz dep resolution fallback applied, retrying build"
+                            );
+                            continue 'retry;
+                        }
+                        Err(fallback_err) => {
+                            warn!(
+                                "BUILD FAILED for class {} with '{}' profile: {}. Dep resolution fallback also failed: {}",
+                                original_class_hash, non_inline_profile, e, fallback_err
+                            );
+                        }
                     }
                 }
-                info!(
-                    "Phase 1: '{}' profile produced classes but none matched on-chain hash {}",
-                    non_inline_profile, original_class_hash
-                );
-            }
-            Ok(_) => {
-                info!(
-                    "Phase 1: Class {} with '{}' profile produced no classes",
-                    original_class_hash, non_inline_profile
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "BUILD FAILED for class {} with '{}' profile: {}",
-                    original_class_hash, non_inline_profile, e
-                );
+                Err(e) => {
+                    info!(
+                        "Phase 1: build error for class {} '{}' profile (is_dep_resolution_error={}): {}",
+                        original_class_hash, non_inline_profile, is_dep_resolution_error(&e.to_string()), e
+                    );
+                    warn!(
+                        "BUILD FAILED for class {} with '{}' profile: {}",
+                        original_class_hash, non_inline_profile, e
+                    );
+                }
             }
         }
+        break 'retry;
     }
 
     if original_contract_class.is_none() {
@@ -382,6 +434,58 @@ pub fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
     }
 }
 
+/// Calls the scarbs.xyz registry API to resolve all transitive registry dependencies
+/// to exact versions compatible with the project's starknet/Cairo version, then injects
+/// the resolved `name = "=X.Y.Z"` entries into the Scarb.toml on disk.
+///
+/// Only adds packages that are not already declared — existing entries are not overwritten
+/// so that pinned deps (e.g. starknet = "=2.11.4") set by earlier passes are preserved.
+async fn apply_dep_resolution_fallback(manifest: &Manifest, tmp_dir: &PathBuf) -> Result<()> {
+    let toml_path = tmp_dir.join("Scarb.toml");
+    let content = fs::read_to_string(&toml_path)?;
+    let starknet_version = format!(
+        "{}.{}.{}",
+        manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2
+    );
+
+    info!(
+        "Querying scarbs.xyz registry to resolve deps for starknet {}",
+        starknet_version
+    );
+
+    let resolved = resolve_registry_deps(&content, &starknet_version)
+        .await
+        .map_err(|e| anyhow::anyhow!("scarbs.xyz dep resolution failed: {}", e))?;
+
+    if resolved.is_empty() {
+        return Err(anyhow::anyhow!(
+            "scarbs.xyz dep resolution returned no packages"
+        ));
+    }
+
+    let mut toml: toml::Value = content
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Failed to parse Scarb.toml: {}", e))?;
+
+    if let Some(toml::Value::Table(deps)) =
+        toml.as_table_mut().and_then(|t| t.get_mut("dependencies"))
+    {
+        for (name, version) in &resolved {
+            // Do not override an existing explicit declaration
+            if !deps.contains_key(name.as_str()) {
+                deps.insert(name.clone(), toml::Value::String(version.clone()));
+            }
+        }
+    }
+
+    fs::write(&toml_path, toml::to_string_pretty(&toml)?)?;
+    info!(
+        "scarbs.xyz fallback: injected {} pinned packages into Scarb.toml",
+        resolved.len()
+    );
+    Ok(())
+}
+
 /// Pin version range dependencies to exact compiler version and remove
 /// dev-dependencies/scripts that can't be resolved without a Scarb.lock.
 fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_version: &str) {
@@ -432,15 +536,6 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
         }
     }
 
-    // Proactively pin all transitive deps by reading manifests from the local Scarb registry
-    // cache. For each pinned direct dep (=X.Y.Z), we read its Scarb.toml and add its deps
-    // at the minimum satisfying version. This prevents the resolver from picking a newer
-    // version that may require a starknet version unavailable in the current compiler.
-    // Falls back gracefully if the registry cache is not available yet.
-    if pin_transitive_deps_from_registry(&mut toml_value) {
-        modified = true;
-    }
-
     // Pin [package].cairo-version to exact compiler version.
     // Same logic: bare "2.11.4" is treated as ^2.11.4 by Scarb.
     if let Some(cairo_ver) = toml_value
@@ -467,6 +562,7 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
         }
     }
 
+    info!("Modified: {}", modified);
     if modified {
         if let Ok(updated) = toml::to_string(&toml_value) {
             source_code.insert("Scarb.toml".to_string(), updated);
@@ -496,144 +592,4 @@ fn is_plain_version(version_str: &str) -> bool {
         .next()
         .map(|c| c.is_ascii_digit())
         .unwrap_or(false)
-}
-
-/// BFS through the local Scarb registry cache starting from the directly-pinned deps.
-/// For each package manifest found, adds its deps at the minimum satisfying version
-/// if they are not already declared in the top-level Scarb.toml.
-///
-/// This prevents the resolver from picking a newer transitive dep that requires a starknet
-/// version unavailable in the current compiler binary (e.g. openzeppelin@2.0.0 declares
-/// openzeppelin_utils = "^2.0.0" which resolves to 2.1.0 — needing starknet 2.13.1).
-///
-/// Falls back gracefully (returns false) when the registry cache is not yet available.
-fn pin_transitive_deps_from_registry(toml_value: &mut toml::Value) -> bool {
-    let registry_src = match find_scarb_registry_src_dir() {
-        Some(p) => p,
-        None => {
-            warn!("Scarb registry cache not found; skipping proactive transitive dep pinning");
-            return false;
-        }
-    };
-
-    debug!("Looking into scarb registry {}", registry_src.display());
-    // Seed the queue with directly pinned deps (=X.Y.Z after the earlier pass)
-    let mut queue: Vec<(String, String)> = toml_value
-        .get("dependencies")
-        .and_then(|d| d.as_table())
-        .map(|deps| {
-            deps.iter()
-                .filter(|(name, _)| *name != "starknet")
-                .filter_map(|(name, value)| {
-                    value
-                        .as_str()
-                        .map(|v| (name.clone(), min_version_from_constraint(v).to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    debug!("Initial queue: {:?}", queue);
-    let mut visited: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    let mut modified = false;
-
-    while let Some((pkg_name, pkg_version)) = queue.pop() {
-        if !visited.insert((pkg_name.clone(), pkg_version.clone())) {
-            continue;
-        }
-
-        let manifest_path = registry_src
-            .join(format!("{}-{}", pkg_name, pkg_version))
-            .join("Scarb.toml");
-        let content = match std::fs::read_to_string(&manifest_path) {
-            Ok(c) => c,
-            Err(_) => continue, // not in registry (git dep, path dep, etc.)
-        };
-        let manifest = match content.parse::<toml::Value>() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let sub_deps = match manifest.get("dependencies").and_then(|d| d.as_table()) {
-            Some(d) => d.clone(),
-            None => continue,
-        };
-
-        for (dep_name, dep_value) in &sub_deps {
-            if dep_name == "starknet" {
-                continue;
-            }
-            // Registry manifests use two formats:
-            //   string: openzeppelin_utils = "^2.0.0"
-            //   table:  [dependencies.openzeppelin_utils]\n version = "^2.0.0"
-            // Skip git/path deps (tables without a "version" string key).
-            let constraint = if let Some(s) = dep_value.as_str() {
-                s
-            } else if let Some(v) = dep_value
-                .as_table()
-                .and_then(|t| t.get("version"))
-                .and_then(|v| v.as_str())
-            {
-                v
-            } else {
-                continue; // git dep, path dep, or unrecognised format
-            };
-
-            // Don't override an existing explicit declaration
-            if toml_value
-                .get("dependencies")
-                .and_then(|d| d.as_table())
-                .map(|deps| deps.contains_key(dep_name))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-
-            let min_ver = min_version_from_constraint(constraint).to_string();
-            if let Some(top_deps) = toml_value
-                .get_mut("dependencies")
-                .and_then(|d| d.as_table_mut())
-            {
-                top_deps.insert(
-                    dep_name.clone(),
-                    toml::Value::String(format!("={}", min_ver)),
-                );
-                modified = true;
-                queue.push((dep_name.clone(), min_ver));
-            }
-        }
-    }
-
-    modified
-}
-
-/// Locates the `src/` directory inside the local Scarb registry cache.
-/// Checks `XDG_CACHE_HOME`, then macOS and Linux default paths.
-fn find_scarb_registry_src_dir() -> Option<PathBuf> {
-    let home = PathBuf::from(std::env::var("HOME").ok()?);
-    let mut candidates = Vec::new();
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        candidates.push(PathBuf::from(xdg).join("scarb/registry/src"));
-    }
-    candidates.push(home.join("Library/Caches/com.swmansion.scarb/registry/src")); // macOS
-    candidates.push(home.join(".cache/scarb/registry/src")); // Linux
-    candidates.into_iter().find_map(try_find_registry_src_in)
-}
-
-fn try_find_registry_src_in(src_dir: PathBuf) -> Option<PathBuf> {
-    std::fs::read_dir(&src_dir)
-        .ok()?
-        .flatten()
-        .find(|e| e.file_name().to_string_lossy().starts_with("scarbs.xyz"))
-        .map(|e| e.path())
-}
-
-/// Returns the minimum version string from a Scarb version constraint.
-/// `"^2.0.0"` → `"2.0.0"`, `">=2.1.0"` → `"2.1.0"`, `"=2.0.0"` → `"2.0.0"`, `"2.0.0"` → `"2.0.0"`.
-fn min_version_from_constraint(constraint: &str) -> &str {
-    constraint
-        .trim_start_matches('^')
-        .trim_start_matches('~')
-        .trim_start_matches(">=")
-        .trim_start_matches('=')
 }

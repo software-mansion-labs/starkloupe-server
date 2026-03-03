@@ -43,3 +43,4 @@ semver.workspace = true
 async-compression.workspace = true
 lazy-regex.workspace = true
 libc = "0.2"
+scarb-dep-resolver.workspace = true

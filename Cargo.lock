@@ -7776,6 +7776,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "scarb-dep-resolver"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "reqwest 0.11.27",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "scarb-metadata"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10587,6 +10602,7 @@ dependencies = [
  "reqwest 0.11.27",
  "runtime",
  "scarb-api",
+ "scarb-dep-resolver",
  "semver",
  "sentry 0.24.3",
  "serde",

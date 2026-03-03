@@ -477,153 +477,173 @@ pub async fn check_voyager_verified_classes(
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
 
-    let results: Vec<_> = stream::iter(classes_to_check)
-        .map(|class_hash| async move {
-            let result = client.fetch_source_code(&class_hash).await;
-            (class_hash, result)
+    // Clone client and cache to use inside stream closures.
+    // Phase 1 compilation is spawned immediately as each source download completes,
+    // rather than after all downloads finish. This allows Phase 1 to start building
+    // earlier, reducing the risk of hitting the Phase 1 timeout in the simulate handler.
+    let client_clone = client.clone();
+    let cache_opt = external_cache.cloned();
+
+    let found_hashes: Vec<String> = stream::iter(classes_to_check)
+        .map(move |class_hash| {
+            let client = client_clone.clone();
+            async move {
+                let result = client.fetch_source_code(&class_hash).await;
+                (class_hash, result)
+            }
         })
         .buffer_unordered(concurrency_limit)
+        .filter_map(move |(class_hash, result)| {
+            let cache_opt = cache_opt.clone();
+            async move {
+                if let Ok(Some(source_response)) = result {
+                    if let Some(cache) = cache_opt {
+                        let class_hash_clone = class_hash.clone();
+
+                        if let Some((phase1_notifier, phase2_notifier)) =
+                            cache.start_compilation(&class_hash).await
+                        {
+                            tokio::spawn(async move {
+                                // Phase 1: non-inline build (release / dev)
+                                let phase1 = match compile_voyager_phase1(source_response).await {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        warn!("Phase 1 failed for {}: {:?}", class_hash_clone, e);
+                                        cache.mark_failed(&class_hash_clone).await;
+                                        cache
+                                            .signal_phase1_ready(&class_hash_clone, phase1_notifier)
+                                            .await;
+                                        cache
+                                            .finish_compilation(&class_hash_clone, phase2_notifier)
+                                            .await;
+                                        return;
+                                    }
+                                };
+
+                                let original_class_hash = phase1.original_class_hash.clone();
+
+                                // Check if inline is already available from Phase 1
+                                if let Some((ref inline_hash, ref inline_class)) =
+                                    phase1.inline_already_built
+                                {
+                                    // Matching profile had inline strategy — both phases done at once
+                                    let class_debugger_data =
+                                        extract_debugger_data_from_contract_class(
+                                            inline_class,
+                                            &phase1.source_code,
+                                        );
+                                    let data = ClassDebuggerDataWithContractClass {
+                                        inline_strategy_class_hash: Some(inline_hash.clone()),
+                                        class_debugger_data,
+                                        contract_class: inline_class.clone(),
+                                    };
+
+                                    cache
+                                        .set(
+                                            &original_class_hash,
+                                            Some(data),
+                                            phase1.original_contract_class.clone(),
+                                            Some(inline_hash.clone()),
+                                            "voyager-phase1+inline",
+                                        )
+                                        .await;
+
+                                    // Cleanup temp dir (phase2 won't do it)
+                                    let tmp_dir = phase1.tmp_dir.clone();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        cleanup_tmp_dir(&tmp_dir);
+                                    })
+                                    .await;
+
+                                    info!(
+                                        "Both phases complete (single build) for {}",
+                                        class_hash_clone
+                                    );
+
+                                    cache
+                                        .signal_phase1_ready(&class_hash_clone, phase1_notifier)
+                                        .await;
+                                    cache
+                                        .finish_compilation(&class_hash_clone, phase2_notifier)
+                                        .await;
+                                } else {
+                                    // Set Phase 1 result in cache (no inline data yet)
+                                    cache
+                                        .set(
+                                            &original_class_hash,
+                                            None,
+                                            phase1.original_contract_class.clone(),
+                                            None,
+                                            "voyager-phase1",
+                                        )
+                                        .await;
+
+                                    // Signal Phase 1 complete → unblocks simple trace
+                                    cache
+                                        .signal_phase1_ready(&class_hash_clone, phase1_notifier)
+                                        .await;
+
+                                    info!(
+                                        "Phase 1 complete for {}, starting Phase 2 in background",
+                                        class_hash_clone
+                                    );
+
+                                    // Phase 2: inline build (walnut-debug or equivalent profile).
+                                    // Runs in the background after Phase 1 signals ready.
+                                    // The simulate (trace) handler does NOT wait for Phase 2 —
+                                    // function_call maps are built as soon as Phase 1 data is available.
+                                    match compile_voyager_phase2(phase1).await {
+                                        Ok(compiled) => {
+                                            let class_debugger_data =
+                                                extract_debugger_data_from_contract_class(
+                                                    &compiled.contract_class,
+                                                    &compiled.source_code,
+                                                );
+                                            let data = ClassDebuggerDataWithContractClass {
+                                                inline_strategy_class_hash: Some(
+                                                    compiled.inline_class_hash.clone(),
+                                                ),
+                                                class_debugger_data,
+                                                contract_class: compiled.contract_class,
+                                            };
+                                            cache
+                                                .update_inline_data(
+                                                    &compiled.original_class_hash,
+                                                    data,
+                                                    Some(compiled.inline_class_hash),
+                                                )
+                                                .await;
+                                            info!("Phase 2 complete for {}", class_hash_clone);
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Phase 2: BUILD FAILED for {}: {:?}",
+                                                class_hash_clone, e
+                                            );
+                                            // Don't mark_failed — Phase 1 data (original_contract_class)
+                                            // is still valid for simple trace function calls
+                                        }
+                                    }
+
+                                    // Signal Phase 2 complete → unblocks debug trace
+                                    cache
+                                        .finish_compilation(&class_hash_clone, phase2_notifier)
+                                        .await;
+                                }
+                            });
+                        }
+                    }
+                    Some(class_hash)
+                } else {
+                    None
+                }
+            }
+        })
         .collect()
         .await;
 
-    for (class_hash, result) in results {
-        if let Ok(Some(source_response)) = result {
-            voyager_verified.insert(class_hash.clone());
-
-            if let Some(cache) = external_cache {
-                let cache = cache.clone();
-                let class_hash_clone = class_hash.clone();
-
-                if let Some((phase1_notifier, phase2_notifier)) =
-                    cache.start_compilation(&class_hash).await
-                {
-                    tokio::spawn(async move {
-                        // Phase 1: non-inline build (release / dev)
-                        let phase1 = match compile_voyager_phase1(source_response).await {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!("Phase 1 failed for {}: {:?}", class_hash_clone, e);
-                                cache.mark_failed(&class_hash_clone).await;
-                                cache
-                                    .signal_phase1_ready(&class_hash_clone, phase1_notifier)
-                                    .await;
-                                cache
-                                    .finish_compilation(&class_hash_clone, phase2_notifier)
-                                    .await;
-                                return;
-                            }
-                        };
-
-                        let original_class_hash = phase1.original_class_hash.clone();
-
-                        // Check if inline is already available from Phase 1
-                        if let Some((ref inline_hash, ref inline_class)) =
-                            phase1.inline_already_built
-                        {
-                            // Matching profile had inline strategy — both phases done at once
-                            let class_debugger_data = extract_debugger_data_from_contract_class(
-                                inline_class,
-                                &phase1.source_code,
-                            );
-                            let data = ClassDebuggerDataWithContractClass {
-                                inline_strategy_class_hash: Some(inline_hash.clone()),
-                                class_debugger_data,
-                                contract_class: inline_class.clone(),
-                            };
-
-                            cache
-                                .set(
-                                    &original_class_hash,
-                                    Some(data),
-                                    phase1.original_contract_class.clone(),
-                                    Some(inline_hash.clone()),
-                                    "voyager-phase1+inline",
-                                )
-                                .await;
-
-                            // Cleanup temp dir (phase2 won't do it)
-                            let tmp_dir = phase1.tmp_dir.clone();
-                            let _ = tokio::task::spawn_blocking(move || {
-                                cleanup_tmp_dir(&tmp_dir);
-                            })
-                            .await;
-
-                            info!(
-                                "Both phases complete (single build) for {}",
-                                class_hash_clone
-                            );
-
-                            cache
-                                .signal_phase1_ready(&class_hash_clone, phase1_notifier)
-                                .await;
-                            cache
-                                .finish_compilation(&class_hash_clone, phase2_notifier)
-                                .await;
-                        } else {
-                            // Set Phase 1 result in cache (no inline data yet)
-                            cache
-                                .set(
-                                    &original_class_hash,
-                                    None,
-                                    phase1.original_contract_class.clone(),
-                                    None,
-                                    "voyager-phase1",
-                                )
-                                .await;
-
-                            // Signal Phase 1 complete → unblocks simple trace
-                            cache
-                                .signal_phase1_ready(&class_hash_clone, phase1_notifier)
-                                .await;
-
-                            info!(
-                                "Phase 1 complete for {}, starting Phase 2 in background",
-                                class_hash_clone
-                            );
-
-                            // Phase 2: inline build (walnut-debug or equivalent profile)
-                            match compile_voyager_phase2(phase1).await {
-                                Ok(compiled) => {
-                                    let class_debugger_data =
-                                        extract_debugger_data_from_contract_class(
-                                            &compiled.contract_class,
-                                            &compiled.source_code,
-                                        );
-                                    let data = ClassDebuggerDataWithContractClass {
-                                        inline_strategy_class_hash: Some(
-                                            compiled.inline_class_hash.clone(),
-                                        ),
-                                        class_debugger_data,
-                                        contract_class: compiled.contract_class,
-                                    };
-                                    cache
-                                        .update_inline_data(
-                                            &compiled.original_class_hash,
-                                            data,
-                                            Some(compiled.inline_class_hash),
-                                        )
-                                        .await;
-                                    info!("Phase 2 complete for {}", class_hash_clone);
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Phase 2: BUILD FAILED for {}: {:?}",
-                                        class_hash_clone, e
-                                    );
-                                    // Don't mark_failed — Phase 1 data (original_contract_class)
-                                    // is still valid for simple trace function calls
-                                }
-                            }
-
-                            // Signal Phase 2 complete → unblocks debug trace
-                            cache
-                                .finish_compilation(&class_hash_clone, phase2_notifier)
-                                .await;
-                        }
-                    });
-                }
-            }
-        }
+    for hash in found_hashes {
+        voyager_verified.insert(hash);
     }
 
     voyager_verified
