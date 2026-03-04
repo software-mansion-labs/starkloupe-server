@@ -152,13 +152,13 @@ pub async fn compile_voyager_phase1(
     let mut dep_resolution_fallback_applied =
         match apply_dep_resolution_fallback(&manifest, &tmp_dir).await {
             Ok(()) => {
-                info!("Phase 1: proactive dep resolution applied for starknet {}.{}.{}", manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2);
+                warn!(
+                    "Phase 1: proactive dep resolution applied for starknet {}.{}.{}",
+                    manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2
+                );
                 true
             }
-            Err(e) => {
-                info!("Phase 1: proactive dep resolution skipped ({})", e);
-                false
-            }
+            Err(e) => false,
         };
 
     // Build release profile first, then dev if release doesn't match.
@@ -177,7 +177,7 @@ pub async fn compile_voyager_phase1(
                 continue;
             }
 
-            info!(
+            debug!(
                 "Phase 1: building '{}' profile for class {}",
                 non_inline_profile, original_class_hash
             );
@@ -206,13 +206,13 @@ pub async fn compile_voyager_phase1(
                             break 'outer;
                         }
                     }
-                    info!(
+                    warn!(
                         "Phase 1: '{}' profile produced classes but none matched on-chain hash {}",
                         non_inline_profile, original_class_hash
                     );
                 }
                 Ok(_) => {
-                    info!(
+                    warn!(
                         "Phase 1: Class {} with '{}' profile produced no classes",
                         original_class_hash, non_inline_profile
                     );
@@ -221,14 +221,14 @@ pub async fn compile_voyager_phase1(
                     if !dep_resolution_fallback_applied
                         && is_dep_resolution_error(&e.to_string()) =>
                 {
-                    info!(
+                    warn!(
                         "Phase 1: dep resolution error detected for class {} '{}' profile, triggering scarbs.xyz fallback. Error: {}",
                         original_class_hash, non_inline_profile, e
                     );
                     dep_resolution_fallback_applied = true;
                     match apply_dep_resolution_fallback(&manifest, &tmp_dir).await {
                         Ok(()) => {
-                            info!(
+                            debug!(
                                 "Phase 1: scarbs.xyz dep resolution fallback applied, retrying build"
                             );
                             continue 'retry;
@@ -242,10 +242,6 @@ pub async fn compile_voyager_phase1(
                     }
                 }
                 Err(e) => {
-                    info!(
-                        "Phase 1: build error for class {} '{}' profile (is_dep_resolution_error={}): {}",
-                        original_class_hash, non_inline_profile, is_dep_resolution_error(&e.to_string()), e
-                    );
                     warn!(
                         "BUILD FAILED for class {} with '{}' profile: {}",
                         original_class_hash, non_inline_profile, e
@@ -448,7 +444,7 @@ async fn apply_dep_resolution_fallback(manifest: &Manifest, tmp_dir: &PathBuf) -
         manifest.cairo_version.0, manifest.cairo_version.1, manifest.cairo_version.2
     );
 
-    info!(
+    debug!(
         "Querying scarbs.xyz registry to resolve deps for starknet {}",
         starknet_version
     );
@@ -479,7 +475,7 @@ async fn apply_dep_resolution_fallback(manifest: &Manifest, tmp_dir: &PathBuf) -
     }
 
     fs::write(&toml_path, toml::to_string_pretty(&toml)?)?;
-    info!(
+    warn!(
         "scarbs.xyz fallback: injected {} pinned packages into Scarb.toml",
         resolved.len()
     );
@@ -562,7 +558,6 @@ fn pin_dependency_versions(source_code: &mut HashMap<String, String>, compiler_v
         }
     }
 
-    info!("Modified: {}", modified);
     if modified {
         if let Ok(updated) = toml::to_string(&toml_value) {
             source_code.insert("Scarb.toml".to_string(), updated);
