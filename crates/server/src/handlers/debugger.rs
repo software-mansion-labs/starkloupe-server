@@ -87,6 +87,10 @@ pub async fn debug_transaction(
                 Ok(debug_info) => {
                     // Wrap in Arc and cache the debug result
                     let debug_info_arc = Arc::new(debug_info);
+                    info!(
+                        "Debug simulation completed for {}, caching result",
+                        cache_key.display_id()
+                    );
                     cache
                         .set_debug(&cache_key, debug_info_arc.clone(), Some(&db_pool))
                         .await;

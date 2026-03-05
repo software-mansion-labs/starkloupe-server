@@ -6,26 +6,11 @@ use anyhow::Result;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use semver::Version;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, fs};
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 use tracing::{error, info};
 use walnut_shared::tuple_to_version_string;
-
-/// Global semaphore to limit concurrent builds
-/// Default is 2 parallel builds, configurable via BUILD_CONCURRENCY_LIMIT env var
-fn build_semaphore() -> &'static Semaphore {
-    static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
-    SEMAPHORE.get_or_init(|| {
-        let limit = std::env::var("BUILD_CONCURRENCY_LIMIT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3);
-        Semaphore::new(limit)
-    })
-}
 
 fn supported_old_cairo_versions() -> Vec<Version> {
     vec![
@@ -51,12 +36,6 @@ fn minimum_supported_new_dojo_version() -> Version {
 }
 
 async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
-    // Acquire semaphore permit to limit concurrent builds
-    let _permit = build_semaphore()
-        .acquire()
-        .await
-        .map_err(|_| anyhow::anyhow!("Build semaphore closed"))?;
-
     let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
         .unwrap_or("300".to_string())
         .parse::<u64>()?;
@@ -111,17 +90,19 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
                 );
                 Ok(())
             } else {
+                let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                let combined = format!("{}{}", stdout, stderr);
                 error!(
-                    "Build failed after {:.2}s with command: {:?} --profile {} build on {:?}. Status: {:?}\nStderr: {}",
+                    "Build failed after {:.2}s with command: {:?} --profile {} build on {:?}. Status: {:?}\nOutput: {}",
                     duration.as_secs_f64(),
                     absolute_path.display(),
                     profile,
                     tmp_dir,
                     output.status,
-                    stderr
+                    combined
                 );
-                Err(anyhow::anyhow!("Project build failed: {}", stderr))
+                Err(anyhow::anyhow!("Project build failed: {}", combined))
             }
         }
         Ok(Err(e)) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),

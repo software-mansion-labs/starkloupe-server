@@ -10,19 +10,15 @@ use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use internal_tracing::build_debugger_data::ContractCallBuildResult;
 use internal_tracing::event_calls_map::EventCallsMap;
 use internal_tracing::function_calls_map::FunctionCallsMap;
+use internal_tracing::mappings::ClassMappings;
 use internal_tracing::utils::compile_sierra_contract_class;
 use internal_tracing::ClassDataProvider;
 use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{info, warn};
 use walnut_shared::utils::convert_contract_class;
 use walnut_shared::utils::is_version_gte;
-
-// Cache for compiled Sierra classes to avoid recompilation
-thread_local! {
-    static COMPILED_CLASS_CACHE: std::cell::RefCell<HashMap<String, (CairoProgram, VersionId)>> =
-        std::cell::RefCell::new(HashMap::new());
-}
 
 pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     contract_calls_map: &mut ContractCallsMap,
@@ -40,7 +36,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
         &mut u32,
         u32,
         &[u32],
-        CairoProgram,
+        Arc<ClassMappings>,
     ) -> Result<ContractCallBuildResult>,
 ) -> Result<(
     FunctionCallsMap,
@@ -51,6 +47,11 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     let mut event_calls_map = EventCallsMap::default();
     let mut storage_changes_map = HashMap::new();
     let mut prev_nested_level = 0;
+
+    // Per-request cache: keyed by class hash, scoped to this call only.
+    // Prevents cross-contamination between simulate (original class) and
+    // debug (inline/walnut-debug class) paths that share the same class_hash.
+    let mut local_class_cache: HashMap<String, Arc<ClassMappings>> = HashMap::new();
 
     // Pre-filter calls that have VM data to avoid unnecessary iterations
     let mut calls_with_vm_data: Vec<_> = contract_calls_map
@@ -64,20 +65,21 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
         let vm_memory = call.vm_memory.as_ref().unwrap();
         let vm_trace = call.vm_trace.as_ref().unwrap();
 
-        let (casm_program, compiler_version, class_data) =
-            resolve_class_data(call, classes_data, cached_fork_state)?;
+        let (class_mappings, class_data) =
+            resolve_class_data(call, classes_data, cached_fork_state, &mut local_class_cache)?;
 
-        if let Some(casm_program) = casm_program {
+        if let Some(class_mappings) = class_mappings {
             if with_storage_and_events {
                 process_storage_changes(
                     call,
-                    &Some(casm_program.clone()),
+                    &class_mappings.casm_program,
                     cached_fork_state,
                     &mut storage_changes_map,
                 )?;
             }
 
             if let Some(class_data) = class_data {
+                let compiler_version = class_mappings.compiler_version.clone();
                 let result = builder(
                     vm_memory,
                     vm_trace,
@@ -87,7 +89,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
                     next_call_id,
                     call.call_id,
                     &call.children_call_ids,
-                    casm_program,
+                    class_mappings,
                 )?;
 
                 match result {
@@ -97,7 +99,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
                     } => {
                         update_call_metadata(
                             call,
-                            compiler_version,
+                            Some(compiler_version),
                             Some(class_data),
                             root_function_call_id,
                             &mut function_calls_map,
@@ -118,7 +120,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
                         call.call_debugger_data = Some(debugger_data);
                         update_call_metadata(
                             call,
-                            compiler_version,
+                            Some(compiler_version),
                             Some(class_data),
                             root_function_call_id,
                             &mut function_calls_map,
@@ -138,21 +140,6 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
         call.vm_trace = None;
         call.vm_memory = None;
     }
-    // Clear cache periodically to prevent memory bloat (keep last 50 entries)
-    COMPILED_CLASS_CACHE.with(|cache| {
-        let mut cache_ref = cache.borrow_mut();
-        if cache_ref.len() > 50 {
-            let keys_to_remove: Vec<_> = cache_ref
-                .keys()
-                .take(cache_ref.len() - 50)
-                .cloned()
-                .collect();
-            for key in keys_to_remove {
-                cache_ref.remove(&key);
-            }
-            info!("Cleared old entries from compiled class cache, kept last 50");
-        }
-    });
 
     Ok((
         function_calls_map,
@@ -173,27 +160,32 @@ fn resolve_class_data<'a, D: ClassDataProvider>(
     call: &ContractCall,
     classes_data: &'a HashMap<String, D>,
     cached_fork_state: &CachedState<ForkStateReader>,
-) -> anyhow::Result<(Option<CairoProgram>, Option<VersionId>, Option<&'a D>)> {
+    local_class_cache: &mut HashMap<String, Arc<ClassMappings>>,
+) -> anyhow::Result<(Option<Arc<ClassMappings>>, Option<&'a D>)> {
     if let Some(class_hash) = &call.class_hash {
         if let Some(class_data) = classes_data.get(class_hash) {
-            // Check compiled class cache first
-            let cache_result: Option<(CairoProgram, VersionId)> =
-                COMPILED_CLASS_CACHE.with(|cache| cache.borrow().get(class_hash).cloned());
-
-            if let Some((compiled, version)) = cache_result {
-                return Ok((Some(compiled), Some(version), Some(class_data)));
+            if let Some(class_mappings) = local_class_cache.get(class_hash).cloned() {
+                return Ok((Some(class_mappings), Some(class_data)));
             }
 
+            // Cache miss: compile and build class mappings
             match compile_sierra_contract_class(class_data.get_contract_class(), usize::MAX) {
-                Ok((compiled, _, version)) => {
-                    // Cache the compiled result
-                    COMPILED_CLASS_CACHE.with(|cache| {
-                        cache
-                            .borrow_mut()
-                            .insert(class_hash.clone(), (compiled.clone(), version.clone()));
-                    });
-
-                    return Ok((Some(compiled), Some(version), Some(class_data)));
+                Ok((compiled, _, compiler_version)) => {
+                    match ClassMappings::new(
+                        class_data.get_contract_class(),
+                        compiled,
+                        compiler_version,
+                    ) {
+                        Ok(class_mappings) => {
+                            let class_mappings = Arc::new(class_mappings);
+                            local_class_cache.insert(class_hash.clone(), class_mappings.clone());
+                            return Ok((Some(class_mappings), Some(class_data)));
+                        }
+                        Err(e) => {
+                            warn!("ClassMappings build failed: {:?}", e);
+                            return Err(anyhow::anyhow!(format!("{:?}", e)));
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("Compilation failed: {:?}", e);
@@ -204,6 +196,12 @@ fn resolve_class_data<'a, D: ClassDataProvider>(
     }
 
     if let Some(class_hash) = call.entry_point.class_hash {
+        let class_hash_str = class_hash.to_string();
+
+        if let Some(class_mappings) = local_class_cache.get(&class_hash_str).cloned() {
+            return Ok((Some(class_mappings), None));
+        }
+
         if let Ok(contract_class) = cached_fork_state
             .state
             .in_memory_fork_cache
@@ -212,23 +210,33 @@ fn resolve_class_data<'a, D: ClassDataProvider>(
         {
             if let Some(converted) = convert_contract_class(contract_class) {
                 match compile_sierra_contract_class(&converted, usize::MAX) {
-                    Ok((compiled, _, _)) => return Ok((Some(compiled), None, None)),
+                    Ok((compiled, _, compiler_version)) => {
+                        match ClassMappings::new(&converted, compiled, compiler_version) {
+                            Ok(class_mappings) => {
+                                let class_mappings = Arc::new(class_mappings);
+                                local_class_cache
+                                    .insert(class_hash_str, class_mappings.clone());
+                                return Ok((Some(class_mappings), None));
+                            }
+                            Err(e) => return Err(anyhow::anyhow!(format!("{:?}", e))),
+                        }
+                    }
                     Err(e) => return Err(anyhow::anyhow!(format!("{:?}", e))),
                 }
             }
         }
     }
 
-    Ok((None, None, None))
+    Ok((None, None))
 }
 
 fn process_storage_changes(
     call: &ContractCall,
-    casm: &Option<CairoProgram>,
+    casm: &CairoProgram,
     cached_fork_state: &CachedState<ForkStateReader>,
     storage_changes_map: &mut HashMap<u32, HashMap<String, (Option<String>, String)>>,
 ) -> anyhow::Result<()> {
-    if let (Some(casm), Some(code_address)) = (casm, call.entry_point.code_address) {
+    if let Some(code_address) = call.entry_point.code_address {
         let vm_trace = call
             .vm_trace
             .as_ref()

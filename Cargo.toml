@@ -6,6 +6,7 @@ members = [
   "crates/internal-tracing",
   "crates/walnut-shared",
   "crates/data-decoder",
+  "crates/scarb-dep-resolver",
 ]
 resolver = "2"
 
@@ -21,6 +22,7 @@ walnut-shared = { path = "./crates/walnut-shared" }
 verification = { path = "./crates/verification" }
 data-decoder = { path = "./crates/data-decoder" }
 simulate = { path = "./crates/simulate" }
+scarb-dep-resolver = { path = "./crates/scarb-dep-resolver" }
 
 axum = { version = "0.6.20", features = ["macros"] }
 sqlx = { version = "0.7.2", features = [

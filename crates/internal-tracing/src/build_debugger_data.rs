@@ -2,15 +2,15 @@ use crate::{
     call_trace::{get_internal_call_trace, get_simple_internal_call_trace},
     event_calls_map::EventCallsMap,
     function_calls_map::FunctionCallsMap,
-    mappings::Mappings,
+    mappings::{ClassMappings, Mappings},
     ClassDataProvider, ClassDebuggerData, ClassDebuggerDataWithContractClass,
     ContractCallDebuggerData, DataWithContractClass,
 };
 use anyhow::Result;
-use cairo_lang_sierra_to_casm::compiler::CairoProgram;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
 use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
 pub fn debugger_data_maps_full_class_to_class(
@@ -47,7 +47,7 @@ pub fn build_contract_call_debugger_data_adapter(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
-    casm_program: CairoProgram,
+    class_mappings: Arc<ClassMappings>,
 ) -> Result<ContractCallBuildResult> {
     let (debugger_data, root_function_call_id, panic_id) = build_contract_call_debugger_data(
         vm_memory,
@@ -57,7 +57,7 @@ pub fn build_contract_call_debugger_data_adapter(
         next_call_id,
         contract_call_id,
         contract_call_children_ids,
-        casm_program,
+        class_mappings,
     )?;
     Ok(ContractCallBuildResult::Full {
         debugger_data,
@@ -75,7 +75,7 @@ pub fn build_simple_contract_call_debugger_data_adapter(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
-    casm_program: CairoProgram,
+    class_mappings: Arc<ClassMappings>,
 ) -> Result<ContractCallBuildResult> {
     let (root_function_call_id, panic_id) = build_simple_contract_call_debugger_data(
         vm_memory,
@@ -86,7 +86,7 @@ pub fn build_simple_contract_call_debugger_data_adapter(
         next_call_id,
         contract_call_id,
         contract_call_children_ids,
-        casm_program,
+        class_mappings,
     )?;
 
     Ok(ContractCallBuildResult::Simple {
@@ -105,18 +105,13 @@ fn build_simple_contract_call_debugger_data(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
-    casm_program: CairoProgram,
+    class_mappings: Arc<ClassMappings>,
 ) -> Result<(u32, Option<u32>)> {
-    let mappings = Mappings::new(
-        vm_trace,
-        vm_memory,
-        full_class_data.get_contract_class(),
-        casm_program,
-    )
-    .map_err(|e| {
-        info!("Failed to create mappings: {:?}", e);
-        e
-    })?;
+    let mappings =
+        Mappings::from_class_and_call(class_mappings, vm_trace, vm_memory).map_err(|e| {
+            info!("Failed to create mappings: {:?}", e);
+            e
+        })?;
 
     let (root_function_call_id, contract_call_id_with_panic_function_call) =
         get_simple_internal_call_trace(
@@ -145,18 +140,13 @@ fn build_contract_call_debugger_data(
     next_call_id: &mut u32,
     contract_call_id: u32,
     contract_call_children_ids: &[u32],
-    casm_program: CairoProgram,
+    class_mappings: Arc<ClassMappings>,
 ) -> Result<(ContractCallDebuggerData, u32, Option<u32>)> {
-    let mappings = Mappings::new(
-        vm_trace,
-        vm_memory,
-        full_class_debugger_data.get_contract_class(),
-        casm_program,
-    )
-    .map_err(|e| {
-        info!("Failed to create mappings: {:?}", e);
-        e
-    })?;
+    let mappings =
+        Mappings::from_class_and_call(class_mappings, vm_trace, vm_memory).map_err(|e| {
+            info!("Failed to create mappings: {:?}", e);
+            e
+        })?;
 
     let (execution_trace, root_function_call_id, contract_call_id_with_panic_function_call) =
         get_internal_call_trace(

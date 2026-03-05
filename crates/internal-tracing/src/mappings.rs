@@ -16,6 +16,7 @@ use cairo_lang_sierra_to_casm::compiler::{
 use cairo_lang_sierra_type_size::{get_type_size_map, TypeSizeMap};
 use cairo_lang_starknet_classes::{
     abi::{Event, Item},
+    compiler_version::VersionId,
     contract_class::ContractClass,
 };
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
@@ -24,11 +25,11 @@ use data_decoder::internal_function_decoder::decode_internal_datas;
 use data_decoder::utils::skip_builtin_type_declaration;
 use data_decoder::{DecodedValue, DecodedValueType};
 use indexmap::IndexSet;
-use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use serde_json;
 use smol_str::SmolStr;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use tracing::error;
 use tracing::{debug, warn};
 use verification::{CodeLocation, SierraStatementToCairoDebugInfo};
@@ -45,39 +46,42 @@ use crate::{
 };
 use starknet_types_core::felt::{Felt, NonZeroFelt};
 
-#[derive(Debug)]
-pub struct Mappings {
-    pub pc_to_inst_indexes_map: HashMap<usize, usize>,
-    pub pc_to_ptr_sys_calls: HashMap<usize, CellExpression>,
+/// Class-specific data derived from a contract class and its compiled CASM.
+/// This is expensive to build (~100-500ms for large contracts) so it is cached
+/// globally per class hash and shared across all calls via `Arc<ClassMappings>`.
+/// Only `pc_to_ptr_sys_calls` (in `Mappings`) is computed per-call.
+pub struct ClassMappings {
+    pub casm_program: CairoProgram,
+    pub compiler_version: VersionId,
     pub casm_to_sierra_map: HashMap<usize, Vec<usize>>,
+    pub pc_to_inst_indexes_map: HashMap<usize, usize>,
+    pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
     pub sierra_program: Program,
-    pub memory_map: HashMap<usize, BigInt>,
     pub type_sizes: TypeSizeMap,
     pub type_names: HashMap<ConcreteTypeId, SmolStr>,
-    pub sierra_statement_info: Vec<SierraStatementDebugInfo>,
     pub type_declaration_map: HashMap<ConcreteTypeId, TypeDeclaration>,
     pub events: HashSet<Event>,
     pub abi_enums: Vec<AbiEnum>,
 }
 
-impl Mappings {
+impl ClassMappings {
+    /// Build all class-specific mapping data.
+    /// This should be called once per unique class hash and the result cached.
     pub fn new(
-        relocated_trace_entry: &[RelocatedTraceEntry],
-        relocated_memory: &[Option<Felt>],
         contract_class: &ContractClass,
         casm_program: CairoProgram,
+        compiler_version: VersionId,
     ) -> Result<Self> {
         let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
             warn!("Failed to extract sierra program: {:?}", e);
             e
         })?;
-        //dbg!(&sierra_program.type_declarations);
-        //dbg!(format_sierra_program(sierra_program.clone()));
+
         let type_names = contract_class
             .sierra_program_debug_info
-            .clone()
-            .unwrap()
-            .type_names;
+            .as_ref()
+            .map(|di| di.type_names.clone())
+            .unwrap_or_default();
 
         let events: HashSet<Event> = contract_class
             .abi
@@ -98,7 +102,6 @@ impl Mappings {
             .abi
             .as_ref()
             .and_then(|contract| {
-                // Serialize Contract to JSON string, then parse as Vec<walnut_shared::abi::Item>
                 serde_json::to_string(contract).ok().and_then(|json_str| {
                     serde_json::from_str::<Vec<WalnutItem>>(&json_str)
                         .ok()
@@ -109,13 +112,7 @@ impl Mappings {
 
         let casm_to_sierra_map = make_casm_to_sierra_map(&casm_program.debug_info);
         let pc_to_inst_indexes_map = get_pc_mappings(&casm_program.instructions);
-        let pc_to_ptr_sys_calls =
-            get_pc_sys_call_mappings(relocated_trace_entry, &casm_program.instructions);
-        let memory_map: HashMap<usize, BigInt> = relocated_memory
-            .iter()
-            .enumerate()
-            .filter_map(|(i, x)| x.as_ref().map(|v| (i + 1, v.to_bigint())))
-            .collect();
+
         let sierra_program_registry: ProgramRegistry<CoreType, CoreLibfunc> =
             ProgramRegistry::<CoreType, CoreLibfunc>::new(&sierra_program).map_err(|e| {
                 warn!("Failed to create sierra program registry: {:?}", e);
@@ -128,53 +125,73 @@ impl Mappings {
             .iter()
             .map(|declaration| (declaration.id.clone(), declaration.clone()))
             .collect();
-        // // Print relocated memory
-        // let mut ordered_map: BTreeMap<usize, BigInt> = BTreeMap::new();
-        // for (k, v) in &memory_map {
-        //     ordered_map.insert(*k, v.clone());
-        // }
 
-        // for (k, v) in &ordered_map {
-        //     println!("{}: {}", k, v);
-        // }
-        // // Print VM trace
-        // dbg!(&vm_trace);
+        let sierra_statement_info = casm_program.debug_info.sierra_statement_info.clone();
 
-        Ok(Mappings {
-            pc_to_inst_indexes_map,
-            pc_to_ptr_sys_calls,
+        Ok(ClassMappings {
+            casm_program,
+            compiler_version,
             casm_to_sierra_map,
+            pc_to_inst_indexes_map,
+            sierra_statement_info,
             sierra_program,
-            memory_map,
             type_sizes,
             type_names,
-            sierra_statement_info: casm_program.debug_info.sierra_statement_info,
             type_declaration_map,
             events,
             abi_enums,
         })
     }
+}
+
+/// Per-call trace mapping. Class-specific data is shared via `Arc<ClassMappings>`
+/// (computed once per class hash). Only `pc_to_ptr_sys_calls` is derived from
+/// the call's VM trace and computed for each individual call.
+pub struct Mappings {
+    pub class: Arc<ClassMappings>,
+    pub pc_to_ptr_sys_calls: HashMap<usize, CellExpression>,
+}
+
+impl Mappings {
+    /// Build call-specific Mappings from cached class data and this call's VM trace.
+    /// This is the fast path: only the syscall mapping is computed (~O(n_trace_entries));
+    /// all expensive class-specific work is read from the Arc without any cloning.
+    pub fn from_class_and_call(
+        class_mappings: Arc<ClassMappings>,
+        relocated_trace_entry: &[RelocatedTraceEntry],
+        _relocated_memory: &[Option<Felt>],
+    ) -> Result<Self> {
+        let pc_to_ptr_sys_calls = get_pc_sys_call_mappings(
+            relocated_trace_entry,
+            &class_mappings.casm_program.instructions,
+        );
+        Ok(Mappings {
+            class: class_mappings,
+            pc_to_ptr_sys_calls,
+        })
+    }
 
     pub fn get_sierra_indexes_at_pc(&self, pc: &usize) -> Option<Vec<usize>> {
-        let casm_index = match self.pc_to_inst_indexes_map.get(pc) {
+        let casm_index = match self.class.pc_to_inst_indexes_map.get(pc) {
             Some(index) => index,
             None => {
                 debug!("Failed to get casm index for pc: {}", pc);
                 return None;
             }
         };
-        self.casm_to_sierra_map.get(casm_index).cloned()
+        self.class.casm_to_sierra_map.get(casm_index).cloned()
     }
 
     pub fn get_first_sierra_index_at_pc(&self, pc: &usize) -> Option<usize> {
-        let casm_index = match self.pc_to_inst_indexes_map.get(pc) {
+        let casm_index = match self.class.pc_to_inst_indexes_map.get(pc) {
             Some(index) => index,
             None => {
                 debug!("Failed to get casm index for pc: {}", pc);
                 return None;
             }
         };
-        self.casm_to_sierra_map
+        self.class
+            .casm_to_sierra_map
             .get(casm_index)
             .map_or(None, |sierra_indexes| sierra_indexes.first().cloned())
     }
@@ -222,7 +239,8 @@ impl Mappings {
         &'a self,
         sierra_index: &usize,
     ) -> Option<&'a GenFunction<StatementIdx>> {
-        self.sierra_program
+        self.class
+            .sierra_program
             .funcs
             .iter()
             .find(|&func| func.entry_point.0 == *sierra_index)
@@ -236,7 +254,7 @@ impl Mappings {
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
         let mut arguments: Vec<InternalFnCallIO> = vec![];
         let mut arguments_decoded: Vec<DecodedValue> = Vec::new();
-        if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
+        if let Some(sierra_statement_info) = self.class.sierra_statement_info.get(sierra_index) {
             if let StatementKindDebugInfo::Invoke(invoke_info) =
                 &sierra_statement_info.additional_kind_info
             {
@@ -248,6 +266,7 @@ impl Mappings {
                         &ApChange::Known(0),
                     );
                     let type_names = self
+                        .class
                         .type_names
                         .get(&invoke_ref.ty)
                         .map(|n| n.to_string())
@@ -264,52 +283,17 @@ impl Mappings {
                     if let Some(argument_decoded) = decode_internal_datas(
                         &values,
                         type_id,
-                        &self.type_declaration_map,
-                        &self.type_sizes,
+                        &self.class.type_declaration_map,
+                        &self.class.type_sizes,
                         relocated_memory,
                         &mut data_index,
-                        Some(&self.abi_enums),
+                        Some(&self.class.abi_enums),
                     ) {
                         if let Some(adjusted_element) = adjust_decoded_element(argument_decoded) {
                             arguments_decoded.push(adjusted_element);
                         }
                     }
                 }
-
-                // for (branch_index, branch_change) in
-                //     invoke_info.result_branch_changes.iter().enumerate()
-                // {
-                //     for (output_reference_index, output_reference_value) in
-                //         branch_change.refs.iter().enumerate()
-                //     {
-                //         let values = get_values_from_cell_expressions(
-                //             relocated_memory,
-                //             trace_entry,
-                //             &output_reference_value.expression.cells,
-                //             &branch_change.ap_change,
-                //         );
-                //         dbg!(values);
-                //     }
-                // }
-                // StatementKindDebugInfo::Return(return_info) => {
-                //     for (_return_ref_index, return_ref) in return_info.ref_values.iter().enumerate()
-                //     {
-                //         let values = get_values_from_cell_expressions(
-                //             relocated_memory,
-                //             trace_entry,
-                //             &return_ref.expression.cells,
-                //             &ApChange::Known(0),
-                //         );
-                //         results.push(InternalFnCallIO {
-                //             type_name: self
-                //                 .type_names
-                //                 .get(&return_ref.ty)
-                //                 .clone()
-                //                 .map(|n| n.to_string()),
-                //             value: values,
-                //         })
-                //     }
-                // }
             }
         }
         (arguments, arguments_decoded)
@@ -323,7 +307,7 @@ impl Mappings {
     ) -> (Vec<InternalFnCallIO>, Vec<DecodedValue>) {
         let mut results: Vec<InternalFnCallIO> = vec![];
         let mut results_decoded: Vec<DecodedValue> = Vec::new();
-        if let Some(sierra_statement_info) = self.sierra_statement_info.get(sierra_index) {
+        if let Some(sierra_statement_info) = self.class.sierra_statement_info.get(sierra_index) {
             if let StatementKindDebugInfo::Return(return_info) =
                 &sierra_statement_info.additional_kind_info
             {
@@ -336,6 +320,7 @@ impl Mappings {
                     );
 
                     let result_type = self
+                        .class
                         .type_names
                         .get(&return_ref.ty)
                         .map(|n| n.to_string())
@@ -381,11 +366,11 @@ impl Mappings {
                         if let Some(decoded_element) = decode_internal_datas(
                             &values,
                             type_id,
-                            &self.type_declaration_map,
-                            &self.type_sizes,
+                            &self.class.type_declaration_map,
+                            &self.class.type_sizes,
                             relocated_memory,
                             &mut data_index,
-                            Some(&self.abi_enums),
+                            Some(&self.class.abi_enums),
                         ) {
                             if let Some(adjusted_element) = adjust_decoded_element(decoded_element)
                             {
@@ -415,8 +400,8 @@ impl Mappings {
             &self.pc_to_ptr_sys_calls,
             relocated_memory,
             trace_entry,
-            Some(&self.type_declaration_map),
-            Some(&self.events),
+            Some(&self.class.type_declaration_map),
+            Some(&self.class.events),
         )
     }
 }
