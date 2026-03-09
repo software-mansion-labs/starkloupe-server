@@ -5,12 +5,20 @@ use tracing::error;
 use urlencoding::encode;
 use walnut_shared::chain_id_to_url_format;
 
+
+
 pub async fn send_telegram_notification_tx_id(
     tx_id: &str,
     chain_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true");
-    send_telegram_notification(message.as_str()).await
+    let _ = send_telegram_notification(message.as_str()).await;
+
+    let _ = send_google_sheet_notification(message.as_str()).await;
+
+
+    let _ = send_grafana_annotation(message.as_str(), &["transaction", chain_id]).await;
+    Ok(())
 }
 
 pub async fn send_telegram_notification_custom_rpc(
@@ -18,7 +26,9 @@ pub async fn send_telegram_notification_custom_rpc(
     rpc_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [custom RPC]: https://app.walnut.dev/transactions?rpcUrl={}&txHash={}&skip_tracking=true", encode(rpc_url), tx_id);
-    send_telegram_notification(message.as_str()).await
+    let _ = send_telegram_notification(message.as_str()).await;
+    let _ = send_grafana_annotation(message.as_str(), &["transaction", "custom_rpc"]).await;
+    Ok(())
 }
 
 pub async fn send_telegram_notification_calldata(
@@ -69,7 +79,58 @@ pub async fn send_telegram_notification_calldata(
     );
 
     let message = format!("New transaction [simulation]: {}", url);
-    send_telegram_notification(message.as_str()).await
+    let _ = send_telegram_notification(message.as_str()).await;
+    let _ = send_grafana_annotation(
+        message.as_str(),
+        &["transaction", "simulation", &chain_id_to_url_format(&simulation_args.chain_id)],
+    )
+    .await;
+    Ok(())
+}
+
+async fn send_grafana_annotation(
+    text: &str,
+    tags: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let grafana_url = std::env::var("GRAFANA_URL")?;
+    let grafana_api_key = std::env::var("GRAFANA_API_KEY")?;
+
+    if grafana_url.is_empty() || grafana_api_key.is_empty() {
+        error!("Grafana URL or API key is not set, skipping annotation.");
+        return Ok(());
+    }
+
+    let client = Client::new();
+    let payload = serde_json::json!({
+        "text": text,
+        "tags": tags,
+    });
+
+    let res = client
+        .post(format!("{grafana_url}/api/annotations"))
+        .header("Authorization", format!("Bearer {grafana_api_key}"))
+        .json(&payload)
+        .send()
+        .await;
+
+    match res {
+        Ok(res) if !res.status().is_success() => {
+            let status = res.status();
+            let error_text = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            error!(
+                "Failed to send Grafana annotation. Status: {}. Error: {}",
+                status, error_text
+            );
+        }
+        Err(e) => {
+            error!("Failed to send Grafana annotation. Error: {}", e);
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
