@@ -69,6 +69,7 @@ pub struct DataWithContractClass {
 pub struct SimulationDebuggerData {
     pub classes_debugger_data: HashMap<String, ClassDebuggerData>,
     pub debugger_trace: Vec<DebuggerTraceEntry>,
+    pub initial_step_index: Option<usize>,
 }
 
 /// Contains the debugger data for a class with the Sierra contract class

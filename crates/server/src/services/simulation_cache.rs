@@ -311,64 +311,72 @@ impl SimulationCache {
         }
     }
 
+    async fn record_hit(&self) {
+        *self.hits.write().await += 1;
+        self.log_stats_if_needed().await;
+    }
+
+    async fn record_miss(&self) {
+        *self.misses.write().await += 1;
+        self.log_stats_if_needed().await;
+    }
+
+    /// Shared cache lookup logic: checks expiry, verification invalidation, and updates stats.
+    /// Returns the validated `CacheEntry` on a hit, or `None` on a miss.
+    async fn get_entry(
+        &self,
+        key: &CacheKey,
+        db_pool: Option<&Pool<Postgres>>,
+        label: &str,
+    ) -> Option<CacheEntry> {
+        let cached = match self.cache.get(&key.hash).await {
+            Some(cached) => cached,
+            None => {
+                self.record_miss().await;
+                return None;
+            }
+        };
+
+        if cached.is_expired(self.ttl) {
+            info!("[CACHE EXPIRED] Invalidating {}", key.display_id());
+            self.invalidate(key).await;
+            self.record_miss().await;
+            return None;
+        }
+
+        if let Some(pool) = db_pool {
+            if self
+                .should_invalidate_due_to_verification(&cached, pool)
+                .await
+            {
+                info!(
+                    "[CACHE INVALIDATE] Classes verified after cache creation {}",
+                    key.display_id()
+                );
+                self.invalidate(key).await;
+                self.record_miss().await;
+                return None;
+            }
+        }
+
+        info!("[CACHE HIT] {} {}", label, key.display_id());
+        self.record_hit().await;
+        Some(cached)
+    }
+
     pub async fn get(
         &self,
         key: &CacheKey,
         db_pool: Option<&Pool<Postgres>>,
     ) -> Option<Arc<TransactionSimulationResult>> {
-        match self.cache.get(&key.hash).await {
-            Some(cached) => {
-                if cached.is_expired(self.ttl) {
-                    info!("[CACHE EXPIRED] Invalidating {}", key.display_id());
-                    self.invalidate(key).await;
-                    let mut misses = self.misses.write().await;
-                    *misses += 1;
-                    drop(misses);
-                    self.log_stats_if_needed().await;
-                    None
-                } else {
-                    // Check if any classes were verified after cache creation
-                    if let Some(pool) = db_pool {
-                        if self
-                            .should_invalidate_due_to_verification(&cached, pool)
-                            .await
-                        {
-                            info!(
-                                "[CACHE INVALIDATE] Classes verified after cache creation {}",
-                                key.display_id()
-                            );
-                            self.invalidate(key).await;
-                            let mut misses = self.misses.write().await;
-                            *misses += 1;
-                            drop(misses);
-                            self.log_stats_if_needed().await;
-                            return None;
-                        }
-                    }
-
-                    info!("[CACHE HIT] simulation {}", key.display_id());
-                    let mut hits = self.hits.write().await;
-                    *hits += 1;
-                    drop(hits);
-                    self.log_stats_if_needed().await;
-
-                    match &cached.result {
-                        CachedResult::Simulation(result) => Some(Arc::clone(result)),
-                        CachedResult::Debug(_) => {
-                            warn!(
-                                "[CACHE ERROR] tried to get simulation but found debug {}",
-                                key.display_id()
-                            );
-                            None
-                        }
-                    }
-                }
-            }
-            None => {
-                let mut misses = self.misses.write().await;
-                *misses += 1;
-                drop(misses);
-                self.log_stats_if_needed().await;
+        let entry = self.get_entry(key, db_pool, "simulation").await?;
+        match &entry.result {
+            CachedResult::Simulation(result) => Some(Arc::clone(result)),
+            CachedResult::Debug(_) => {
+                warn!(
+                    "[CACHE ERROR] tried to get simulation but found debug {}",
+                    key.display_id()
+                );
                 None
             }
         }
@@ -453,59 +461,14 @@ impl SimulationCache {
         key: &CacheKey,
         db_pool: Option<&Pool<Postgres>>,
     ) -> Option<Arc<DebuggerInfo>> {
-        match self.cache.get(&key.hash).await {
-            Some(cached) => {
-                if cached.is_expired(self.ttl) {
-                    info!("[CACHE EXPIRED] Invalidating {}", key.display_id());
-                    self.invalidate(key).await;
-                    let mut misses = self.misses.write().await;
-                    *misses += 1;
-                    drop(misses);
-                    self.log_stats_if_needed().await;
-                    None
-                } else {
-                    // Check if any classes were verified after cache creation
-                    if let Some(pool) = db_pool {
-                        if self
-                            .should_invalidate_due_to_verification(&cached, pool)
-                            .await
-                        {
-                            info!(
-                                "[CACHE INVALIDATE] Classes verified after cache creation {}",
-                                key.display_id()
-                            );
-                            self.invalidate(key).await;
-                            let mut misses = self.misses.write().await;
-                            *misses += 1;
-                            drop(misses);
-                            self.log_stats_if_needed().await;
-                            return None;
-                        }
-                    }
-
-                    info!("[CACHE HIT] debug {}", key.display_id());
-                    let mut hits = self.hits.write().await;
-                    *hits += 1;
-                    drop(hits);
-                    self.log_stats_if_needed().await;
-
-                    match &cached.result {
-                        CachedResult::Debug(result) => Some(Arc::clone(result)),
-                        CachedResult::Simulation(_) => {
-                            warn!(
-                                "[CACHE ERROR] tried to get debug but found simulation {}",
-                                key.display_id()
-                            );
-                            None
-                        }
-                    }
-                }
-            }
-            None => {
-                let mut misses = self.misses.write().await;
-                *misses += 1;
-                drop(misses);
-                self.log_stats_if_needed().await;
+        let entry = self.get_entry(key, db_pool, "debug").await?;
+        match &entry.result {
+            CachedResult::Debug(result) => Some(Arc::clone(result)),
+            CachedResult::Simulation(_) => {
+                warn!(
+                    "[CACHE ERROR] tried to get debug but found simulation {}",
+                    key.display_id()
+                );
                 None
             }
         }

@@ -1,3 +1,4 @@
+use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::debugger_trace::DebuggerTraceBuilder;
 use crate::execution::execute_transaction_flows_with_executor;
@@ -20,6 +21,7 @@ use internal_tracing::build_debugger_data::build_contract_call_debugger_data_ada
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data_with_external;
 use internal_tracing::external_class_cache::ExternalClassCache;
+use internal_tracing::function_calls_map::FunctionCallsMap;
 use internal_tracing::SimulationDebuggerData;
 use sqlx::Pool;
 use sqlx::Postgres;
@@ -116,12 +118,15 @@ async fn simulate_to_get_debug_info(
     let debugger_trace =
         DebuggerTraceBuilder::build(&1, &mut function_calls_map, &mut contract_calls_map);
 
+    let initial_step_index = find_initial_debugger_step(&contract_calls_map, &function_calls_map);
+
     let debugger_info = DebuggerInfo {
         contract_calls_map,
         function_calls_map,
         simulation_debugger_data: Some(SimulationDebuggerData {
             classes_debugger_data: debugger_data_maps_full_class_to_class(classes_debugger_data),
             debugger_trace,
+            initial_step_index,
         }),
     };
 
@@ -191,4 +196,92 @@ pub async fn debug_by_calldata(
             .await?;
 
     Ok(debugger_info)
+}
+
+/// Finds the initial debugger step index by looking for the real entrypoint function
+/// inside the account contract's `__validate__` or `__execute__` call.
+///
+/// If the account contract is not verified (no function calls available), falls back to
+/// finding the entry point of the first verified contract's real entrypoint, skipping
+/// `__wrapper__` and `unsafe_` function calls.
+fn find_initial_debugger_step(
+    contract_calls_map: &ContractCallsMap,
+    function_calls_map: &FunctionCallsMap,
+) -> Option<usize> {
+    // Try __validate__ first, then __execute__
+    let entry_points = ["__validate__", "__execute__"];
+
+    for entry_point_name in &entry_points {
+        let account_contract_call = contract_calls_map
+            .0
+            .values()
+            .find(|c| c.entry_point_name.as_deref() == Some(entry_point_name));
+
+        if let Some(call) = account_contract_call {
+            // If the account contract is verified, use its function call to find the real entrypoint
+            if let Some(step) = find_real_entrypoint_step(call, function_calls_map) {
+                return Some(step);
+            }
+
+            // Account contract is not verified — find the first verified child contract call
+            if let Some(step) = find_first_verified_child_entrypoint_step(
+                call,
+                contract_calls_map,
+                function_calls_map,
+            ) {
+                return Some(step);
+            }
+        }
+    }
+
+    None
+}
+
+/// Given a contract call with a function_call_id, finds the real entrypoint step index
+/// by skipping `__wrapper__` and `unsafe_` boilerplate functions.
+fn find_real_entrypoint_step(
+    contract_call: &crate::contract_call::ContractCall,
+    function_calls_map: &FunctionCallsMap,
+) -> Option<usize> {
+    let wrapper_fn_id = contract_call.function_call_id?;
+    let wrapper_fn = function_calls_map.0.get(&wrapper_fn_id)?;
+
+    wrapper_fn
+        .children_call_ids
+        .iter()
+        .filter_map(|child_id| function_calls_map.0.get(child_id))
+        .find(|child| {
+            !child.is_hidden
+                && !child.fn_name.as_ref().map_or(false, |n| {
+                    n.contains("unsafe_new_") || n.contains("__wrapper__")
+                })
+        })
+        .and_then(|child| child.debugger_trace_step_index)
+}
+
+/// Recursively searches child contract calls to find the first verified one
+/// and returns its real entrypoint step index.
+fn find_first_verified_child_entrypoint_step(
+    parent_call: &crate::contract_call::ContractCall,
+    contract_calls_map: &ContractCallsMap,
+    function_calls_map: &FunctionCallsMap,
+) -> Option<usize> {
+    for child_id in &parent_call.children_call_ids {
+        if let Some(child_call) = contract_calls_map.0.get(child_id) {
+            // If this child contract call is verified, use it
+            if let Some(step) = find_real_entrypoint_step(child_call, function_calls_map) {
+                return Some(step);
+            }
+
+            // Otherwise, recurse into its children
+            if let Some(step) = find_first_verified_child_entrypoint_step(
+                child_call,
+                contract_calls_map,
+                function_calls_map,
+            ) {
+                return Some(step);
+            }
+        }
+    }
+    None
 }
