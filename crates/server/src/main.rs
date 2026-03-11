@@ -6,7 +6,7 @@ mod binaries_manager_service;
 mod calldata_encoder;
 mod handlers;
 mod services;
-mod telegram_bot_service;
+mod notification_service;
 
 use app_state::AppState;
 use aws_sdk_s3::config::Region;

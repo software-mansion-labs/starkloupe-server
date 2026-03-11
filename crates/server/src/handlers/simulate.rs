@@ -1,10 +1,9 @@
 use crate::app_state::AppState;
 use crate::calldata_encoder;
-use crate::services::CacheKey;
-use crate::telegram_bot_service::{
-    send_telegram_notification_calldata, send_telegram_notification_custom_rpc,
-    send_telegram_notification_tx_id,
+use crate::notification_service::{
+    send_notification_calldata, send_notification_custom_rpc, send_notification_tx_id,
 };
+use crate::services::CacheKey;
 use axum::extract::Query;
 use axum::{
     debug_handler,
@@ -143,9 +142,7 @@ pub async fn simulate_transaction(
 
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) =
-                            send_telegram_notification_calldata(&simulation_args).await
-                        {
+                        if let Err(err) = send_notification_calldata(&simulation_args).await {
                             error!("Failed to send Telegram notification. Error: {:?}", err);
                         }
                     }
@@ -299,9 +296,7 @@ pub async fn simulate_transaction(
 
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) =
-                            send_telegram_notification_calldata(&simulation_args).await
-                        {
+                        if let Err(err) = send_notification_calldata(&simulation_args).await {
                             error!("Failed to send Telegram notification. Error: {:?}", err);
                         }
                     }
@@ -354,7 +349,7 @@ pub async fn simulate_transaction(
                     }
                     // Telegram notification
                     if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) = send_telegram_notification_custom_rpc(
+                        if let Err(err) = send_notification_custom_rpc(
                             args.tx_hash.as_str(),
                             args.rpc_url.as_str(),
                         )
@@ -452,9 +447,7 @@ pub async fn simulate_transaction_by_hash_handler(
         .unwrap_or("")
         .eq("true")
     {
-        if let Err(err) =
-            send_telegram_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await
-        {
+        if let Err(err) = send_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await {
             error!("Failed to send Telegram notification. Error: {:?}", err);
         }
     }

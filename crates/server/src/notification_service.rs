@@ -1,27 +1,38 @@
 use reqwest::Client;
 use simulate::SimulationArgs;
 use starknet_api::core::ChainId;
-use tracing::error;
+use tracing::{debug, error};
 use urlencoding::encode;
 use walnut_shared::chain_id_to_url_format;
 
-pub async fn send_telegram_notification_tx_id(
+pub async fn send_notification_tx_id(
     tx_id: &str,
     chain_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true");
-    send_telegram_notification(message.as_str()).await
+
+    let _ = send_telegram_notification(&message).await;
+    let _ = send_grafana_annotation(&tx_id, &message, chain_id, "transaction").await;
+    let _ = send_google_sheets_notification(&tx_id, &message, chain_id, "transaction").await;
+
+    Ok(())
 }
 
-pub async fn send_telegram_notification_custom_rpc(
+pub async fn send_notification_custom_rpc(
     tx_id: &str,
     rpc_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let message = format!("New transaction [custom RPC]: https://app.walnut.dev/transactions?rpcUrl={}&txHash={}&skip_tracking=true", encode(rpc_url), tx_id);
-    send_telegram_notification(message.as_str()).await
+    let chain_id = "custom_rpc";
+
+    let _ = send_telegram_notification(&message).await;
+    let _ = send_grafana_annotation(&tx_id, &message, chain_id, "transaction").await;
+    let _ = send_google_sheets_notification(&tx_id, &message, chain_id, "transaction").await;
+
+    Ok(())
 }
 
-pub async fn send_telegram_notification_calldata(
+pub async fn send_notification_calldata(
     simulation_args: &SimulationArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let calldata_string = simulation_args
@@ -60,7 +71,6 @@ pub async fn send_telegram_notification_calldata(
         ));
     }
 
-    // Add `skip_tracking=true` at the end
     query_params.push("skip_tracking=true".to_string());
 
     let url = format!(
@@ -69,7 +79,15 @@ pub async fn send_telegram_notification_calldata(
     );
 
     let message = format!("New transaction [simulation]: {}", url);
-    send_telegram_notification(message.as_str()).await
+    let chain_id_str = chain_id_to_url_format(&simulation_args.chain_id);
+
+    let _ = send_telegram_notification(&message).await;
+    let _ = send_grafana_annotation(&calldata, &message, &chain_id_str, "simulation").await;
+    let _ =
+        send_google_sheets_notification(&calldata_string, &message, &chain_id_str, "simulation")
+            .await;
+
+    Ok(())
 }
 
 async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -126,6 +144,99 @@ async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::er
                     message, e
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+async fn send_grafana_annotation(
+    tx_id: &str,
+    message: &str,
+    chain_id: &str,
+    notification_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let grafana_url = std::env::var("GRAFANA_URL")?;
+    let grafana_api_key = std::env::var("GRAFANA_API_KEY")?;
+
+    if grafana_url.is_empty() || grafana_api_key.is_empty() {
+        error!("Grafana URL or API key is not set, skipping annotation.");
+        return Ok(());
+    }
+
+    let client = Client::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let payload = serde_json::json!({
+        "text": message,
+        "tags": [notification_type, chain_id, tx_id],
+        "time": now_ms,
+    });
+
+    let res = client
+        .post(format!("{grafana_url}/api/annotations"))
+        .header("Authorization", format!("Bearer {grafana_api_key}"))
+        .json(&payload)
+        .send()
+        .await;
+
+    match res {
+        Ok(res) if !res.status().is_success() => {
+            let status = res.status();
+            let error_text = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            error!(
+                "Failed to send Grafana annotation. Status: {}. Error: {}",
+                status, error_text
+            );
+        }
+        Err(e) => {
+            error!("Failed to send Grafana annotation. Error: {}", e);
+        }
+        _ => {
+            debug!("Grafana annotation added successfully");
+        }
+    }
+    Ok(())
+}
+
+async fn send_google_sheets_notification(
+    tx_id: &str,
+    message: &str,
+    chain_id: &str,
+    notification_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let webhook_url = std::env::var("GOOGLE_SHEETS_WEBHOOK_URL")?;
+
+    if webhook_url.is_empty() {
+        error!("Google Sheets webhook URL is not set, skipping.");
+        return Ok(());
+    }
+
+    let timestamp = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S UTC")
+        .to_string();
+
+    let payload = serde_json::json!({
+        "tx_id": tx_id,
+        "chain_id": chain_id,
+        "type": notification_type,
+        "timestamp": timestamp,
+        "link": message
+    });
+
+    let client = Client::new();
+    let res = client.post(&webhook_url).json(&payload).send().await;
+
+    match res {
+        Ok(res) if !res.status().is_success() => {
+            let status = res.status();
+            let err = res.text().await.unwrap_or_default();
+            error!("Google Sheets error. Status: {status}. Error: {err}");
+        }
+        Err(e) => error!("Google Sheets request failed: {e}"),
+        _ => {
+            debug!("Google Sheets row added successfully");
         }
     }
     Ok(())
