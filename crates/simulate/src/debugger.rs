@@ -17,6 +17,7 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::executio
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
 use cheatnet::state::CheatnetState;
+use internal_tracing::background_retry::BackgroundRetryService;
 use internal_tracing::build_debugger_data::build_contract_call_debugger_data_adapter;
 use internal_tracing::build_debugger_data::debugger_data_maps_full_class_to_class;
 use internal_tracing::debugger_data_fetcher::fetch_classes_debugger_data_with_external;
@@ -38,6 +39,7 @@ async fn simulate_to_get_debug_info(
     args: SimulationArgs,
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<DebuggerInfo, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let block_number = if let Some(bn) = args.block_number {
@@ -100,6 +102,7 @@ async fn simulate_to_get_debug_info(
         &class_hashes,
         external_cache,
         voyager_client,
+        background_retry,
     )
     .await;
 
@@ -194,10 +197,17 @@ pub async fn debug_by_calldata(
     args: SimulationArgs,
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<DebuggerInfo, TransactionSimulationError> {
-    let debugger_info =
-        simulate_to_get_debug_info(db_pool, s3_client, args, external_cache, voyager_client)
-            .await?;
+    let debugger_info = simulate_to_get_debug_info(
+        db_pool,
+        s3_client,
+        args,
+        external_cache,
+        voyager_client,
+        background_retry,
+    )
+    .await?;
 
     Ok(debugger_info)
 }

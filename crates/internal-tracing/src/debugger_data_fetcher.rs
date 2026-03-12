@@ -1,3 +1,4 @@
+use crate::background_retry::BackgroundRetryService;
 use crate::external_class_cache::ExternalClassCache;
 use crate::{ClassDebuggerData, ClassDebuggerDataWithContractClass, DataWithContractClass};
 use anyhow::Result;
@@ -14,6 +15,7 @@ use tracing::{debug, error, info, warn};
 use verification::{
     db::fetch_verified_classes_with_inlining_classes,
     s3::key_for_class_hash,
+    scarb::default_build_timeout,
     voyager::{
         cleanup_tmp_dir, compile_voyager_phase1, compile_voyager_phase2, compile_voyager_source,
         VoyagerClient,
@@ -108,6 +110,7 @@ pub async fn fetch_classes_debugger_data_with_external(
     classes: &[String],
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> HashMap<String, ClassDebuggerDataWithContractClass> {
     let mut classes_debugger_data: HashMap<String, ClassDebuggerDataWithContractClass> =
         HashMap::new();
@@ -358,7 +361,9 @@ pub async fn fetch_classes_debugger_data_with_external(
                             None
                         };
 
-                        match compile_voyager_source(source_response).await {
+                        let source_for_retry = source_response.clone();
+                        match compile_voyager_source(source_response, default_build_timeout()).await
+                        {
                             Ok(compiled) => {
                                 let class_debugger_data = extract_debugger_data_from_contract_class(
                                     &compiled.contract_class,
@@ -390,12 +395,25 @@ pub async fn fetch_classes_debugger_data_with_external(
                                 info!("Successfully compiled Voyager source for {}", class_hash);
                             }
                             Err(e) => {
+                                let is_timeout = e.to_string().contains("timed out");
                                 warn!(
-                                    "Failed to compile Voyager source for {}: {:?}",
-                                    class_hash, e
+                                    "Failed to compile Voyager source for {}: {:?}{}",
+                                    class_hash,
+                                    e,
+                                    if is_timeout {
+                                        " (timeout — enqueuing background retry)"
+                                    } else {
+                                        ""
+                                    }
                                 );
                                 if let Some(cache) = external_cache {
                                     cache.mark_failed(&class_hash).await;
+                                }
+                                if is_timeout {
+                                    if let Some(retry_svc) = background_retry {
+                                        retry_svc
+                                            .enqueue_retry(class_hash.clone(), source_for_retry);
+                                    }
                                 }
                             }
                         }
@@ -435,6 +453,7 @@ pub async fn check_voyager_verified_classes(
     class_hashes: &[String],
     already_verified: &HashSet<String>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> HashSet<String> {
     let mut voyager_verified = HashSet::new();
 
@@ -483,6 +502,7 @@ pub async fn check_voyager_verified_classes(
     // earlier, reducing the risk of hitting the Phase 1 timeout in the simulate handler.
     let client_clone = client.clone();
     let cache_opt = external_cache.cloned();
+    let retry_opt = background_retry.cloned();
 
     let found_hashes: Vec<String> = stream::iter(classes_to_check)
         .map(move |class_hash| {
@@ -495,6 +515,7 @@ pub async fn check_voyager_verified_classes(
         .buffer_unordered(concurrency_limit)
         .filter_map(move |(class_hash, result)| {
             let cache_opt = cache_opt.clone();
+            let retry_opt = retry_opt.clone();
             async move {
                 if let Ok(Some(source_response)) = result {
                     if let Some(cache) = cache_opt {
@@ -503,22 +524,51 @@ pub async fn check_voyager_verified_classes(
                         if let Some((phase1_notifier, phase2_notifier)) =
                             cache.start_compilation(&class_hash).await
                         {
+                            let source_for_retry = source_response.clone();
+                            let build_timeout = default_build_timeout();
                             tokio::spawn(async move {
                                 // Phase 1: non-inline build (release / dev)
-                                let phase1 = match compile_voyager_phase1(source_response).await {
-                                    Ok(p) => p,
-                                    Err(e) => {
-                                        warn!("Phase 1 failed for {}: {:?}", class_hash_clone, e);
-                                        cache.mark_failed(&class_hash_clone).await;
-                                        cache
-                                            .signal_phase1_ready(&class_hash_clone, phase1_notifier)
-                                            .await;
-                                        cache
-                                            .finish_compilation(&class_hash_clone, phase2_notifier)
-                                            .await;
-                                        return;
-                                    }
-                                };
+                                let phase1 =
+                                    match compile_voyager_phase1(source_response, build_timeout)
+                                        .await
+                                    {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            let is_timeout = e.to_string().contains("timed out");
+                                            warn!(
+                                                "Phase 1 failed for {}: {:?}{}",
+                                                class_hash_clone,
+                                                e,
+                                                if is_timeout {
+                                                    " (timeout — enqueuing background retry)"
+                                                } else {
+                                                    ""
+                                                }
+                                            );
+                                            cache.mark_failed(&class_hash_clone).await;
+                                            if is_timeout {
+                                                if let Some(ref retry_svc) = retry_opt {
+                                                    retry_svc.enqueue_retry(
+                                                        class_hash_clone.clone(),
+                                                        source_for_retry,
+                                                    );
+                                                }
+                                            }
+                                            cache
+                                                .signal_phase1_ready(
+                                                    &class_hash_clone,
+                                                    phase1_notifier,
+                                                )
+                                                .await;
+                                            cache
+                                                .finish_compilation(
+                                                    &class_hash_clone,
+                                                    phase2_notifier,
+                                                )
+                                                .await;
+                                            return;
+                                        }
+                                    };
 
                                 let original_class_hash = phase1.original_class_hash.clone();
 
@@ -592,7 +642,7 @@ pub async fn check_voyager_verified_classes(
                                     // Runs in the background after Phase 1 signals ready.
                                     // The simulate (trace) handler does NOT wait for Phase 2 —
                                     // function_call maps are built as soon as Phase 1 data is available.
-                                    match compile_voyager_phase2(phase1).await {
+                                    match compile_voyager_phase2(phase1, build_timeout).await {
                                         Ok(compiled) => {
                                             let class_debugger_data =
                                                 extract_debugger_data_from_contract_class(
@@ -616,12 +666,27 @@ pub async fn check_voyager_verified_classes(
                                             info!("Phase 2 complete for {}", class_hash_clone);
                                         }
                                         Err(e) => {
+                                            let is_timeout = e.to_string().contains("timed out");
                                             warn!(
-                                                "Phase 2: BUILD FAILED for {}: {:?}",
-                                                class_hash_clone, e
+                                                "Phase 2: BUILD FAILED for {}: {:?}{}",
+                                                class_hash_clone,
+                                                e,
+                                                if is_timeout {
+                                                    " (timeout — enqueuing background retry)"
+                                                } else {
+                                                    ""
+                                                }
                                             );
                                             // Don't mark_failed — Phase 1 data (original_contract_class)
                                             // is still valid for simple trace function calls
+                                            if is_timeout {
+                                                if let Some(ref retry_svc) = retry_opt {
+                                                    retry_svc.enqueue_retry(
+                                                        class_hash_clone.clone(),
+                                                        source_for_retry,
+                                                    );
+                                                }
+                                            }
                                         }
                                     }
 
@@ -650,7 +715,7 @@ pub async fn check_voyager_verified_classes(
 }
 
 /// Extract debugger data (source mapping) from a compiled contract class
-fn extract_debugger_data_from_contract_class(
+pub fn extract_debugger_data_from_contract_class(
     contract_class: &ContractClass,
     source_code: &HashMap<String, String>,
 ) -> Option<ClassDebuggerData> {

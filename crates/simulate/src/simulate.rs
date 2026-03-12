@@ -51,6 +51,7 @@ use ethers::types::U256;
 use ethers::utils::hex::hex;
 use ethers::utils::keccak256;
 use futures::future;
+use internal_tracing::background_retry::BackgroundRetryService;
 use internal_tracing::build_debugger_data::build_simple_contract_call_debugger_data_adapter;
 use internal_tracing::debugger_data_fetcher::{check_voyager_verified_classes, fetch_classes_data};
 use internal_tracing::event_calls_map::EventCallsMap;
@@ -104,6 +105,7 @@ pub async fn simulate(
     args: SimulationArgs,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<
     (
         SimulationInfo,
@@ -178,6 +180,7 @@ pub async fn simulate(
         &class_hashes,
         &already_verified,
         external_cache,
+        background_retry,
     )
     .await;
 
@@ -616,6 +619,7 @@ pub async fn simulate_by_calldata(
     args: SimulationArgs,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let nonce: Option<u64> = match args.nonce {
         Some(nonce) => nonce.0.to_u64(),
@@ -663,6 +667,7 @@ pub async fn simulate_by_calldata(
         args,
         voyager_client,
         external_cache,
+        background_retry,
     )
     .await?;
 
@@ -706,6 +711,7 @@ pub async fn simulate_transaction_by_hash(
     network: &ENetwork,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash, network) {
         let result = match transaction_hash {
@@ -719,6 +725,7 @@ pub async fn simulate_transaction_by_hash(
                     chain_id,
                     voyager_client,
                     external_cache,
+                    background_retry,
                 )
                 .await?
             }
@@ -732,6 +739,7 @@ pub async fn simulate_transaction_by_hash(
                     chain_id,
                     voyager_client,
                     external_cache,
+                    background_retry,
                 )
                 .await?
             }
@@ -758,6 +766,7 @@ async fn simulate_starknet_transaction_by_hash(
     chain_id: Option<EChainId>,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
     let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
@@ -912,6 +921,7 @@ async fn simulate_starknet_transaction_by_hash(
                             },
                             voyager_client,
                             external_cache,
+                            background_retry,
                         )
                         .await?;
                         // Build and return simulation result
@@ -970,6 +980,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
     chain_id: Option<EChainId>,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let chain_id = chain_id.ok_or(TransactionSimulationError::InvalidChainId)?;
     let ethereum_rpc_url = ethereum_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
@@ -1014,6 +1025,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
             l1_l2_event.clone(),
             voyager_client,
             external_cache,
+            background_retry,
         )
         .await;
     }
@@ -1035,6 +1047,7 @@ async fn process_l1_handler_transaction(
     l1_event: EStarknetL1L2Event,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
+    background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let l1_handler_tx = L1HandlerTransaction::try_from(l1_event)
         .map_err(|_| TransactionSimulationError::ConversionError)?;
@@ -1088,6 +1101,7 @@ async fn process_l1_handler_transaction(
         },
         voyager_client,
         external_cache,
+        background_retry,
     )
     .await?;
 

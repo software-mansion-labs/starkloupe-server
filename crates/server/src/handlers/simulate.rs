@@ -147,6 +147,7 @@ async fn run_simulation_with_cache(
         simulation_args,
         state.voyager_client.as_ref(),
         Some(&state.external_class_cache),
+        Some(&state.background_retry),
     )
     .await
     {
@@ -277,6 +278,7 @@ async fn handle_tx_hash_simulation(
         &ENetwork::Starknet,
         state.voyager_client.as_ref(),
         Some(&state.external_class_cache),
+        Some(&state.background_retry),
     )
     .await
     {
@@ -389,6 +391,7 @@ pub async fn simulate_transaction_by_hash_handler(
                     &network,
                     state.voyager_client.as_ref(),
                     Some(&state.external_class_cache),
+                    Some(&state.background_retry),
                 )
                 .await
                 {

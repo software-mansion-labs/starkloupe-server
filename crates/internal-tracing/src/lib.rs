@@ -1,3 +1,4 @@
+pub mod background_retry;
 pub mod build_debugger_data;
 pub mod call_trace;
 pub mod debugger_data_fetcher;

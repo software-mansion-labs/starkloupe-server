@@ -4,7 +4,7 @@ use crate::db::{
 };
 use crate::manifest::Manifest;
 use crate::s3::upload_class_to_s3;
-use crate::scarb::build_with_scarb_for_profile;
+use crate::scarb::{build_with_scarb_for_profile, default_build_timeout};
 use crate::utils::{
     create_files_from_map, create_temp_directory, move_failed_verification_to_failed_tmp,
     remove_walnut_debug_from_scarb,
@@ -161,7 +161,14 @@ async fn verify(
             "Processing inline strategy profile:",
         );
 
-        match build_with_scarb_for_profile(&manifest, &tmp_dir, inline_strategy_profile).await {
+        match build_with_scarb_for_profile(
+            &manifest,
+            &tmp_dir,
+            inline_strategy_profile,
+            default_build_timeout(),
+        )
+        .await
+        {
             Ok(classes) => {
                 for (class_hash, contract_class) in classes {
                     inline_class_hashes.push((class_hash.clone(), contract_class.clone()));
@@ -202,7 +209,9 @@ async fn verify(
                 profile = profile,
                 "Processing profile",
             );
-            let class_result = build_with_scarb_for_profile(&manifest, &tmp_dir, profile).await;
+            let class_result =
+                build_with_scarb_for_profile(&manifest, &tmp_dir, profile, default_build_timeout())
+                    .await;
             match class_result {
                 Ok(classes) => {
                     let class_hashes: Vec<String> = classes

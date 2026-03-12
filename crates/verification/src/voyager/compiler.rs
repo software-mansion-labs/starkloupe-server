@@ -11,6 +11,7 @@ use scarb_dep_resolver::{is_dep_resolution_error, resolve_registry_deps};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -64,6 +65,7 @@ pub struct Phase1Result {
 /// (in that case `original_contract_class` is None). Errors only on preparation failure.
 pub async fn compile_voyager_phase1(
     source_response: VoyagerSourceResponse,
+    build_timeout: Option<Duration>,
 ) -> Result<Phase1Result> {
     let original_class_hash = source_response.class_hash.clone();
     let verified_name = source_response.verified_name.clone();
@@ -182,7 +184,14 @@ pub async fn compile_voyager_phase1(
                 non_inline_profile, original_class_hash
             );
 
-            match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await {
+            match build_with_scarb_for_profile(
+                &manifest,
+                &tmp_dir,
+                non_inline_profile,
+                build_timeout,
+            )
+            .await
+            {
                 Ok(classes) if !classes.is_empty() => {
                     for (hash, contract_class) in classes {
                         if hash == original_class_hash {
@@ -275,7 +284,10 @@ pub async fn compile_voyager_phase1(
 /// Consumes `Phase1Result` and cleans up the temp directory when done.
 ///
 /// Only call this when `phase1.inline_already_built` is None.
-pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExternalClass> {
+pub async fn compile_voyager_phase2(
+    phase1: Phase1Result,
+    build_timeout: Option<Duration>,
+) -> Result<CompiledExternalClass> {
     let tmp_dir = phase1.tmp_dir.clone();
     let original_class_hash = phase1.original_class_hash.clone();
     let verified_name = phase1.verified_name.clone();
@@ -289,6 +301,7 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
         &phase1.manifest,
         &tmp_dir,
         &phase1.inline_profile,
+        build_timeout,
     )
     .await
     {
@@ -379,8 +392,9 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
 /// Used by the debug trace fallback path when no pre-compilation has happened.
 pub async fn compile_voyager_source(
     source_response: VoyagerSourceResponse,
+    build_timeout: Option<Duration>,
 ) -> Result<CompiledExternalClass> {
-    let phase1 = compile_voyager_phase1(source_response).await?;
+    let phase1 = compile_voyager_phase1(source_response, build_timeout).await?;
 
     if let Some((inline_class_hash, contract_class)) = phase1.inline_already_built.clone() {
         // Matching profile already had inline strategy — no Phase 2 needed
@@ -406,7 +420,7 @@ pub async fn compile_voyager_source(
             source_code: phase1.source_code,
         })
     } else {
-        compile_voyager_phase2(phase1).await
+        compile_voyager_phase2(phase1, build_timeout).await
     }
 }
 
