@@ -817,6 +817,7 @@ async fn simulate_starknet_transaction_by_hash(
                                     simulation_debugger_data: Some(SimulationDebuggerData {
                                         classes_debugger_data: HashMap::new(),
                                         debugger_trace: Vec::new(),
+                                        initial_step_index: None,
                                     }),
                                     storage_changes: HashMap::new(),
                                     estimated_fee: None,
