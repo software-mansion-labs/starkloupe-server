@@ -3,9 +3,11 @@ use tracing::warn;
 
 #[inline(always)]
 pub fn skip_builtin_type_declaration(type_name: &str) -> bool {
-    SKIP_BUILTIN_TYPES
-        .iter()
-        .any(|&builtin| type_name.starts_with(builtin))
+    let base_name = match type_name.find('<') {
+        Some(idx) => &type_name[..idx],
+        None => type_name,
+    };
+    SKIP_BUILTIN_TYPES.contains(base_name)
 }
 
 const AVG_SIZE_PER_ELEMENT: usize = 512; // bytes

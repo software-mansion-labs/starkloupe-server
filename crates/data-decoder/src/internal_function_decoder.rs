@@ -142,7 +142,6 @@ fn decode_enum(
                 return Some(create_compact_enum(
                     None,
                     debug_name,
-                    &variant_name,
                     DecodedValue {
                         name: None,
                         type_name: "Unit".to_string(),
@@ -170,12 +169,7 @@ fn decode_enum(
 
         // If we have variant name from ABI, create compact enum format
         if has_abi_enum {
-            return Some(create_compact_enum(
-                None,
-                debug_name,
-                &variant_name,
-                decoded_value,
-            ));
+            return Some(create_compact_enum(None, debug_name, decoded_value));
         }
 
         // Fallback to old behavior if no ABI enum found

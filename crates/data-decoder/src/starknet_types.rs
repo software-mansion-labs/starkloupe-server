@@ -95,7 +95,7 @@ impl EDataType {
                 return Self::Array(Box::new(Self::from_str(inner.trim(), enum_abis)));
             }
         }
-        if s.starts_with("Tuple") || (s.starts_with("(") && s.ends_with(")")) {
+        if s.starts_with("Tuple") || (s.starts_with('(') && s.ends_with(')')) {
             let inner_types = extract_inner_types(s);
             return Self::Tuple(inner_types);
         }
