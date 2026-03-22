@@ -273,13 +273,13 @@ pub async fn decode_calldata_handler(
 
             // Try to fetch ABI and decode with it
             match fetch_contract_abi(&contract_addr, &request.chain_id).await {
-                Ok((functions, _type_decoder, structs, enums)) => {
+                Ok(abi_data) => {
                     match decode_calldata_with_abi(
                         &call_calldata,
                         &func_selector,
-                        &functions,
-                        &structs,
-                        &enums,
+                        &abi_data.functions,
+                        &abi_data.structs,
+                        &abi_data.enums,
                     ) {
                         Ok((decoded, func_name)) => {
                             contract_calls.push(ContractCall {

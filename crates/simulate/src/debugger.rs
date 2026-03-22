@@ -120,6 +120,10 @@ async fn simulate_to_get_debug_info(
 
     let initial_step_index = find_initial_debugger_step(&contract_calls_map, &function_calls_map);
 
+    // Override step indices on contract/function calls to skip wrapper/unsafe boilerplate,
+    // so the frontend can use them directly without duplicating the skipping logic.
+    apply_real_entrypoint_step_indices(&mut contract_calls_map, &mut function_calls_map);
+
     let debugger_info = DebuggerInfo {
         contract_calls_map,
         function_calls_map,
@@ -245,9 +249,16 @@ fn find_real_entrypoint_step(
 ) -> Option<usize> {
     let wrapper_fn_id = contract_call.function_call_id?;
     let wrapper_fn = function_calls_map.0.get(&wrapper_fn_id)?;
+    find_real_step_for_function(wrapper_fn, function_calls_map)
+}
 
-    wrapper_fn
-        .children_call_ids
+/// Given a function call, finds the `debugger_trace_step_index` of the first child
+/// that is not hidden, not a `__wrapper__`, and not an `unsafe_new_` function.
+fn find_real_step_for_function(
+    fc: &internal_tracing::function_call::FunctionCall,
+    function_calls_map: &FunctionCallsMap,
+) -> Option<usize> {
+    fc.children_call_ids
         .iter()
         .filter_map(|child_id| function_calls_map.0.get(child_id))
         .find(|child| {
@@ -257,6 +268,54 @@ fn find_real_entrypoint_step(
                 })
         })
         .and_then(|child| child.debugger_trace_step_index)
+}
+
+fn is_wrapper_or_unsafe(fc: &internal_tracing::function_call::FunctionCall) -> bool {
+    fc.is_hidden
+        || fc.fn_name.as_ref().map_or(false, |n| {
+            n.contains("unsafe_new_") || n.contains("__wrapper__")
+        })
+}
+
+/// Overrides `debugger_trace_step_index` on contract calls and function calls
+/// so they point past wrapper/unsafe boilerplate to the real entrypoint step.
+fn apply_real_entrypoint_step_indices(
+    contract_calls_map: &mut ContractCallsMap,
+    function_calls_map: &mut FunctionCallsMap,
+) {
+    // Override contract call step indices
+    let cc_updates: Vec<(u32, usize)> = contract_calls_map
+        .0
+        .iter()
+        .filter_map(|(id, cc)| {
+            find_real_entrypoint_step(cc, function_calls_map).map(|step| (*id, step))
+        })
+        .collect();
+
+    for (id, step) in cc_updates {
+        if let Some(cc) = contract_calls_map.0.get_mut(&id) {
+            cc.debugger_trace_step_index = Some(step);
+        }
+    }
+
+    // Override function call step indices for wrapper/unsafe functions
+    let fc_updates: Vec<(u32, usize)> = function_calls_map
+        .0
+        .iter()
+        .filter_map(|(id, fc)| {
+            if is_wrapper_or_unsafe(fc) {
+                find_real_step_for_function(fc, function_calls_map).map(|step| (*id, step))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (id, step) in fc_updates {
+        if let Some(fc) = function_calls_map.0.get_mut(&id) {
+            fc.debugger_trace_step_index = Some(step);
+        }
+    }
 }
 
 /// Recursively searches child contract calls to find the first verified one

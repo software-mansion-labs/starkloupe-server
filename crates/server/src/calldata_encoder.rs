@@ -1,6 +1,7 @@
 use crate::abi_fetcher::fetch_contract_abi;
 use data_decoder::{split_into_limbs, DecodedValue};
 use std::collections::HashMap;
+use std::sync::Arc;
 use walnut_shared::abi::{Enum, Struct};
 use walnut_shared::utils::simplify_type_name;
 
@@ -359,26 +360,35 @@ pub fn encode_parameters_basic(
     Ok(calldata)
 }
 
-/// Encode decoded calldata back to raw calldata format with ABI information
+/// Encode decoded calldata back to raw calldata format with ABI information.
+/// ABI fetches for all contract calls are performed in parallel.
 pub async fn encode_decoded_calldata(
     decoded_calls: &[crate::handlers::simulate::ContractCall],
     chain_id: &str,
 ) -> Result<Vec<String>, String> {
-    let mut raw_calldata = Vec::new();
+    use crate::abi_fetcher::ContractAbiData;
 
+    // Fetch all ABIs in parallel
+    let abi_futures: Vec<_> = decoded_calls
+        .iter()
+        .map(|call| fetch_contract_abi(&call.contract_address, chain_id))
+        .collect();
+    let abi_results: Vec<Result<Arc<ContractAbiData>, String>> =
+        futures::future::join_all(abi_futures).await;
+
+    let mut raw_calldata = Vec::new();
     // Add number of calls
     raw_calldata.push(format!("0x{:x}", decoded_calls.len()));
 
-    for call in decoded_calls {
-        // Add contract address
+    for (call, abi_result) in decoded_calls.iter().zip(abi_results) {
         raw_calldata.push(call.contract_address.clone());
-        // Add function selector
         raw_calldata.push(call.function_selector.clone());
-        // Fetch ABI for this contract to encode parameters
-        let call_calldata = match fetch_contract_abi(&call.contract_address, chain_id).await {
-            Ok((functions, _type_decoder, structs, enums)) => {
+
+        let call_calldata = match abi_result {
+            Ok(abi_data) => {
                 // Find the function by name
-                let function = functions
+                let function = abi_data
+                    .functions
                     .iter()
                     .find(|f| f.name == call.function_name.as_deref().unwrap_or(""))
                     .ok_or_else(|| {
@@ -392,12 +402,12 @@ pub async fn encode_decoded_calldata(
                 encode_parameters_with_abi(
                     &call.parameters,
                     function.inputs.as_slice(),
-                    &structs,
-                    &enums,
+                    &abi_data.structs,
+                    &abi_data.enums,
                 )?
             }
             Err(_e) => {
-                // Fallback to basic encoding without ABI - use empty hashmaps
+                // Fallback to basic encoding without ABI
                 let params_map: HashMap<usize, DecodedValue> = call
                     .parameters
                     .iter()
@@ -409,7 +419,6 @@ pub async fn encode_decoded_calldata(
             }
         };
 
-        // Add calldata length and actual calldata
         raw_calldata.push(format!("0x{:x}", call_calldata.len()));
         raw_calldata.extend(call_calldata);
     }

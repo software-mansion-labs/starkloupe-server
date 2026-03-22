@@ -1,5 +1,8 @@
 use crate::app_state::AppState;
 use crate::calldata_encoder;
+use crate::handlers::common::{
+    resolve_block_number, should_skip_tracking, spawn_blocking_with_timeout,
+};
 use crate::notification_service::{
     send_notification_calldata, send_notification_custom_rpc, send_notification_tx_id,
 };
@@ -18,14 +21,9 @@ use simulate::{
     simulate::{simulate_by_calldata, simulate_transaction_by_hash},
     SimulationArgs, SimulationRawArgs,
 };
-use starknet_api::block::BlockNumber;
-use starknet_rust::providers::Provider;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::task;
-use tokio::time::timeout;
 use tracing::{debug, error, info};
-use walnut_shared::{create_rpc_client_from_url, extract_chain_id, get_rpc_urls, ENetwork};
+use walnut_shared::{chain_id_to_readable_string, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum SimulationPayload {
@@ -71,367 +69,264 @@ pub struct SimulationErrorResponse {
     pub simulation_args: SimulationPayload,
 }
 
+/// Build a BAD_REQUEST error response with the original payload for debugging.
+fn sim_error_response(error: String, simulation_args: SimulationPayload) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(SimulationErrorResponse {
+            error,
+            simulation_args,
+        }),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Shared simulation logic
+// ---------------------------------------------------------------------------
+
+/// Build a short human-readable label from simulation args for log messages.
+fn sim_log_label(args: &SimulationArgs) -> String {
+    let sender = args.sender_address.0.key().to_fixed_hex_string();
+    let sender_short = if sender.len() > 10 {
+        format!("{}..{}", &sender[..6], &sender[sender.len() - 4..])
+    } else {
+        sender
+    };
+    let block = args
+        .block_number
+        .map(|b| b.0.to_string())
+        .unwrap_or_else(|| "latest".to_string());
+    let chain = chain_id_to_readable_string(&args.chain_id);
+    format!("sender={} block={} chain={}", sender_short, block, chain)
+}
+
+/// Resolve block number, check cache, send notification, run simulation, cache result.
+/// Shared by both `WithCalldata` and `WithDecodedCalldata` paths.
+async fn run_simulation_with_cache(
+    state: &AppState,
+    simulation_args: SimulationArgs,
+    skip_tracking: bool,
+    payload_for_error: SimulationPayload,
+) -> Result<Arc<simulate::TransactionSimulationResult>, Response> {
+    let db_pool = &state.db_pool;
+    let label = sim_log_label(&simulation_args);
+
+    // Resolve block number
+    let resolved_block_number = resolve_block_number(&simulation_args)
+        .await
+        .map_err(|e| sim_error_response(e, payload_for_error.clone()))?;
+
+    // Check cache
+    let cache_key = CacheKey::from_simulation_args_with_block_number(
+        &simulation_args,
+        resolved_block_number.as_ref(),
+    );
+    if let Some(cached_result) = state.simulation_cache.get(&cache_key, Some(db_pool)).await {
+        info!("Cache hit {} ({}), returning cached result", cache_key.display_id(), label);
+        return Ok(cached_result);
+    }
+    info!("Cache miss {} ({}), proceeding with simulation", cache_key.display_id(), label);
+
+    // Notification
+    if !skip_tracking {
+        if let Err(err) = send_notification_calldata(&simulation_args).await {
+            error!("Failed to send Telegram notification. Error: {:?}", err);
+        }
+    }
+
+    // Run simulation
+    match simulate_by_calldata(
+        db_pool,
+        &state.s3_client,
+        simulation_args,
+        state.voyager_client.as_ref(),
+        Some(&state.external_class_cache),
+    )
+    .await
+    {
+        Ok(sim_info) => {
+            let sim_info_arc = Arc::new(sim_info);
+            state
+                .simulation_cache
+                .set(&cache_key, sim_info_arc.clone(), Some(db_pool))
+                .await;
+            info!("Cached simulation result {} ({})", cache_key.display_id(), label);
+            Ok(sim_info_arc)
+        }
+        Err(e) => {
+            error!("Simulation failed ({}): {}", label, e);
+            Err(sim_error_response(e.to_string(), payload_for_error))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-variant handlers (called inside spawn_blocking / block_on)
+// ---------------------------------------------------------------------------
+
+async fn handle_calldata_simulation(
+    state: &AppState,
+    args: SimulationRawArgs,
+    skip_tracking: bool,
+) -> Result<Arc<simulate::TransactionSimulationResult>, Response> {
+    let args_for_error = args.clone();
+
+    let simulation_args = SimulationArgs::try_from_raw_args(args).await.map_err(|e| {
+        sim_error_response(
+            e.to_string(),
+            SimulationPayload::WithCalldata(args_for_error.clone()),
+        )
+    })?;
+
+    run_simulation_with_cache(
+        state,
+        simulation_args,
+        skip_tracking,
+        SimulationPayload::WithCalldata(args_for_error),
+    )
+    .await
+}
+
+async fn handle_decoded_calldata_simulation(
+    state: &AppState,
+    args: SimulationDecodedArgs,
+    skip_tracking: bool,
+) -> Result<Arc<simulate::TransactionSimulationResult>, Response> {
+    let decoded_args_for_error = args.clone();
+
+    let chain_id = args.chain_id.as_deref().ok_or_else(|| {
+        sim_error_response(
+            "Missing required field: chain_id".to_string(),
+            SimulationPayload::WithDecodedCalldata(decoded_args_for_error.clone()),
+        )
+    })?;
+
+    let raw_calldata = calldata_encoder::encode_decoded_calldata(&args.decoded_calldata, chain_id)
+        .await
+        .map_err(|e| {
+            sim_error_response(
+                format!("Failed to encode decoded calldata: {}", e),
+                SimulationPayload::WithDecodedCalldata(decoded_args_for_error),
+            )
+        })?;
+
+    let raw_args = SimulationRawArgs {
+        chain_id: args.chain_id,
+        rpc_url: args.rpc_url,
+        block_number: args.block_number,
+        nonce: args.nonce,
+        sender_address: args.sender_address,
+        calldata: raw_calldata,
+        transaction_version: args.transaction_version,
+        transaction_signature: args
+            .transaction_signature
+            .map(|sig| sig.into_iter().filter_map(|s| s.parse().ok()).collect()),
+    };
+
+    // From here on, behaves identically to WithCalldata
+    handle_calldata_simulation(state, raw_args, skip_tracking).await
+}
+
+async fn handle_tx_hash_simulation(
+    state: &AppState,
+    args: SimulationTxHashArgs,
+    skip_tracking: bool,
+) -> Result<Arc<simulate::TransactionSimulationResult>, Response> {
+    let db_pool = &state.db_pool;
+    let args_for_error = args.clone();
+
+    // Check cache
+    let cache_key = CacheKey::from_tx_hash(&args.tx_hash, "starknet");
+    if let Some(cached_result) = state.simulation_cache.get(&cache_key, Some(db_pool)).await {
+        debug!("Cache hit for tx hash! Returning cached result");
+        return Ok(cached_result);
+    }
+
+    // Notification
+    if !skip_tracking {
+        if let Err(err) =
+            send_notification_custom_rpc(args.tx_hash.as_str(), args.rpc_url.as_str()).await
+        {
+            error!("Failed to send Telegram notification. Error: {:?}", err);
+        }
+    }
+
+    let starknet_rpc_url = url::Url::parse(&args.rpc_url).map_err(|e| {
+        sim_error_response(
+            format!("Invalid RPC URL: {}", e),
+            SimulationPayload::WithTxHash(args_for_error.clone()),
+        )
+    })?;
+
+    match simulate_transaction_by_hash(
+        db_pool,
+        &state.s3_client,
+        Some(starknet_rpc_url),
+        None,
+        &args.tx_hash,
+        None,
+        &ENetwork::Starknet,
+        state.voyager_client.as_ref(),
+        Some(&state.external_class_cache),
+    )
+    .await
+    {
+        Ok(sim_info) => {
+            let sim_info_arc = Arc::new(sim_info);
+            state
+                .simulation_cache
+                .set(&cache_key, sim_info_arc.clone(), Some(db_pool))
+                .await;
+            info!("Cached tx hash simulation result");
+            Ok(sim_info_arc)
+        }
+        Err(e) => {
+            error!("Tx hash simulation failed: {}", e);
+            Err(sim_error_response(
+                e.to_string(),
+                SimulationPayload::WithTxHash(args_for_error),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public handler endpoints
+// ---------------------------------------------------------------------------
+
 #[debug_handler]
 pub async fn simulate_transaction(
     State(state): State<Arc<AppState>>,
     Query(query_params): Query<QueryParams>,
     Json(payload): Json<SimulationPayload>,
 ) -> Response {
-    let db_pool = state.db_pool.clone();
-    let s3_client = state.s3_client.clone();
-    let voyager_client = state.voyager_client.clone();
-    let external_cache = state.external_class_cache.clone();
-    let skip_tracking = query_params.skip_tracking.clone();
-    let payload = payload.clone();
-    let simulation_task = task::spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
-            match payload {
-                SimulationPayload::WithCalldata(args) => {
-                    let args_for_error = args.clone();
-                    // Parse calldata args
-                    let simulation_args: SimulationArgs =
-                        match SimulationArgs::try_from_raw_args(args).await {
-                            Ok(args) => args,
-                            Err(e) => {
-                                return Err((
-                                    StatusCode::BAD_REQUEST,
-                                    Json(SimulationErrorResponse {
-                                        error: e.to_string(),
-                                        simulation_args: SimulationPayload::WithCalldata(
-                                            args_for_error,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        };
+    let skip_tracking = should_skip_tracking(&query_params.skip_tracking);
 
-                    // Resolve block number if it's None (Latest)
-                    let resolved_block_number = if simulation_args.block_number.is_none() {
-                        let provider_client =
-                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
-                        match provider_client.block_number().await {
-                            Ok(block_number) => Some(BlockNumber(block_number)),
-                            Err(e) => {
-                                return Err((
-                                    StatusCode::BAD_REQUEST,
-                                    Json(SimulationErrorResponse {
-                                        error: format!("Failed to get latest block number: {}", e),
-                                        simulation_args: SimulationPayload::WithCalldata(
-                                            args_for_error,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        }
-                    } else {
-                        simulation_args.block_number.clone()
-                    };
-
-                    // Check cache first with resolved block number
-                    let cache_key = CacheKey::from_simulation_args_with_block_number(
-                        &simulation_args,
-                        resolved_block_number.as_ref(),
-                    );
-                    if let Some(cached_result) =
-                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
-                    {
-                        info!("Cache hit! Returning cached result");
-                        return Ok((StatusCode::OK, cached_result)); // Return Arc directly - no clone!
+    let inner_result = spawn_blocking_with_timeout(
+        move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                match payload {
+                    SimulationPayload::WithCalldata(args) => {
+                        handle_calldata_simulation(&state, args, skip_tracking).await
                     }
-                    info!("Cache miss, proceeding with simulation");
-
-                    // Telegram notification
-                    if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) = send_notification_calldata(&simulation_args).await {
-                            error!("Failed to send Telegram notification. Error: {:?}", err);
-                        }
+                    SimulationPayload::WithDecodedCalldata(args) => {
+                        handle_decoded_calldata_simulation(&state, args, skip_tracking).await
                     }
-
-                    // Run simulation
-                    let result = simulate_by_calldata(
-                        &db_pool,
-                        &s3_client,
-                        simulation_args,
-                        voyager_client.as_ref(),
-                        Some(&external_cache),
-                    )
-                    .await;
-                    match result {
-                        Ok(sim_info) => {
-                            // Wrap in Arc and cache the result
-                            let sim_info_arc = Arc::new(sim_info);
-                            state
-                                .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
-                                .await;
-                            info!(
-                                "Adding simulation result to cache - {}",
-                                cache_key.display_id()
-                            );
-
-                            Ok((StatusCode::OK, sim_info_arc))
-                        }
-                        Err(e) => {
-                            error!("Simulation failed after: {}", e);
-                            Err((
-                                StatusCode::BAD_REQUEST,
-                                Json(SimulationErrorResponse {
-                                    error: e.to_string(),
-                                    simulation_args: SimulationPayload::WithCalldata(
-                                        args_for_error,
-                                    ),
-                                }),
-                            ))
-                        }
+                    SimulationPayload::WithTxHash(args) => {
+                        handle_tx_hash_simulation(&state, args, skip_tracking).await
                     }
                 }
+            })
+        },
+        "Simulation task",
+    )
+    .await;
 
-                SimulationPayload::WithDecodedCalldata(args) => {
-                    // Convert decoded calldata to raw calldata with ABI information
-                    let args_for_error = args.clone();
-                    let chain_id = args.chain_id.as_deref().ok_or_else(|| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            Json(SimulationErrorResponse {
-                                error: "Missing required field: chain_id".to_string(),
-                                simulation_args: SimulationPayload::WithDecodedCalldata(
-                                    args_for_error.clone(),
-                                ),
-                            }),
-                        )
-                    })?;
-
-                    let raw_calldata = match calldata_encoder::encode_decoded_calldata(
-                        &args.decoded_calldata,
-                        chain_id,
-                    )
-                    .await
-                    {
-                        Ok(calldata) => calldata,
-                        Err(e) => {
-                            return Err((
-                                StatusCode::BAD_REQUEST,
-                                Json(SimulationErrorResponse {
-                                    error: format!("Failed to encode decoded calldata: {}", e),
-                                    simulation_args: SimulationPayload::WithDecodedCalldata(
-                                        args_for_error,
-                                    ),
-                                }),
-                            ));
-                        }
-                    };
-
-                    let raw_args = SimulationRawArgs {
-                        chain_id: args.chain_id,
-                        rpc_url: args.rpc_url,
-                        block_number: args.block_number,
-                        nonce: args.nonce,
-                        sender_address: args.sender_address,
-                        calldata: raw_calldata,
-                        transaction_version: args.transaction_version,
-                        transaction_signature: args
-                            .transaction_signature
-                            .map(|sig| sig.into_iter().filter_map(|s| s.parse().ok()).collect()),
-                    };
-
-                    let args_for_error = raw_args.clone();
-                    // Parse calldata args
-                    let simulation_args: SimulationArgs =
-                        match SimulationArgs::try_from_raw_args(raw_args).await {
-                            Ok(args) => args,
-                            Err(e) => {
-                                return Err((
-                                    StatusCode::BAD_REQUEST,
-                                    Json(SimulationErrorResponse {
-                                        error: e.to_string(),
-                                        simulation_args: SimulationPayload::WithCalldata(
-                                            args_for_error,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        };
-
-                    // Resolve block number if it's None (Latest)
-                    let resolved_block_number = if simulation_args.block_number.is_none() {
-                        let provider_client =
-                            create_rpc_client_from_url(simulation_args.rpc_url.clone());
-                        match provider_client.block_number().await {
-                            Ok(block_number) => Some(BlockNumber(block_number)),
-                            Err(e) => {
-                                return Err((
-                                    StatusCode::BAD_REQUEST,
-                                    Json(SimulationErrorResponse {
-                                        error: format!("Failed to get latest block number: {}", e),
-                                        simulation_args: SimulationPayload::WithCalldata(
-                                            args_for_error,
-                                        ),
-                                    }),
-                                ));
-                            }
-                        }
-                    } else {
-                        simulation_args.block_number.clone()
-                    };
-
-                    // Check cache first
-                    let cache_key = CacheKey::from_simulation_args_with_block_number(
-                        &simulation_args,
-                        resolved_block_number.as_ref(),
-                    );
-
-                    if let Some(cached_result) =
-                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
-                    {
-                        info!(
-                            "Cache hit - {}! Returning cached result",
-                            cache_key.display_id()
-                        );
-                        return Ok((StatusCode::OK, cached_result));
-                    }
-                    info!(
-                        "Cache miss - {} , proceeding with simulation",
-                        cache_key.display_id()
-                    );
-
-                    // Telegram notification
-                    if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) = send_notification_calldata(&simulation_args).await {
-                            error!("Failed to send Telegram notification. Error: {:?}", err);
-                        }
-                    }
-
-                    // Run simulation
-                    let result = simulate_by_calldata(
-                        &db_pool,
-                        &s3_client,
-                        simulation_args,
-                        voyager_client.as_ref(),
-                        Some(&external_cache),
-                    )
-                    .await;
-                    match result {
-                        Ok(sim_info) => {
-                            // Wrap in Arc and cache the result
-                            let sim_info_arc = Arc::new(sim_info);
-                            state
-                                .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
-                                .await;
-                            info!("Cached simulation result");
-
-                            Ok((StatusCode::OK, sim_info_arc))
-                        }
-                        Err(e) => {
-                            info!("Simulation failed after: {}", e);
-                            Err((
-                                StatusCode::BAD_REQUEST,
-                                Json(SimulationErrorResponse {
-                                    error: e.to_string(),
-                                    simulation_args: SimulationPayload::WithCalldata(
-                                        args_for_error,
-                                    ),
-                                }),
-                            ))
-                        }
-                    }
-                }
-
-                SimulationPayload::WithTxHash(args) => {
-                    // Check cache first using tx hash
-                    let cache_key = CacheKey::from_tx_hash(&args.tx_hash, "starknet");
-
-                    if let Some(cached_result) =
-                        state.simulation_cache.get(&cache_key, Some(&db_pool)).await
-                    {
-                        debug!("Cache hit for tx hash! Returning cached result");
-                        return Ok((StatusCode::OK, cached_result));
-                    }
-                    // Telegram notification
-                    if !skip_tracking.as_deref().unwrap_or("").eq("true") {
-                        if let Err(err) = send_notification_custom_rpc(
-                            args.tx_hash.as_str(),
-                            args.rpc_url.as_str(),
-                        )
-                        .await
-                        {
-                            error!("Failed to send Telegram notification. Error: {:?}", err);
-                        }
-                    }
-
-                    let args_for_error = args.clone();
-                    let starknet_rpc_url = match url::Url::parse(&args.rpc_url) {
-                        Ok(url) => url,
-                        Err(e) => {
-                            return Err((
-                                StatusCode::BAD_REQUEST,
-                                Json(SimulationErrorResponse {
-                                    error: format!("Invalid RPC URL: {}", e),
-                                    simulation_args: SimulationPayload::WithTxHash(args_for_error),
-                                }),
-                            ));
-                        }
-                    };
-
-                    match simulate_transaction_by_hash(
-                        &db_pool,
-                        &s3_client,
-                        Some(starknet_rpc_url),
-                        None,
-                        &args.tx_hash,
-                        None,
-                        &ENetwork::Starknet,
-                        voyager_client.as_ref(),
-                        Some(&external_cache),
-                    )
-                    .await
-                    {
-                        Ok(sim_info) => {
-                            // Wrap in Arc and cache the result
-                            let sim_info_arc = Arc::new(sim_info);
-                            state
-                                .simulation_cache
-                                .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
-                                .await;
-                            info!("Cached tx hash simulation result");
-
-                            Ok((StatusCode::OK, sim_info_arc))
-                        }
-                        Err(e) => {
-                            info!("Tx hash simulation failed after: {}", e);
-                            Err((
-                                StatusCode::BAD_REQUEST,
-                                Json(SimulationErrorResponse {
-                                    error: e.to_string(),
-                                    simulation_args: SimulationPayload::WithTxHash(args_for_error),
-                                }),
-                            ))
-                        }
-                    }
-                }
-            }
-        })
-    });
-
-    match timeout(Duration::from_secs(900), simulation_task).await {
-        Ok(Ok(Ok((status, sim_info)))) => (status, Json(sim_info)).into_response(),
-        Ok(Ok(Err((status, message)))) => (status, message).into_response(),
-        Ok(Err(join_err)) => {
-            error!("Simulation task panicked: {:?}", join_err);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulate transaction. Reach out to us for assistance.".to_string(),
-            )
-                .into_response()
-        }
-        Err(_) => {
-            error!("Simulation transaction request timed out");
-            (
-                StatusCode::REQUEST_TIMEOUT,
-                "The server timed out. Reach out to us for assistance.".to_string(),
-            )
-                .into_response()
-        }
+    match inner_result {
+        Ok(Ok(sim_info)) => (StatusCode::OK, Json(sim_info)).into_response(),
+        Ok(Err(error_response)) => error_response,
+        Err(timeout_or_panic) => timeout_or_panic,
     }
 }
 
@@ -440,13 +335,8 @@ pub async fn simulate_transaction_by_hash_handler(
     Path((chain_id, tx_hash)): Path<(String, String)>,
     Query(query_params): Query<QueryParams>,
 ) -> Response {
-    // don't sent Telegram notification if query param skip_tg_notification=true (it set in URLs sent to tg bot)
-    if !query_params
-        .skip_tracking
-        .as_deref()
-        .unwrap_or("")
-        .eq("true")
-    {
+    // Notification is sent before the blocking task (matches original behavior)
+    if !should_skip_tracking(&query_params.skip_tracking) {
         if let Err(err) = send_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await {
             error!("Failed to send Telegram notification. Error: {:?}", err);
         }
@@ -457,99 +347,64 @@ pub async fn simulate_transaction_by_hash_handler(
         Err(e) => return (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
     };
 
-    let (starknet_rpc_url, etherem_rpc_url) = get_rpc_urls(&e_chain_id);
-
-    let db_pool = state.db_pool.clone();
-    let s3_client = state.s3_client.clone();
-    let voyager_client = state.voyager_client.clone();
-    let external_cache = state.external_class_cache.clone();
-    let tx_hash = tx_hash.clone();
-    let payload_tx_hash = tx_hash.clone();
-    let network = network.clone();
+    let (starknet_rpc_url, ethereum_rpc_url) = get_rpc_urls(&e_chain_id);
     let e_chain_id = Some(e_chain_id);
 
-    let cache = state.simulation_cache.clone();
-    let chain_id_clone = chain_id.clone();
-    let simulation_task = task::spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
-            // Check cache first
-            let cache_key = CacheKey::from_tx_hash(&tx_hash, &chain_id_clone);
+    let chain_id_for_cache = chain_id.clone();
+    let inner_result = spawn_blocking_with_timeout(
+        move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                let db_pool = &state.db_pool;
 
-            if let Some(cached_result) = cache.get(&cache_key, Some(&db_pool)).await {
-                info!(
-                    "Cache hit for tx hash={} handler! Returning cached result",
-                    tx_hash
-                );
-                return Ok(cached_result);
-            }
-            info!("Cache miss for tx_hash={}, starting simulation", tx_hash);
-
-            let result = simulate_transaction_by_hash(
-                &db_pool,
-                &s3_client,
-                starknet_rpc_url,
-                etherem_rpc_url,
-                &tx_hash,
-                e_chain_id,
-                &network,
-                voyager_client.as_ref(),
-                Some(&external_cache),
-            )
-            .await;
-
-            match result {
-                Ok(sim_info) => {
-                    // Wrap in Arc and cache the result
-                    let sim_info_arc = Arc::new(sim_info);
-                    cache
-                        .set(&cache_key, sim_info_arc.clone(), Some(&db_pool))
-                        .await;
-                    info!("Adding simulation by tx hash: {} result to cache", tx_hash);
-
-                    Ok(sim_info_arc)
+                // Check cache
+                let cache_key = CacheKey::from_tx_hash(&tx_hash, &chain_id_for_cache);
+                if let Some(cached_result) =
+                    state.simulation_cache.get(&cache_key, Some(db_pool)).await
+                {
+                    info!(
+                        "Cache hit for tx hash={} handler! Returning cached result",
+                        tx_hash
+                    );
+                    return Ok(cached_result);
                 }
-                Err(e) => {
-                    info!("Simulation by tx hash: {} failed after: {}", tx_hash, e);
-                    Err(e)
-                }
-            }
-        })
-    });
+                info!("Cache miss for tx_hash={}, starting simulation", tx_hash);
 
-    // Wait for simulation with timeout
-    match timeout(Duration::from_secs(900), simulation_task).await {
-        Ok(Ok(Ok(simulation_info))) => (StatusCode::OK, Json(simulation_info)).into_response(),
-        Ok(Ok(Err(e))) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
-        Ok(Err(join_err)) => {
-            error!("Simulation of tx panicked: {:?}", join_err);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to simulate transaction. Reach out to us for assistance.".to_string(),
-            )
-                .into_response()
-        }
-        Err(_) => {
-            error!(
-                "Simulation transaction request by tx hash  timed out {}: {}",
-                &chain_id, &payload_tx_hash
-            );
-            (
-                StatusCode::REQUEST_TIMEOUT,
-                "The server timed out. Reach out to us for assistance.".to_string(),
-            )
-                .into_response()
-        }
+                match simulate_transaction_by_hash(
+                    db_pool,
+                    &state.s3_client,
+                    starknet_rpc_url,
+                    ethereum_rpc_url,
+                    &tx_hash,
+                    e_chain_id,
+                    &network,
+                    state.voyager_client.as_ref(),
+                    Some(&state.external_class_cache),
+                )
+                .await
+                {
+                    Ok(sim_info) => {
+                        let sim_info_arc = Arc::new(sim_info);
+                        state
+                            .simulation_cache
+                            .set(&cache_key, sim_info_arc.clone(), Some(db_pool))
+                            .await;
+                        info!("Cached simulation by tx hash: {}", tx_hash);
+                        Ok(sim_info_arc)
+                    }
+                    Err(e) => {
+                        error!("Simulation by tx hash: {} failed: {}", tx_hash, e);
+                        Err(e)
+                    }
+                }
+            })
+        },
+        "Simulation by tx hash",
+    )
+    .await;
+
+    match inner_result {
+        Ok(Ok(simulation_info)) => (StatusCode::OK, Json(simulation_info)).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_REQUEST, Json(e.to_string())).into_response(),
+        Err(timeout_or_panic) => timeout_or_panic,
     }
 }
-
-// Commented out cache stats endpoint - using logging instead
-// pub async fn cache_stats_handler(State(state): State<Arc<AppState>>) -> Response {
-//     match serde_json::to_value(state.simulation_cache.stats().await) {
-//         Ok(stats) => (StatusCode::OK, Json(stats)).into_response(),
-//         Err(e) => (
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             Json(format!("Failed to get cache stats: {}", e)),
-//         )
-//             .into_response(),
-//     }
-// }

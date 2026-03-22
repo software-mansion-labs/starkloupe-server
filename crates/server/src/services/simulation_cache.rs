@@ -53,13 +53,19 @@ impl CacheKey {
         }
     }
 
-    pub fn from_simulation_args_with_block_number(
+    /// Hash simulation args into a cache key string. An optional prefix differentiates
+    /// cache key types (e.g. "DEBUG:" for debug simulation keys).
+    fn hash_simulation_args(
+        prefix: Option<&[u8]>,
         args: &SimulationArgs,
         resolved_block_number: Option<&BlockNumber>,
-    ) -> Self {
+    ) -> String {
         let mut hasher = Sha256::new();
 
-        // Include key simulation parameters in hash
+        if let Some(prefix) = prefix {
+            hasher.update(prefix);
+        }
+
         hasher.update(args.sender_address.to_bytes_be());
         hasher.update(
             &args
@@ -72,13 +78,13 @@ impl CacheKey {
         hasher.update(&args.transaction_version.0.to_bytes_be());
         hasher.update(args.chain_id.to_string().as_bytes());
 
-        // Include resolved block_number in cache key to prevent incorrect cache hits
+        // Include resolved block_number to prevent incorrect cache hits
         // This ensures that "Latest" requests get different cache keys based on actual block number
         if let Some(block_number) = &resolved_block_number {
             hasher.update(block_number.0.to_be_bytes());
         }
 
-        // Include rpc_url in cache key for custom RPC endpoints
+        // Include rpc_url for custom RPC endpoints
         hasher.update(args.rpc_url.as_str().as_bytes());
 
         if let Some(entry_point) = args.entry_point_selector {
@@ -93,17 +99,14 @@ impl CacheKey {
             hasher.update(max_fee.0.to_be_bytes());
         }
 
-        // Include transaction_type in cache key for different transaction types
         if let Some(transaction_type) = &args.transaction_type {
             hasher.update(format!("{:?}", transaction_type).as_bytes());
         }
 
-        // Include resource_bounds for v3 transactions
         if let Some(resource_bounds) = &args.resource_bounds {
             hasher.update(format!("{:?}", resource_bounds).as_bytes());
         }
 
-        // Include paymaster_data for sponsored transactions
         if let Some(paymaster_data) = &args.paymaster_data {
             hasher.update(
                 paymaster_data
@@ -114,8 +117,16 @@ impl CacheKey {
             );
         }
 
-        let hash = format!("{:x}", hasher.finalize());
-        Self { hash }
+        format!("{:x}", hasher.finalize())
+    }
+
+    pub fn from_simulation_args_with_block_number(
+        args: &SimulationArgs,
+        resolved_block_number: Option<&BlockNumber>,
+    ) -> Self {
+        Self {
+            hash: Self::hash_simulation_args(None, args, resolved_block_number),
+        }
     }
 
     pub fn from_tx_hash(tx_hash: &str, chain_id: &str) -> Self {
@@ -131,67 +142,9 @@ impl CacheKey {
         args: &SimulationArgs,
         resolved_block_number: Option<&BlockNumber>,
     ) -> Self {
-        let mut hasher = Sha256::new();
-
-        // Include "DEBUG" prefix to differentiate from regular simulation cache
-        hasher.update(b"DEBUG:");
-
-        // Include same parameters as simulation args
-        hasher.update(args.sender_address.to_bytes_be());
-        hasher.update(
-            &args
-                .calldata
-                .0
-                .iter()
-                .flat_map(|f| f.to_bytes_be())
-                .collect::<Vec<_>>(),
-        );
-        hasher.update(&args.transaction_version.0.to_bytes_be());
-        hasher.update(args.chain_id.to_string().as_bytes());
-
-        // Include resolved block_number in debug cache key to prevent incorrect cache hits
-        if let Some(block_number) = &resolved_block_number {
-            hasher.update(block_number.0.to_be_bytes());
+        Self {
+            hash: Self::hash_simulation_args(Some(b"DEBUG:"), args, resolved_block_number),
         }
-
-        // Include rpc_url in debug cache key for custom RPC endpoints
-        hasher.update(args.rpc_url.as_str().as_bytes());
-
-        if let Some(entry_point) = args.entry_point_selector {
-            hasher.update(entry_point.0.to_bytes_be());
-        }
-
-        if let Some(nonce) = &args.nonce {
-            hasher.update(nonce.0.to_bytes_be());
-        }
-
-        if let Some(max_fee) = &args.max_fee {
-            hasher.update(max_fee.0.to_be_bytes());
-        }
-
-        // Include transaction_type in debug cache key for different transaction types
-        if let Some(transaction_type) = &args.transaction_type {
-            hasher.update(format!("{:?}", transaction_type).as_bytes());
-        }
-
-        // Include resource_bounds for v3 transactions in debug cache
-        if let Some(resource_bounds) = &args.resource_bounds {
-            hasher.update(format!("{:?}", resource_bounds).as_bytes());
-        }
-
-        // Include paymaster_data for sponsored transactions in debug cache
-        if let Some(paymaster_data) = &args.paymaster_data {
-            hasher.update(
-                paymaster_data
-                    .0
-                    .iter()
-                    .flat_map(|f| f.to_bytes_be())
-                    .collect::<Vec<_>>(),
-            );
-        }
-
-        let hash = format!("{:x}", hasher.finalize());
-        Self { hash }
     }
 }
 
@@ -429,6 +382,23 @@ impl SimulationCache {
         }
     }
 
+    /// Fetch the currently verified class hashes from the database.
+    async fn fetch_verified_class_hashes(
+        db_pool: Option<&Pool<Postgres>>,
+        class_hashes: &[String],
+    ) -> Vec<String> {
+        let Some(pool) = db_pool else {
+            return Vec::new();
+        };
+        match verification::db::fetch_verified_classes(pool, class_hashes).await {
+            Ok(verified_classes) => verified_classes.into_iter().map(|c| c.hash).collect(),
+            Err(e) => {
+                warn!("Failed to fetch verified classes for cache: {:?}", e);
+                Vec::new()
+            }
+        }
+    }
+
     pub async fn set(
         &self,
         key: &CacheKey,
@@ -436,20 +406,7 @@ impl SimulationCache {
         db_pool: Option<&Pool<Postgres>>,
     ) {
         let class_hashes = extract_class_hashes_from_result(&result);
-
-        // Get currently verified class_hashes at cache creation time
-        let verified_class_hashes = if let Some(pool) = db_pool {
-            match verification::db::fetch_verified_classes(pool, &class_hashes).await {
-                Ok(verified_classes) => verified_classes.into_iter().map(|c| c.hash).collect(),
-                Err(e) => {
-                    warn!("Failed to fetch verified classes for cache: {:?}", e);
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-
+        let verified_class_hashes = Self::fetch_verified_class_hashes(db_pool, &class_hashes).await;
         let cached_entry = CacheEntry::new_simulation(result, class_hashes, verified_class_hashes);
         self.cache.insert(key.hash.clone(), cached_entry).await;
         debug!("[CACHE SET] simulation {}", key.display_id());
@@ -481,20 +438,7 @@ impl SimulationCache {
         db_pool: Option<&Pool<Postgres>>,
     ) {
         let class_hashes = extract_class_hashes_from_debugger_info(&result);
-
-        // Get currently verified class_hashes at cache creation time
-        let verified_class_hashes = if let Some(pool) = db_pool {
-            match verification::db::fetch_verified_classes(pool, &class_hashes).await {
-                Ok(verified_classes) => verified_classes.into_iter().map(|c| c.hash).collect(),
-                Err(e) => {
-                    warn!("Failed to fetch verified classes for cache: {:?}", e);
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-
+        let verified_class_hashes = Self::fetch_verified_class_hashes(db_pool, &class_hashes).await;
         let cached_entry = CacheEntry::new_debug(result, class_hashes, verified_class_hashes);
         self.cache.insert(key.hash.clone(), cached_entry).await;
         debug!("[CACHE SET] debug {}", key.display_id());
