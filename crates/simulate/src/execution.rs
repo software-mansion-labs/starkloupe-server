@@ -51,6 +51,7 @@ use starknet_rust::core::types::ExecutionResult;
 use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::instrument;
 use walnut_shared::felts_to_string;
 
 type CallEntryPointExecutor<'a> = dyn Fn(
@@ -69,6 +70,7 @@ pub struct PostExecStateData {
     pub detailed_receipt: DetailedTransactionReceipt,
 }
 
+#[instrument(name = "validate_call", skip_all, fields(storage_address = %storage_address.0.key().to_fixed_hex_string(), is_revertable))]
 fn validate_call_with_executor(
     calldata: Calldata,
     storage_address: ContractAddress,
@@ -132,6 +134,11 @@ fn validate_call_with_executor(
     Ok(validate_call_info)
 }
 
+#[instrument(name = "execute_tx_flows", skip_all, fields(
+    sender = %args.sender_address.0.key().to_fixed_hex_string(),
+    tx_type = ?args.transaction_type,
+    tx_version = %args.transaction_version.0,
+))]
 pub fn execute_transaction_flows_with_executor<'a>(
     args: &SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
@@ -241,6 +248,11 @@ pub fn execute_transaction_flows_with_executor<'a>(
     Ok((validate_call_info, execute_call_info))
 }
 
+#[instrument(name = "post_exec", skip_all, fields(
+    tx_version = %args.transaction_version.0,
+    calldata_len,
+    signature_len,
+))]
 pub fn handle_post_exec_and_collect_gas_vectors(
     args: &SimulationArgs,
     cached_fork_state: &mut CachedState<ForkStateReader>,
@@ -569,6 +581,7 @@ pub fn get_execution_result(
     }
 }
 
+#[instrument(name = "fee_transfer", skip_all, fields(actual_fee = %actual_fee.0, block_number))]
 fn execute_fee_transfer(
     state: &mut dyn State,
     cheatnet_state: &mut CheatnetState,

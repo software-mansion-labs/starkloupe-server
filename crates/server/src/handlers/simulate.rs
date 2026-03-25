@@ -22,7 +22,7 @@ use simulate::{
     SimulationArgs, SimulationRawArgs,
 };
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 use walnut_shared::{chain_id_to_readable_string, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -103,6 +103,11 @@ fn sim_log_label(args: &SimulationArgs) -> String {
 
 /// Resolve block number, check cache, send notification, run simulation, cache result.
 /// Shared by both `WithCalldata` and `WithDecodedCalldata` paths.
+#[instrument(name = "run_sim_with_cache", skip_all, fields(
+    sender = %simulation_args.sender_address.0.key().to_fixed_hex_string(),
+    chain_id = %simulation_args.chain_id,
+    block_number = ?simulation_args.block_number.map(|b| b.0),
+))]
 async fn run_simulation_with_cache(
     state: &AppState,
     simulation_args: SimulationArgs,
@@ -165,6 +170,7 @@ async fn run_simulation_with_cache(
 // Per-variant handlers (called inside spawn_blocking / block_on)
 // ---------------------------------------------------------------------------
 
+#[instrument(name = "handle_calldata_sim", skip_all, fields(sender = %args.sender_address))]
 async fn handle_calldata_simulation(
     state: &AppState,
     args: SimulationRawArgs,
@@ -188,6 +194,7 @@ async fn handle_calldata_simulation(
     .await
 }
 
+#[instrument(name = "handle_decoded_sim", skip_all, fields(sender = %args.sender_address))]
 async fn handle_decoded_calldata_simulation(
     state: &AppState,
     args: SimulationDecodedArgs,
@@ -228,6 +235,7 @@ async fn handle_decoded_calldata_simulation(
     handle_calldata_simulation(state, raw_args, skip_tracking).await
 }
 
+#[instrument(name = "handle_tx_hash_sim", skip_all, fields(tx_hash = %args.tx_hash))]
 async fn handle_tx_hash_simulation(
     state: &AppState,
     args: SimulationTxHashArgs,
@@ -296,6 +304,7 @@ async fn handle_tx_hash_simulation(
 // ---------------------------------------------------------------------------
 
 #[debug_handler]
+#[instrument(name = "simulate_transaction", skip_all)]
 pub async fn simulate_transaction(
     State(state): State<Arc<AppState>>,
     Query(query_params): Query<QueryParams>,
@@ -330,6 +339,7 @@ pub async fn simulate_transaction(
     }
 }
 
+#[instrument(name = "simulate_by_hash_handler", skip(state), fields(chain_id = %chain_id, tx_hash = %tx_hash))]
 pub async fn simulate_transaction_by_hash_handler(
     State(state): State<Arc<AppState>>,
     Path((chain_id, tx_hash)): Path<(String, String)>,

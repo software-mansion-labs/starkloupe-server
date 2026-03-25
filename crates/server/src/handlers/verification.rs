@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use starknet_api::core::ChainId;
 use std::{collections::HashMap, sync::Arc};
-use tracing::error;
+use tracing::{error, instrument};
 use url::Url;
 use toml;
 use utoipa::ToSchema;
@@ -47,6 +47,7 @@ pub struct VerificationStatusResponse {
     ),
     tag = "Contract class verification status"
 )]
+#[instrument(name = "get_verification_status", skip(state), fields(verification_status_id = %verification_status_id))]
 pub async fn get_verification_status_handler(
     State(state): State<Arc<AppState>>,
     Path(verification_status_id): Path<String>,
@@ -168,6 +169,7 @@ pub struct VerificationPayload {
     ),
     tag = "Contract class verification"
 )]
+#[instrument(name = "verify", skip(state, payload), fields(chain_id = %chain_id.as_str()))]
 pub async fn verify_handler(
     State(state): State<Arc<AppState>>,
     chain_id: extract::Path<String>,
@@ -304,6 +306,10 @@ pub struct VerificationPayloadWithRpc {
     tag = "Contract class verification"
 )]
 
+#[instrument(name = "verify_with_rpc", skip(state, payload), fields(
+    has_rpc_url = payload.rpc_url.is_some(),
+    class_hash = ?payload.class_hash,
+))]
 pub async fn verify_handler_with_rpc(
     State(state): State<Arc<AppState>>,
     Json(mut payload): Json<VerificationPayloadWithRpc>,
