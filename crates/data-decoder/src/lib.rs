@@ -128,12 +128,12 @@ pub fn create_decoded_value_by_type(
         // - The values are then combined using the bitwise OR operator to reconstruct the full 256-bit number: u256 = (high << 128) | low.
         ("u256", DecodedValueType::Struct(values)) if values.len() == 2 => {
             let low = values.get(&0).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(low) => Some(low.clone()),
+                DecodedValueType::BigUint(low) => Some(low),
                 _ => None,
             });
 
             let high = values.get(&1).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(high) => Some(high.clone()),
+                DecodedValueType::BigUint(high) => Some(high),
                 _ => None,
             });
 
@@ -150,19 +150,19 @@ pub fn create_decoded_value_by_type(
         // - Combining all parts using the OR operator reconstructs the full 512-bit number: u512 = (limb3 << 384) | (limb2 << 256) | (limb1 << 128) | limb0.
         ("u512", DecodedValueType::Struct(values)) if values.len() == 4 => {
             let limb0 = values.get(&0).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(limb0) => Some(limb0.clone()),
+                DecodedValueType::BigUint(limb0) => Some(limb0),
                 _ => None,
             });
             let limb1 = values.get(&1).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(limb1) => Some(limb1.clone()),
+                DecodedValueType::BigUint(limb1) => Some(limb1),
                 _ => None,
             });
             let limb2 = values.get(&2).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(limb2) => Some(limb2.clone()),
+                DecodedValueType::BigUint(limb2) => Some(limb2),
                 _ => None,
             });
             let limb3 = values.get(&3).and_then(|v| match &v.value {
-                DecodedValueType::BigUint(limb3) => Some(limb3.clone()),
+                DecodedValueType::BigUint(limb3) => Some(limb3),
                 _ => None,
             });
 
@@ -340,25 +340,25 @@ impl DecodedValueType {
 
     /// Try to parse string as unsigned integer (u8, u16, u32, u64, u128, usize)
     fn try_parse_unsigned_integer(s: &str) -> Result<BigUint, serde_json::Error> {
-        // Try parsing as different unsigned integer types
-        if let Ok(parsed) = s.parse::<u8>() {
-            return Ok(BigUint::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<u16>() {
-            return Ok(BigUint::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<u32>() {
-            return Ok(BigUint::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<u64>() {
-            return Ok(BigUint::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<u128>() {
-            return Ok(BigUint::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<usize>() {
-            return Ok(BigUint::from(parsed));
-        }
+        // // Try parsing as different unsigned integer types
+        // if let Ok(parsed) = s.parse::<u8>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<u16>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<u32>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<u64>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<u128>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<usize>() {
+        //     return Ok(BigUint::from(parsed));
+        // }
 
         // Try parsing as BigUint directly for very large numbers
         s.parse::<BigUint>()
@@ -367,22 +367,22 @@ impl DecodedValueType {
 
     /// Try to parse string as signed integer (i8, i16, i32, i64, i128)
     fn try_parse_signed_integer(s: &str) -> Result<BigInt, serde_json::Error> {
-        // Try parsing as different signed integer types
-        if let Ok(parsed) = s.parse::<i8>() {
-            return Ok(BigInt::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<i16>() {
-            return Ok(BigInt::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<i32>() {
-            return Ok(BigInt::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<i64>() {
-            return Ok(BigInt::from(parsed));
-        }
-        if let Ok(parsed) = s.parse::<i128>() {
-            return Ok(BigInt::from(parsed));
-        }
+        // // Try parsing as different signed integer types
+        // if let Ok(parsed) = s.parse::<i8>() {
+        //     return Ok(BigInt::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<i16>() {
+        //     return Ok(BigInt::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<i32>() {
+        //     return Ok(BigInt::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<i64>() {
+        //     return Ok(BigInt::from(parsed));
+        // }
+        // if let Ok(parsed) = s.parse::<i128>() {
+        //     return Ok(BigInt::from(parsed));
+        // }
 
         // Try parsing as BigInt directly for very large numbers
         s.parse::<BigInt>().map_err(|e| serde::de::Error::custom(e))
@@ -833,7 +833,6 @@ mod integration_tests {
         let layout_struct_variant = create_compact_enum(
             Some("layout"),
             "Layout",
-            "Struct",
             DecodedValue {
                 name: None,
                 type_name: "Span<FieldLayout>".to_string(),
@@ -863,7 +862,6 @@ mod integration_tests {
         let layout_fixed_variant = create_compact_enum(
             Some("layout"),
             "Layout",
-            "Fixed",
             DecodedValue {
                 name: None,
                 type_name: "Span<u8>".to_string(),
@@ -1111,7 +1109,6 @@ mod integration_tests {
 pub fn create_compact_enum(
     name: Option<&str>,
     enum_type_name: &str,
-    variant: &str,
     inner_value: DecodedValue,
 ) -> DecodedValue {
     DecodedValue {

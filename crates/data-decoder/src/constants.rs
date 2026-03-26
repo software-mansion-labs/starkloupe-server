@@ -1,4 +1,6 @@
-pub const SKIP_BUILTIN_TYPES: &[&str] = &[
+use phf::phf_set;
+
+pub static SKIP_BUILTIN_TYPES: phf::Set<&'static str> = phf_set! {
     "Const",
     "Step",
     "Hole",
@@ -18,4 +20,4 @@ pub const SKIP_BUILTIN_TYPES: &[&str] = &[
     "()",
     "ContractState",
     "ComponentState",
-];
+};

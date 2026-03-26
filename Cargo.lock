@@ -3128,6 +3128,7 @@ dependencies = [
  "lazy_static",
  "num-bigint",
  "num-traits",
+ "phf",
  "serde",
  "serde_json",
  "starknet-types-core",

@@ -15,3 +15,4 @@ num-traits.workspace = true
 num-bigint.workspace = true
 cairo-lang-sierra-type-size.workspace = true
 lazy_static.workspace = true
+phf.workspace = true

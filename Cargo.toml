@@ -76,6 +76,7 @@ smol_str = { version = "0.3.0", features = ["serde"] }
 thiserror = "1.0.60"
 num-integer = "0.1.46"
 lazy_static = "1.5.0"
+phf = { version = "0.11", features = ["macros"] }
 sentry = "0.34.0"
 sentry-tracing = "0.34.0"
 sentry-tower = { version = "0.34.0", features = [

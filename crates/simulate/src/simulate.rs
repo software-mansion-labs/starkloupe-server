@@ -75,7 +75,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, instrument, warn};
 use url::Url;
 use verification::voyager::VoyagerClient;
 use walnut_shared::abi::{Enum, Event, Struct};
@@ -91,6 +91,12 @@ use walnut_shared::{
 
 const VOYAGER_PHASE_1_TIMEOUT: Duration = Duration::from_secs(45);
 
+#[instrument(name = "simulate", skip_all, fields(
+    chain_id = %args.chain_id,
+    sender = %args.sender_address.0.key().to_fixed_hex_string(),
+    block_number = ?args.block_number.map(|b| b.0),
+    tx_version = %args.transaction_version.0,
+))]
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -512,6 +518,11 @@ async fn populate_classes_data_from_voyager_cache(
     );
 }
 
+#[instrument(name = "run_simulation", skip_all, fields(
+    sender = %args.sender_address.0.key().to_fixed_hex_string(),
+    tx_type = ?args.transaction_type,
+    calldata_len = args.calldata.0.len(),
+))]
 fn run_simulation(
     block_info: BlockInfo,
     args: SimulationArgs,
@@ -594,6 +605,11 @@ fn run_simulation(
     Ok((cheatnet_state_non_inlined, post_exec_state_data))
 }
 
+#[instrument(name = "simulate_by_calldata", skip_all, fields(
+    chain_id = %args.chain_id,
+    sender = %args.sender_address.0.key().to_fixed_hex_string(),
+    block_number = ?args.block_number.map(|b| b.0),
+))]
 pub async fn simulate_by_calldata(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -676,6 +692,10 @@ pub async fn simulate_by_calldata(
     })
 }
 
+#[instrument(name = "simulate_by_tx_hash", skip_all, fields(
+    tx_hash,
+    network = %network,
+))]
 pub async fn simulate_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -725,6 +745,10 @@ pub async fn simulate_transaction_by_hash(
     }
 }
 
+#[instrument(name = "simulate_starknet_tx", skip_all, fields(
+    tx_hash = %transaction_hash.to_hex_string(),
+    chain_id = ?chain_id,
+))]
 async fn simulate_starknet_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -933,6 +957,10 @@ async fn simulate_starknet_transaction_by_hash(
     ))
 }
 
+#[instrument(name = "simulate_eth_tx", skip_all, fields(
+    tx_hash = %transaction_hash,
+    chain_id = ?chain_id,
+))]
 pub async fn simulate_ethereum_transaction_by_hash(
     db_pool: &Pool<Postgres>,
     s3_client: &aws_sdk_s3::Client,
@@ -1212,7 +1240,7 @@ fn decode_l2_l1_event(log: &Log) -> Option<DecodedL2ToL1Message> {
             U256::from(payload.len()).to_big_endian(&mut len_bytes);
             bytes.extend_from_slice(&len_bytes);
 
-            for p in payload.clone() {
+            for p in &payload {
                 let mut p_bytes = [0u8; 32];
                 p.to_big_endian(&mut p_bytes);
                 bytes.extend_from_slice(&p_bytes);
