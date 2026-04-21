@@ -15,3 +15,5 @@ flamegraph.svg
 local/db-docker-compose-full.yaml
 
 .vscode/
+
+.claude/

@@ -13,7 +13,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use tracing::info;
+use tracing::{debug, info};
 
 // Struct to deserialize GitHub API release response
 #[derive(Debug, Deserialize)]
@@ -128,9 +128,7 @@ fn parse_version_from_tag(tag_name: &str) -> String {
     if version_str.starts_with("sozo/") {
         version_str = &version_str[5..];
     }
-    
     version_str = version_str.trim_start_matches('v');
-    
     version_str.to_string()
 }
 
@@ -225,6 +223,15 @@ pub async fn check_periodically_updates(
     );
     let should_include_2_9_4 = !Path::new(&expected_2_9_4_path).exists();
 
+    // NOTE: Pre-check if 2.16.1 is already installed
+    // The 2.16.1 is release after 2.17.0-rc.0 and 2.17.0-rc.1
+    let version_2_16_1 = Version::parse("2.16.1").unwrap();
+    let expected_2_16_1_path = format!(
+        "{}{}v2.16.1",
+        binaries_dir_path_string, binary_destination_path_prefix
+    );
+    let should_include_2_16_1 = !Path::new(&expected_2_16_1_path).exists();
+
     // Process all releases in a single pass
     let mut releases: Vec<(Version, Release)> = all_releases
         .into_iter()
@@ -233,11 +240,19 @@ pub async fn check_periodically_updates(
             let version_str = parse_version_from_tag(&release.tag_name);
             let version = Version::parse(&version_str).ok()?;
 
-            // Check for new version and for 2.9.4
+            // Check for new version and for 2.9.4 and 2.16.1
             let is_newer = version > latest_installed_tag;
             let is_2_9_4 = version == version_2_9_4 && should_include_2_9_4;
+            let is_2_16_1 = version == version_2_16_1 && should_include_2_16_1;
 
-            (is_newer || is_2_9_4).then_some((version, release))
+            if !is_newer {
+                debug!(
+                    "Skipping {} release {} (parsed {}): not newer than current latest installed tag {}.",
+                    tool_name, release.tag_name, version, latest_installed_tag
+                );
+            }
+
+            (is_newer || is_2_9_4 || is_2_16_1).then_some((version, release))
         })
         .collect();
 
@@ -257,14 +272,14 @@ pub async fn check_periodically_updates(
         {
             let output_path_string = format!("{}/{}", binaries_dir_path_string, asset.name);
             let tar_gz_output_path = Path::new(&output_path_string);
-            info!("Downloading {}", asset.browser_download_url);
+            debug!("Downloading {}", asset.browser_download_url);
             download_file(&asset.browser_download_url, tar_gz_output_path).await?;
             info!("Downloaded to: {:?}", tar_gz_output_path);
 
             if asset.name.ends_with(".tar.gz") {
                 if tool_name == "scarb" {
                     let binaries_dir_path = Path::new(&binaries_dir_path_string);
-                    info!("Extracting to: {:?}", binaries_dir_path);
+                    debug!("Extracting to: {:?}", binaries_dir_path);
                     extract_tar_gz(tar_gz_output_path, binaries_dir_path).await?;
                     let extracted_tar_gz_folder_path =
                         output_path_string.trim_end_matches(".tar.gz");
@@ -286,8 +301,8 @@ pub async fn check_periodically_updates(
                     tokio::fs::remove_dir_all(extracted_tar_gz_folder_path).await?;
                     // Save the latest downloaded tool version to the file
                     // NOTE: We are not update the latest_installed_tag_from_file in case it is
-                    // 2.9.4
-                    if version != version_2_9_4 {
+                    // 2.9.4 or 2.16.1
+                    if version != version_2_9_4 && version != version_2_16_1 {
                         tokio_fs::write(&versioning_file_name, release.tag_name.as_bytes()).await?;
                     }
                     info!(
