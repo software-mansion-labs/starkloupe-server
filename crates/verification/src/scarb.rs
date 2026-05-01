@@ -46,6 +46,12 @@ pub fn default_build_timeout() -> Option<Duration> {
     Some(Duration::from_secs(secs))
 }
 
+/// True if this error is the tokio timeout raised by `run_project_build_for_profile`.
+/// Centralized so callers don't string-match on the message.
+pub fn is_build_timeout_error(e: &anyhow::Error) -> bool {
+    e.to_string().contains("Build timed out after")
+}
+
 /// `build_timeout`: `Some(d)` wraps with `tokio::time::timeout`; `None` waits without a deadline
 /// (the OS-level CPU limit from `BUILD_CPU_LIMIT` still applies).
 async fn run_project_build_for_profile(

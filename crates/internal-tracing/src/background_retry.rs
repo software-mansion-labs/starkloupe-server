@@ -1,6 +1,9 @@
+use crate::debugger_data_fetcher::extract_debugger_data_from_contract_class;
 use crate::external_class_cache::ExternalClassCache;
+use crate::ClassDebuggerDataWithContractClass;
+use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
@@ -52,7 +55,6 @@ impl BackgroundRetryService {
         let svc = self.clone();
 
         tokio::spawn(async move {
-            // Dedup: check-and-insert atomically under write lock
             {
                 let mut in_flight = svc.in_flight.write().await;
                 if !in_flight.insert(class_hash.clone()) {
@@ -69,7 +71,6 @@ impl BackgroundRetryService {
                 class_hash
             );
 
-            // Acquire semaphore permit (blocks at capacity)
             let _permit = match svc.semaphore.acquire().await {
                 Ok(permit) => permit,
                 Err(_) => {
@@ -84,7 +85,7 @@ impl BackgroundRetryService {
 
             info!("Background retry starting compilation for {}", class_hash);
 
-            // Compile with no tokio timeout (None) — only OS CPU limit applies
+            // No tokio timeout — only the OS CPU limit (BUILD_CPU_LIMIT) bounds the build.
             match compile_voyager_source(source_response, None).await {
                 Ok(compiled) => {
                     info!(
@@ -92,73 +93,49 @@ impl BackgroundRetryService {
                         class_hash, compiled.inline_class_hash
                     );
 
-                    // Persist inline class to S3 + DB
-                    if let Err(e) = upload_class_to_s3(
+                    let inline_persist = persist_class(
                         &svc.s3_client,
-                        &compiled.inline_class_hash,
-                        &compiled.contract_class,
-                        &None,
-                        &compiled.source_code,
-                    )
-                    .await
-                    {
-                        warn!(
-                            "Background retry: failed to upload inline class {} to S3: {:?}",
-                            compiled.inline_class_hash, e
-                        );
-                    }
-
-                    if let Err(e) = insert_contract_class(
                         &svc.db_pool,
                         &compiled.inline_class_hash,
+                        &compiled.contract_class,
+                        &compiled.source_code,
                         true,
-                        true,
-                        true,
-                        None,
-                    )
-                    .await
-                    {
-                        warn!(
-                            "Background retry: failed to insert inline class {} in DB: {:?}",
-                            compiled.inline_class_hash, e
-                        );
+                    );
+                    match &compiled.original_contract_class {
+                        Some(original) => {
+                            let original_persist = persist_class(
+                                &svc.s3_client,
+                                &svc.db_pool,
+                                &compiled.original_class_hash,
+                                original,
+                                &compiled.source_code,
+                                false,
+                            );
+                            tokio::join!(inline_persist, original_persist);
+                        }
+                        None => inline_persist.await,
                     }
 
-                    // Persist original class to S3 + DB if available
-                    if let Some(ref original_contract_class) = compiled.original_contract_class {
-                        if let Err(e) = upload_class_to_s3(
-                            &svc.s3_client,
-                            &compiled.original_class_hash,
-                            original_contract_class,
-                            &None,
-                            &compiled.source_code,
+                    // Use `set`, not `update_inline_data` — Phase 1 failure leaves no cache entry.
+                    let class_debugger_data = extract_debugger_data_from_contract_class(
+                        &compiled.contract_class,
+                        &compiled.source_code,
+                    );
+                    let inline_hash = compiled.inline_class_hash.clone();
+                    let cache_data = ClassDebuggerDataWithContractClass {
+                        inline_strategy_class_hash: Some(compiled.inline_class_hash),
+                        class_debugger_data,
+                        contract_class: compiled.contract_class,
+                    };
+                    svc.external_cache
+                        .set(
+                            &class_hash,
+                            Some(cache_data),
+                            compiled.original_contract_class,
+                            Some(inline_hash),
+                            "background-retry",
                         )
-                        .await
-                        {
-                            warn!(
-                                "Background retry: failed to upload original class {} to S3: {:?}",
-                                compiled.original_class_hash, e
-                            );
-                        }
-
-                        if let Err(e) = insert_contract_class(
-                            &svc.db_pool,
-                            &compiled.original_class_hash,
-                            true,
-                            false,
-                            true,
-                            None,
-                        )
-                        .await
-                        {
-                            warn!(
-                                "Background retry: failed to insert original class {} in DB: {:?}",
-                                compiled.original_class_hash, e
-                            );
-                        }
-                    }
-
-                    // Clear the failed status so normal requests pick up the verified class
+                        .await;
                     svc.external_cache.clear_failed(&class_hash).await;
 
                     info!(
@@ -171,11 +148,50 @@ impl BackgroundRetryService {
                         "Background retry compilation failed for {}: {:?} (no further retries)",
                         class_hash, e
                     );
+                    // The longer retry also failed → drop the partial Phase 1 cache entry
+                    // and mark failed so simple-trace stops re-fetching from Voyager
+                    // for the failed TTL window.
+                    svc.external_cache.invalidate(&class_hash).await;
+                    svc.external_cache.mark_failed(&class_hash).await;
                 }
             }
 
-            // Always remove from in-flight set
             svc.in_flight.write().await.remove(&class_hash);
         });
+    }
+}
+
+/// Upload the class to S3 and insert the DB row in parallel. Errors on either
+/// side are logged, not propagated — partial persistence is acceptable since
+/// the next request will re-attempt the missing piece.
+async fn persist_class(
+    s3_client: &aws_sdk_s3::Client,
+    db_pool: &Pool<Postgres>,
+    class_hash: &str,
+    contract_class: &ContractClass,
+    source_code: &HashMap<String, String>,
+    is_cairo_debug_info: bool,
+) {
+    let s3_fut = upload_class_to_s3(s3_client, class_hash, contract_class, &None, source_code);
+    let db_fut = insert_contract_class(
+        db_pool,
+        class_hash,
+        true,
+        is_cairo_debug_info,
+        true,
+        None,
+    );
+    let (s3_res, db_res) = tokio::join!(s3_fut, db_fut);
+    if let Err(e) = s3_res {
+        warn!(
+            "Background retry: failed to upload class {} to S3: {:?}",
+            class_hash, e
+        );
+    }
+    if let Err(e) = db_res {
+        warn!(
+            "Background retry: failed to insert class {} in DB: {:?}",
+            class_hash, e
+        );
     }
 }

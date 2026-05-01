@@ -15,13 +15,21 @@ use tracing::{debug, error, info, warn};
 use verification::{
     db::fetch_verified_classes_with_inlining_classes,
     s3::key_for_class_hash,
-    scarb::default_build_timeout,
+    scarb::{default_build_timeout, is_build_timeout_error},
     voyager::{
         cleanup_tmp_dir, compile_voyager_phase1, compile_voyager_phase2, compile_voyager_source,
         VoyagerClient,
     },
     CodeLocation, SierraStatementToCairoDebugInfo, VerifiedClassData,
 };
+
+fn timeout_suffix(is_timeout: bool) -> &'static str {
+    if is_timeout {
+        " (timeout — enqueuing background retry)"
+    } else {
+        ""
+    }
+}
 
 async fn fetch_and_parse_file(
     client: &aws_sdk_s3::Client,
@@ -395,16 +403,12 @@ pub async fn fetch_classes_debugger_data_with_external(
                                 info!("Successfully compiled Voyager source for {}", class_hash);
                             }
                             Err(e) => {
-                                let is_timeout = e.to_string().contains("timed out");
+                                let is_timeout = is_build_timeout_error(&e);
                                 warn!(
                                     "Failed to compile Voyager source for {}: {:?}{}",
                                     class_hash,
                                     e,
-                                    if is_timeout {
-                                        " (timeout — enqueuing background retry)"
-                                    } else {
-                                        ""
-                                    }
+                                    timeout_suffix(is_timeout)
                                 );
                                 if let Some(cache) = external_cache {
                                     cache.mark_failed(&class_hash).await;
@@ -534,16 +538,12 @@ pub async fn check_voyager_verified_classes(
                                     {
                                         Ok(p) => p,
                                         Err(e) => {
-                                            let is_timeout = e.to_string().contains("timed out");
+                                            let is_timeout = is_build_timeout_error(&e);
                                             warn!(
                                                 "Phase 1 failed for {}: {:?}{}",
                                                 class_hash_clone,
                                                 e,
-                                                if is_timeout {
-                                                    " (timeout — enqueuing background retry)"
-                                                } else {
-                                                    ""
-                                                }
+                                                timeout_suffix(is_timeout)
                                             );
                                             cache.mark_failed(&class_hash_clone).await;
                                             if is_timeout {
@@ -666,16 +666,12 @@ pub async fn check_voyager_verified_classes(
                                             info!("Phase 2 complete for {}", class_hash_clone);
                                         }
                                         Err(e) => {
-                                            let is_timeout = e.to_string().contains("timed out");
+                                            let is_timeout = is_build_timeout_error(&e);
                                             warn!(
                                                 "Phase 2: BUILD FAILED for {}: {:?}{}",
                                                 class_hash_clone,
                                                 e,
-                                                if is_timeout {
-                                                    " (timeout — enqueuing background retry)"
-                                                } else {
-                                                    ""
-                                                }
+                                                timeout_suffix(is_timeout)
                                             );
                                             // Don't mark_failed — Phase 1 data (original_contract_class)
                                             // is still valid for simple trace function calls
