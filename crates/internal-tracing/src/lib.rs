@@ -9,6 +9,7 @@ pub mod function_call;
 pub mod function_calls_map;
 pub mod mappings;
 pub mod utils;
+pub mod voyager_persistence;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use call_trace::DebuggerTraceEntry;
 use serde::Serialize;

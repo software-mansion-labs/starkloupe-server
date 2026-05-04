@@ -283,6 +283,30 @@ pub async fn insert_class_hash_profiles(
     Ok(())
 }
 
+/// Returns true if any verification_request linked to this class_hash via
+/// class_hash_profiles has status='voyager' — i.e. the class was originally
+/// fetched from Voyager and persisted by us, not verified through the regular
+/// Walnut flow.
+pub async fn class_has_voyager_provenance(
+    db_pool: &Pool<Postgres>,
+    class_hash: &str,
+) -> Result<bool> {
+    let row = sqlx::query!(
+        r#"
+        SELECT 1 AS hit
+        FROM verification_requests vr
+        JOIN class_hash_profiles chp ON chp.verification_id = vr.id
+        WHERE chp.class_hash = $1 AND vr.status = 'voyager'
+        LIMIT 1
+        "#,
+        class_hash
+    )
+    .fetch_optional(db_pool)
+    .await?;
+
+    Ok(row.is_some())
+}
+
 pub async fn insert_verification_request(
     db_pool: &Pool<Postgres>,
     verification_request_id: Uuid,

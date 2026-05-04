@@ -1,14 +1,12 @@
 use crate::debugger_data_fetcher::extract_debugger_data_from_contract_class;
 use crate::external_class_cache::ExternalClassCache;
+use crate::voyager_persistence::persist_compiled_voyager_class;
 use crate::ClassDebuggerDataWithContractClass;
-use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
-use verification::db::insert_contract_class;
-use verification::s3::upload_class_to_s3;
 use verification::voyager::{compile_voyager_source, VoyagerSourceResponse};
 
 /// Manages background retry compilations for contracts that timed out during
@@ -18,7 +16,7 @@ use verification::voyager::{compile_voyager_source, VoyagerSourceResponse};
 pub struct BackgroundRetryService {
     semaphore: Arc<Semaphore>,
     /// Class hashes currently being retried (prevents duplicate retries).
-    in_flight: Arc<RwLock<HashSet<String>>>,
+    active_retries: Arc<RwLock<HashSet<String>>>,
     db_pool: Pool<Postgres>,
     s3_client: aws_sdk_s3::Client,
     external_cache: ExternalClassCache,
@@ -42,7 +40,7 @@ impl BackgroundRetryService {
 
         Self {
             semaphore: Arc::new(Semaphore::new(max_compilations)),
-            in_flight: Arc::new(RwLock::new(HashSet::new())),
+            active_retries: Arc::new(RwLock::new(HashSet::new())),
             db_pool,
             s3_client,
             external_cache,
@@ -56,8 +54,8 @@ impl BackgroundRetryService {
 
         tokio::spawn(async move {
             {
-                let mut in_flight = svc.in_flight.write().await;
-                if !in_flight.insert(class_hash.clone()) {
+                let mut active_retries = svc.active_retries.write().await;
+                if !active_retries.insert(class_hash.clone()) {
                     info!(
                         "Background retry already in flight for {}, skipping",
                         class_hash
@@ -78,7 +76,7 @@ impl BackgroundRetryService {
                         "Background retry semaphore closed for {}, aborting",
                         class_hash
                     );
-                    svc.in_flight.write().await.remove(&class_hash);
+                    svc.active_retries.write().await.remove(&class_hash);
                     return;
                 }
             };
@@ -93,28 +91,13 @@ impl BackgroundRetryService {
                         class_hash, compiled.inline_class_hash
                     );
 
-                    let inline_persist = persist_class(
+                    persist_compiled_voyager_class(
                         &svc.s3_client,
                         &svc.db_pool,
-                        &compiled.inline_class_hash,
-                        &compiled.contract_class,
-                        &compiled.source_code,
-                        true,
-                    );
-                    match &compiled.original_contract_class {
-                        Some(original) => {
-                            let original_persist = persist_class(
-                                &svc.s3_client,
-                                &svc.db_pool,
-                                &compiled.original_class_hash,
-                                original,
-                                &compiled.source_code,
-                                false,
-                            );
-                            tokio::join!(inline_persist, original_persist);
-                        }
-                        None => inline_persist.await,
-                    }
+                        &compiled,
+                        "background-retry",
+                    )
+                    .await;
 
                     // Use `set`, not `update_inline_data` — Phase 1 failure leaves no cache entry.
                     let class_debugger_data = extract_debugger_data_from_contract_class(
@@ -156,42 +139,7 @@ impl BackgroundRetryService {
                 }
             }
 
-            svc.in_flight.write().await.remove(&class_hash);
+            svc.active_retries.write().await.remove(&class_hash);
         });
-    }
-}
-
-/// Upload the class to S3 and insert the DB row in parallel. Errors on either
-/// side are logged, not propagated — partial persistence is acceptable since
-/// the next request will re-attempt the missing piece.
-async fn persist_class(
-    s3_client: &aws_sdk_s3::Client,
-    db_pool: &Pool<Postgres>,
-    class_hash: &str,
-    contract_class: &ContractClass,
-    source_code: &HashMap<String, String>,
-    is_cairo_debug_info: bool,
-) {
-    let s3_fut = upload_class_to_s3(s3_client, class_hash, contract_class, &None, source_code);
-    let db_fut = insert_contract_class(
-        db_pool,
-        class_hash,
-        true,
-        is_cairo_debug_info,
-        true,
-        None,
-    );
-    let (s3_res, db_res) = tokio::join!(s3_fut, db_fut);
-    if let Err(e) = s3_res {
-        warn!(
-            "Background retry: failed to upload class {} to S3: {:?}",
-            class_hash, e
-        );
-    }
-    if let Err(e) = db_res {
-        warn!(
-            "Background retry: failed to insert class {} in DB: {:?}",
-            class_hash, e
-        );
     }
 }

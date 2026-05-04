@@ -176,6 +176,8 @@ pub async fn simulate(
     // This triggers synchronous compilation so function calls are available on simple(non inline) trace
     let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
     let voyager_verified = check_voyager_verified_classes(
+        db_pool,
+        s3_client,
         voyager_client,
         &class_hashes,
         &already_verified,

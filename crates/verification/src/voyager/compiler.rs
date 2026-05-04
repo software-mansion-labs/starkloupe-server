@@ -29,6 +29,15 @@ pub struct CompiledExternalClass {
     pub original_contract_class: Option<ContractClass>,
     /// Original source code (cleaned, without walnut-debug profile)
     pub source_code: HashMap<String, String>,
+    /// Cairo version parsed from the manifest (used when persisting verification metadata)
+    pub cairo_version: (u32, u32, u32),
+    /// Package name from the manifest (used when persisting verification metadata)
+    pub package_name: String,
+    /// Profile name that produced the inline class (recorded in class_hash_profiles)
+    pub inline_profile: String,
+    /// Profile name that produced `original_contract_class` (e.g. "release" or "dev").
+    /// None when no non-inline profile matched the on-chain hash.
+    pub original_profile: Option<String>,
 }
 
 /// Result of Phase 1 (non-inline) compilation.
@@ -43,6 +52,9 @@ pub struct Phase1Result {
     pub original_class_hash: String,
     /// Non-inline class whose CASM matches the on-chain original. None if no profile matched.
     pub original_contract_class: Option<ContractClass>,
+    /// Name of the non-inline profile that produced `original_contract_class`
+    /// (e.g. "release" or "dev"). None when no profile matched.
+    pub original_profile: Option<String>,
     /// Set when the matching profile already had inline avoid strategy —
     /// contains (inline_class_hash, inline_contract_class). Phase 2 not needed.
     pub inline_already_built: Option<(String, ContractClass)>,
@@ -169,6 +181,7 @@ pub async fn compile_voyager_phase1(
     // Reactive fallback: on the first dep-resolution error (only if proactive pass was not
     // applied) we query the scarbs.xyz registry API again and restart the profile loop once.
     let mut original_contract_class: Option<ContractClass> = None;
+    let mut original_profile: Option<String> = None;
     let mut inline_already_built: Option<(String, ContractClass)> = None;
 
     'retry: loop {
@@ -200,6 +213,7 @@ pub async fn compile_voyager_phase1(
                                 non_inline_profile, original_class_hash
                             );
                             original_contract_class = Some(contract_class.clone());
+                            original_profile = Some((*non_inline_profile).to_string());
 
                             // Check if this profile already has inline avoid strategy
                             if manifest
@@ -271,6 +285,7 @@ pub async fn compile_voyager_phase1(
     Ok(Phase1Result {
         original_class_hash,
         original_contract_class,
+        original_profile,
         inline_already_built,
         manifest,
         inline_profile,
@@ -384,6 +399,10 @@ pub async fn compile_voyager_phase2(
         contract_class,
         original_contract_class: phase1.original_contract_class,
         source_code: phase1.source_code,
+        cairo_version: phase1.manifest.cairo_version,
+        package_name: phase1.manifest.package_name,
+        inline_profile: phase1.inline_profile,
+        original_profile: phase1.original_profile,
     })
 }
 
@@ -418,6 +437,10 @@ pub async fn compile_voyager_source(
             contract_class,
             original_contract_class: phase1.original_contract_class,
             source_code: phase1.source_code,
+            cairo_version: phase1.manifest.cairo_version,
+            package_name: phase1.manifest.package_name,
+            inline_profile: phase1.inline_profile,
+            original_profile: phase1.original_profile,
         })
     } else {
         compile_voyager_phase2(phase1, build_timeout).await
