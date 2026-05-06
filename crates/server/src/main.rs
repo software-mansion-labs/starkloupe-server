@@ -128,12 +128,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            // Initialize background retry service for timed-out Voyager compilations
+            let background_retry = internal_tracing::background_retry::BackgroundRetryService::new(
+                db_pool.clone(),
+                s3_client.clone(),
+                external_class_cache.clone(),
+            );
+
             let shared_state = Arc::new(AppState {
                 db_pool,
                 s3_client,
                 simulation_cache,
                 external_class_cache,
                 voyager_client,
+                background_retry,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();

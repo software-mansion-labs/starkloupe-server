@@ -61,6 +61,7 @@ pub async fn debug_transaction(
                     debug_args,
                     Some(&state.external_class_cache),
                     state.voyager_client.as_ref(),
+                    Some(&state.background_retry),
                 )
                 .await
                 {

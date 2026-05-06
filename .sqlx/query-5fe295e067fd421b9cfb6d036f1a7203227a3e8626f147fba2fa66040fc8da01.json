@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT 1 AS hit\n        FROM verification_requests vr\n        JOIN class_hash_profiles chp ON chp.verification_id = vr.id\n        WHERE chp.class_hash = $1 AND vr.status = 'voyager'\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hit",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5fe295e067fd421b9cfb6d036f1a7203227a3e8626f147fba2fa66040fc8da01"
+}

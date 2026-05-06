@@ -11,6 +11,7 @@ use scarb_dep_resolver::{is_dep_resolution_error, resolve_registry_deps};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -28,6 +29,15 @@ pub struct CompiledExternalClass {
     pub original_contract_class: Option<ContractClass>,
     /// Original source code (cleaned, without walnut-debug profile)
     pub source_code: HashMap<String, String>,
+    /// Cairo version parsed from the manifest (used when persisting verification metadata)
+    pub cairo_version: (u32, u32, u32),
+    /// Package name from the manifest (used when persisting verification metadata)
+    pub package_name: String,
+    /// Profile name that produced the inline class (recorded in class_hash_profiles)
+    pub inline_profile: String,
+    /// Profile name that produced `original_contract_class` (e.g. "release" or "dev").
+    /// None when no non-inline profile matched the on-chain hash.
+    pub original_profile: Option<String>,
 }
 
 /// Result of Phase 1 (non-inline) compilation.
@@ -42,6 +52,9 @@ pub struct Phase1Result {
     pub original_class_hash: String,
     /// Non-inline class whose CASM matches the on-chain original. None if no profile matched.
     pub original_contract_class: Option<ContractClass>,
+    /// Name of the non-inline profile that produced `original_contract_class`
+    /// (e.g. "release" or "dev"). None when no profile matched.
+    pub original_profile: Option<String>,
     /// Set when the matching profile already had inline avoid strategy —
     /// contains (inline_class_hash, inline_contract_class). Phase 2 not needed.
     pub inline_already_built: Option<(String, ContractClass)>,
@@ -64,6 +77,7 @@ pub struct Phase1Result {
 /// (in that case `original_contract_class` is None). Errors only on preparation failure.
 pub async fn compile_voyager_phase1(
     source_response: VoyagerSourceResponse,
+    build_timeout: Option<Duration>,
 ) -> Result<Phase1Result> {
     let original_class_hash = source_response.class_hash.clone();
     let verified_name = source_response.verified_name.clone();
@@ -167,6 +181,7 @@ pub async fn compile_voyager_phase1(
     // Reactive fallback: on the first dep-resolution error (only if proactive pass was not
     // applied) we query the scarbs.xyz registry API again and restart the profile loop once.
     let mut original_contract_class: Option<ContractClass> = None;
+    let mut original_profile: Option<String> = None;
     let mut inline_already_built: Option<(String, ContractClass)> = None;
 
     'retry: loop {
@@ -182,7 +197,14 @@ pub async fn compile_voyager_phase1(
                 non_inline_profile, original_class_hash
             );
 
-            match build_with_scarb_for_profile(&manifest, &tmp_dir, non_inline_profile).await {
+            match build_with_scarb_for_profile(
+                &manifest,
+                &tmp_dir,
+                non_inline_profile,
+                build_timeout,
+            )
+            .await
+            {
                 Ok(classes) if !classes.is_empty() => {
                     for (hash, contract_class) in classes {
                         if hash == original_class_hash {
@@ -191,6 +213,7 @@ pub async fn compile_voyager_phase1(
                                 non_inline_profile, original_class_hash
                             );
                             original_contract_class = Some(contract_class.clone());
+                            original_profile = Some((*non_inline_profile).to_string());
 
                             // Check if this profile already has inline avoid strategy
                             if manifest
@@ -262,6 +285,7 @@ pub async fn compile_voyager_phase1(
     Ok(Phase1Result {
         original_class_hash,
         original_contract_class,
+        original_profile,
         inline_already_built,
         manifest,
         inline_profile,
@@ -275,7 +299,10 @@ pub async fn compile_voyager_phase1(
 /// Consumes `Phase1Result` and cleans up the temp directory when done.
 ///
 /// Only call this when `phase1.inline_already_built` is None.
-pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExternalClass> {
+pub async fn compile_voyager_phase2(
+    phase1: Phase1Result,
+    build_timeout: Option<Duration>,
+) -> Result<CompiledExternalClass> {
     let tmp_dir = phase1.tmp_dir.clone();
     let original_class_hash = phase1.original_class_hash.clone();
     let verified_name = phase1.verified_name.clone();
@@ -289,6 +316,7 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
         &phase1.manifest,
         &tmp_dir,
         &phase1.inline_profile,
+        build_timeout,
     )
     .await
     {
@@ -371,6 +399,10 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
         contract_class,
         original_contract_class: phase1.original_contract_class,
         source_code: phase1.source_code,
+        cairo_version: phase1.manifest.cairo_version,
+        package_name: phase1.manifest.package_name,
+        inline_profile: phase1.inline_profile,
+        original_profile: phase1.original_profile,
     })
 }
 
@@ -379,8 +411,9 @@ pub async fn compile_voyager_phase2(phase1: Phase1Result) -> Result<CompiledExte
 /// Used by the debug trace fallback path when no pre-compilation has happened.
 pub async fn compile_voyager_source(
     source_response: VoyagerSourceResponse,
+    build_timeout: Option<Duration>,
 ) -> Result<CompiledExternalClass> {
-    let phase1 = compile_voyager_phase1(source_response).await?;
+    let phase1 = compile_voyager_phase1(source_response, build_timeout).await?;
 
     if let Some((inline_class_hash, contract_class)) = phase1.inline_already_built.clone() {
         // Matching profile already had inline strategy — no Phase 2 needed
@@ -404,9 +437,13 @@ pub async fn compile_voyager_source(
             contract_class,
             original_contract_class: phase1.original_contract_class,
             source_code: phase1.source_code,
+            cairo_version: phase1.manifest.cairo_version,
+            package_name: phase1.manifest.package_name,
+            inline_profile: phase1.inline_profile,
+            original_profile: phase1.original_profile,
         })
     } else {
-        compile_voyager_phase2(phase1).await
+        compile_voyager_phase2(phase1, build_timeout).await
     }
 }
 

@@ -4,7 +4,8 @@ use crate::db::{
 };
 use crate::manifest::Manifest;
 use crate::scarb::{
-    build_with_scarb_for_profile, compile_with_scarb_for_profile, is_new_cairo_version_supported,
+    build_with_scarb_for_profile, compile_with_scarb_for_profile, default_build_timeout,
+    is_new_cairo_version_supported,
 };
 use crate::utils::move_failed_verification_to_failed_tmp;
 use crate::SierraToCairoDebugInfo;
@@ -352,7 +353,14 @@ async fn handle_new_cairo_verision_class_verification_profiles(
             "Processing inline strategy profile:",
         );
 
-        match build_with_scarb_for_profile(manifest, tmp_dir, inline_strategy_profile).await {
+        match build_with_scarb_for_profile(
+            manifest,
+            tmp_dir,
+            inline_strategy_profile,
+            default_build_timeout(),
+        )
+        .await
+        {
             Ok(classes) => {
                 for (class_hash, contract_class) in classes {
                     inline_class_hashes.push((class_hash.clone(), contract_class.clone()));
@@ -394,7 +402,9 @@ async fn handle_new_cairo_verision_class_verification_profiles(
                 profile = profile,
                 "Processing profile",
             );
-            match build_with_scarb_for_profile(manifest, tmp_dir, profile).await {
+            match build_with_scarb_for_profile(manifest, tmp_dir, profile, default_build_timeout())
+                .await
+            {
                 Ok(classes) => {
                     if classes.len() == inline_class_hashes.len() {
                         for (idx, (class_hash, contract_class)) in classes.into_iter().enumerate() {
@@ -563,7 +573,15 @@ async fn handle_old_cairo_verision_class_verification_profiles(
             profile = profile,
             "Processing profile",
         );
-        match compile_with_scarb_for_profile(manifest, cairo_version, tmp_dir, profile).await {
+        match compile_with_scarb_for_profile(
+            manifest,
+            cairo_version,
+            tmp_dir,
+            profile,
+            default_build_timeout(),
+        )
+        .await
+        {
             Ok(classes) => {
                 for (class_hash, contract_class, cairo_debug_info_path) in classes {
                     if let Err(err) = insert_class_hash_profiles(

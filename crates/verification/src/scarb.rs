@@ -35,15 +35,34 @@ fn minimum_supported_new_dojo_version() -> Version {
     Version::parse("1.1.0").unwrap()
 }
 
-async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &str) -> Result<()> {
+/// Returns the default build timeout read from `BUILD_TIMEOUT_SECS` env var (default 120s).
+/// Pass the result to `build_with_scarb_for_profile` / `compile_with_scarb_for_profile`.
+/// Use `None` to skip the tokio timeout (background retries rely on OS CPU limit only).
+pub fn default_build_timeout() -> Option<Duration> {
+    let secs: u64 = std::env::var("BUILD_TIMEOUT_SECS")
+        .unwrap_or("120".to_string())
+        .parse()
+        .unwrap_or(120);
+    Some(Duration::from_secs(secs))
+}
+
+/// True if this error is the tokio timeout raised by `run_project_build_for_profile`.
+/// Centralized so callers don't string-match on the message.
+pub fn is_build_timeout_error(e: &anyhow::Error) -> bool {
+    e.to_string().contains("Build timed out after")
+}
+
+/// `build_timeout`: `Some(d)` wraps with `tokio::time::timeout`; `None` waits without a deadline
+/// (the OS-level CPU limit from `BUILD_CPU_LIMIT` still applies).
+async fn run_project_build_for_profile(
+    tmp_dir: &PathBuf,
+    path: &str,
+    profile: &str,
+    build_timeout: Option<Duration>,
+) -> Result<()> {
     let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
         .unwrap_or("300".to_string())
         .parse::<u64>()?;
-
-    let build_timeout_secs: u64 = std::env::var("BUILD_TIMEOUT_SECS")
-        .unwrap_or("120".to_string())
-        .parse::<u64>()?;
-    let build_timeout = Duration::from_secs(build_timeout_secs);
 
     let absolute_path = fs::canonicalize(path).map_err(|e| {
         let binary = path
@@ -77,8 +96,22 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
     let build_start = std::time::Instant::now();
     let mut child = cmd.spawn()?;
 
-    match tokio::time::timeout(build_timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => {
+    let wait_result = if let Some(timeout_duration) = build_timeout {
+        match tokio::time::timeout(timeout_duration, child.wait_with_output()).await {
+            Ok(inner) => inner,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "Build timed out after {}s",
+                    timeout_duration.as_secs()
+                ));
+            }
+        }
+    } else {
+        child.wait_with_output().await
+    };
+
+    match wait_result {
+        Ok(output) => {
             let duration = build_start.elapsed();
             if output.status.success() {
                 info!(
@@ -105,11 +138,7 @@ async fn run_project_build_for_profile(tmp_dir: &PathBuf, path: &str, profile: &
                 Err(anyhow::anyhow!("Project build failed: {}", combined))
             }
         }
-        Ok(Err(e)) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),
-        Err(_) => Err(anyhow::anyhow!(
-            "Build timed out after {}s",
-            build_timeout_secs
-        )),
+        Err(e) => Err(anyhow::anyhow!("Failed to wait for process: {:?}", e)),
     }
 }
 
@@ -124,6 +153,7 @@ pub async fn compile_with_scarb_for_profile(
     starknet_version: (u32, u32, u32),
     tmp_dir: &PathBuf,
     profile: &str,
+    build_timeout: Option<Duration>,
 ) -> Result<Vec<(String, ContractClass, PathBuf)>> {
     if !is_cairo_version_supported(starknet_version) {
         return Err(anyhow::anyhow!(
@@ -139,7 +169,7 @@ pub async fn compile_with_scarb_for_profile(
         binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
     );
 
-    run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
+    run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
 
     read_old_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -154,6 +184,7 @@ pub async fn build_with_scarb_for_profile(
     manifest: &Manifest,
     tmp_dir: &PathBuf,
     profile: &str,
+    build_timeout: Option<Duration>,
 ) -> Result<Vec<(String, ContractClass)>> {
     if !is_new_cairo_version_supported(manifest.cairo_version) {
         error!(
@@ -176,7 +207,7 @@ pub async fn build_with_scarb_for_profile(
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
-        run_project_build_for_profile(tmp_dir, &sozo_path, profile).await?;
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile, build_timeout).await?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -187,7 +218,7 @@ pub async fn build_with_scarb_for_profile(
             manifest.cairo_version.1,
             manifest.cairo_version.2
         );
-        run_project_build_for_profile(tmp_dir, &scarb_path, profile).await?;
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
