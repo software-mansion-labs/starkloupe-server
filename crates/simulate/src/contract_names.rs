@@ -1,5 +1,4 @@
 use futures::future::join_all;
-use serde_json::Value;
 use starknet_api::core::{ChainId, ContractAddress};
 use starknet_rust::core::types::{BlockId, BlockTag, Felt, FunctionCall};
 use starknet_rust::macros::selector;
@@ -8,8 +7,7 @@ use starknet_rust::providers::{
     Provider,
 };
 use std::collections::{HashMap, HashSet};
-use tracing::info;
-use walnut_shared::{bytes_to_text, get_voyager_api_url};
+use walnut_shared::{bytes_to_text, fetch_voyager_contract_alias, get_voyager_api_url};
 
 use crate::contract_calls_map::ContractCallsMap;
 
@@ -167,34 +165,7 @@ impl ContractNamesFetcher {
         voyager_api_url: &str,
         contract_address: String,
     ) -> Option<String> {
-        let client = reqwest::Client::new();
-        let url = format!("{}contracts/{}", voyager_api_url, contract_address);
-        let call_result = client
-            .get(&url)
-            .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")
-            .send()
-            .await;
-        match call_result {
-            Ok(response) => {
-                if response.status().is_success() {
-                    let contract_details: Value = response.json().await.unwrap();
-                    let contract_alias: Option<String> =
-                        match contract_details["contractAlias"].as_str() {
-                            Some(alias) => Some(alias.to_string()),
-                            None => contract_details["classAlias"]
-                                .as_str()
-                                .map(|inner_alias| inner_alias.to_string()),
-                        };
-                    contract_alias
-                } else {
-                    None
-                }
-            }
-            Err(e) => {
-                info!("Failed to fetch contract details from voyager api: {}", e);
-                None
-            }
-        }
+        fetch_voyager_contract_alias(voyager_api_url, &contract_address).await
     }
 
     fn update_simulation_call_trace(&self, contract_calls_map: &mut ContractCallsMap) {

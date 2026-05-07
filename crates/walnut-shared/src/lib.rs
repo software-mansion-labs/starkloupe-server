@@ -232,6 +232,38 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
 
 pub const VOYAGER_API_KEY: &str = "v9ZMc0fRQ5aopjT3d80KT80aITRed0lx2pD6xxXs"; //"Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB";
 
+/// Fetches the human-readable name (alias) Voyager has registered for a
+/// deployed contract. Tries `contractAlias` first, falls back to `classAlias`.
+/// Returns `None` if Voyager doesn't know the contract or the call fails.
+pub async fn fetch_voyager_contract_alias(
+    voyager_api_url: &str,
+    contract_address: &str,
+) -> Option<String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}contracts/{}", voyager_api_url, contract_address);
+    let call_result = client
+        .get(&url)
+        .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")
+        .send()
+        .await;
+    match call_result {
+        Ok(response) => {
+            if response.status().is_success() {
+                let contract_details: Value = response.json().await.ok()?;
+                match contract_details["contractAlias"].as_str() {
+                    Some(alias) => Some(alias.to_string()),
+                    None => contract_details["classAlias"]
+                        .as_str()
+                        .map(|inner_alias| inner_alias.to_string()),
+                }
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
 pub fn extract_chain_id(chain_id: &str) -> anyhow::Result<(EChainId, ENetwork)> {
     match chain_id.to_lowercase().as_str() {
         // Starknet

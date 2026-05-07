@@ -27,8 +27,8 @@ use walnut_shared::abi::{get_enums, get_functions, get_structs, Function, Item};
 use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url,
-    extract_cairo_version_from_program, extract_chain_id, tuple_to_version_string, EChainId,
-    ENetwork,
+    extract_cairo_version_from_program, extract_chain_id, fetch_voyager_contract_alias,
+    get_voyager_api_url, tuple_to_version_string, EChainId, ENetwork,
 };
 
 #[derive(Serialize, ToSchema)]
@@ -175,6 +175,8 @@ pub struct GetContractResponse {
     pub source_code: Option<HashMap<String, String>>,
     pub sources: Vec<String>,
     pub abi: Option<String>,
+    pub contract_name: Option<String>,
+    pub class_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -314,7 +316,9 @@ pub async fn get_contract_handler(
         .await
         .is_ok();
 
-    let (source_code, voyager_hit, is_verified) = if query.include_source_code.unwrap_or_default()
+    let (source_code, voyager_hit, is_verified, class_name) = if query
+        .include_source_code
+        .unwrap_or_default()
     {
         if is_verified_locally {
             // Try local (Walnut) first
@@ -325,18 +329,21 @@ pub async fn get_contract_handler(
             )
             .await
             {
-                Ok(Some(code)) => (Some(code), false, true),
+                Ok(Some(code)) => (Some(code), false, true, None),
                 _ => {
                     // Fallback to Voyager
                     if let Some(voyager_client) = &state.voyager_client {
                         match voyager_client.fetch_source_code(&class_hash).await {
-                            Ok(Some(voyager_response)) => {
-                                (Some(voyager_response.source_code), true, true)
-                            }
-                            _ => (None, false, true), // Still verified locally even if no source code
+                            Ok(Some(voyager_response)) => (
+                                Some(voyager_response.source_code),
+                                true,
+                                true,
+                                Some(voyager_response.verified_name),
+                            ),
+                            _ => (None, false, true, None), // Still verified locally even if no source code
                         }
                     } else {
-                        (None, false, true)
+                        (None, false, true, None)
                     }
                 }
             }
@@ -344,28 +351,59 @@ pub async fn get_contract_handler(
             // Not verified locally, try Voyager
             if let Some(voyager_client) = &state.voyager_client {
                 match voyager_client.fetch_source_code(&class_hash).await {
-                    Ok(Some(voyager_response)) => {
-                        (Some(voyager_response.source_code), true, true)
-                    }
-                    _ => (None, false, false),
+                    Ok(Some(voyager_response)) => (
+                        Some(voyager_response.source_code),
+                        true,
+                        true,
+                        Some(voyager_response.verified_name),
+                    ),
+                    _ => (None, false, false, None),
                 }
             } else {
-                (None, false, false)
+                (None, false, false, None)
             }
         }
     } else {
         // No source code requested, check Voyager for verification status
         if is_verified_locally {
-            (None, false, true)
+            (None, false, true, None)
         } else if let Some(voyager_client) = &state.voyager_client {
             match voyager_client.fetch_source_code(&class_hash).await {
-                Ok(Some(_)) => (None, true, true),
-                _ => (None, false, false),
+                Ok(Some(voyager_response)) => (
+                    None,
+                    true,
+                    true,
+                    Some(voyager_response.verified_name),
+                ),
+                _ => (None, false, false, None),
             }
         } else {
-            (None, false, false)
+            (None, false, false, None)
         }
     };
+
+    // Look up the deployed contract's alias from Voyager. We try the Starknet
+    // chains where the contract was actually found, and stop at the first hit.
+    let mut contract_name: Option<String> = None;
+    for source in &valid_sources {
+        if let ESource::ChainId(chain_str) = source {
+            let chain_id_for_voyager = match chain_str.as_str() {
+                "sn_mainnet" => Some(ChainId::Mainnet),
+                "sn_sepolia" => Some(ChainId::Sepolia),
+                _ => None,
+            };
+            if let Some(chain_id) = chain_id_for_voyager {
+                if let Some(voyager_url) = get_voyager_api_url(&chain_id) {
+                    if let Some(alias) =
+                        fetch_voyager_contract_alias(voyager_url, &contract_address).await
+                    {
+                        contract_name = Some(alias);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     // Build provenance list. "walnut" if we have it locally; "voyager" if either
     // we just fetched from Voyager OR the locally cached class was originally
@@ -393,6 +431,8 @@ pub async fn get_contract_handler(
         source_code,
         sources,
         abi,
+        contract_name,
+        class_name,
     };
 
     (StatusCode::OK, Json(response_body)).into_response()
