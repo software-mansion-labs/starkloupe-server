@@ -11,7 +11,7 @@ use crate::abi_fetcher::fetch_contract_abi;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use utoipa::ToSchema;
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]

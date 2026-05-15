@@ -99,7 +99,7 @@ pub fn build_simple_contract_call_debugger_data_adapter(
 fn build_simple_contract_call_debugger_data(
     vm_memory: &[Option<Felt>],
     vm_trace: &Vec<RelocatedTraceEntry>,
-    full_class_data: &impl ClassDataProvider,
+    _full_class_data: &impl ClassDataProvider,
     function_calls_map: &mut FunctionCallsMap,
     event_calls_map: &mut EventCallsMap,
     next_call_id: &mut u32,

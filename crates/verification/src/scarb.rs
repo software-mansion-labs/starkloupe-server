@@ -94,7 +94,7 @@ async fn run_project_build_for_profile(
     }
 
     let build_start = std::time::Instant::now();
-    let mut child = cmd.spawn()?;
+    let child = cmd.spawn()?;
 
     let wait_result = if let Some(timeout_duration) = build_timeout {
         match tokio::time::timeout(timeout_duration, child.wait_with_output()).await {

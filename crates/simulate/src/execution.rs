@@ -588,7 +588,7 @@ fn execute_fee_transfer(
     tx_context: Arc<TransactionContext>,
     actual_fee: Fee,
     initial_gas: u64,
-    is_revertable: bool,
+    _is_revertable: bool,
     block_number: u64,
 ) -> Result<CallInfo, TransactionSimulationError> {
     let mut execution_context = EntryPointExecutionContext::new(

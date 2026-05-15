@@ -326,7 +326,7 @@ impl<'a> CallTraceBuilder<'a> {
     fn handle_function_entry(
         &mut self,
         trace_state: &mut TraceState,
-        i: usize,
+        _i: usize,
         trace_entry: &RelocatedTraceEntry,
         first_sierra_index: Option<usize>,
         arguments: &Vec<InternalFnCallIO>,
@@ -517,7 +517,7 @@ impl<'a> CallTraceBuilder<'a> {
     fn handle_function_exit(
         &mut self,
         trace_state: &mut TraceState,
-        i: usize,
+        _i: usize,
         trace_entry: &RelocatedTraceEntry,
         results: &Vec<InternalFnCallIO>,
         results_decoded: &Vec<DecodedValue>,
@@ -596,7 +596,7 @@ impl<'a> CallTraceBuilder<'a> {
         trace_state: &mut TraceState,
         trace_entry: &RelocatedTraceEntry,
         sierra_indexes: &Option<Vec<usize>>,
-        cairo_locations: &[CodeLocation],
+        _cairo_locations: &[CodeLocation],
         arguments: &[InternalFnCallIO],
         arguments_decoded: &[DecodedValue],
         results: &[InternalFnCallIO],

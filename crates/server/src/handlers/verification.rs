@@ -266,13 +266,6 @@ pub async fn verify_handler(
                     (StatusCode::BAD_REQUEST, e.to_string()).into_response()
                 }
             }
-        },
-        _ => {
-            (
-            StatusCode::BAD_REQUEST,
-            "The required parameter is missing - please provide a valid class hash or contract address",
-        )
-            .into_response()
         }
     }
 }

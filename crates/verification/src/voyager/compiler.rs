@@ -172,7 +172,7 @@ pub async fn compile_voyager_phase1(
                 );
                 true
             }
-            Err(e) => false,
+            Err(_) => false,
         };
 
     // Build release profile first, then dev if release doesn't match.

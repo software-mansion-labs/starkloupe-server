@@ -1,4 +1,5 @@
 use anyhow::Result;
+#[cfg(target_os = "linux")]
 use libc::{rlimit, setrlimit, RLIMIT_AS, RLIMIT_CPU};
 use std::fs;
 use std::io::Write;

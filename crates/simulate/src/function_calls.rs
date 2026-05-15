@@ -16,7 +16,7 @@ use internal_tracing::ClassDataProvider;
 use starknet_rust::core::types::Felt;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::warn;
 use walnut_shared::utils::convert_contract_class;
 use walnut_shared::utils::is_version_gte;
 
