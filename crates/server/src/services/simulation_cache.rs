@@ -68,8 +68,7 @@ impl CacheKey {
 
         hasher.update(args.sender_address.to_bytes_be());
         hasher.update(
-            args
-                .calldata
+            args.calldata
                 .0
                 .iter()
                 .flat_map(|f| f.to_bytes_be())

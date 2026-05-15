@@ -29,11 +29,7 @@ pub async fn download_scarb_and_sozo_binaries_from_s3(
         }
     };
     download_binary(s3_client, format!("sozo/{s3_folder}/sozo_v1.0.1").as_str()).await?;
-    download_binary(
-        s3_client,
-        format!("sozo/{s3_folder}/sozo_v1.0.12").as_str(),
-    )
-    .await?;
+    download_binary(s3_client, format!("sozo/{s3_folder}/sozo_v1.0.12").as_str()).await?;
     download_binary(
         s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v_2_6_3").as_str(),
@@ -91,7 +87,7 @@ async fn download_binary(
     }
     info!("Downloading object: {}/{}", bucket_name, object_key);
 
-     // Fetch the object from the S3 bucket
+    // Fetch the object from the S3 bucket
     let resp = match s3_client
         .get_object()
         .bucket(bucket_name)

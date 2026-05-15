@@ -65,8 +65,12 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
         let vm_memory = call.vm_memory.as_ref().unwrap();
         let vm_trace = call.vm_trace.as_ref().unwrap();
 
-        let (class_mappings, class_data) =
-            resolve_class_data(call, classes_data, cached_fork_state, &mut local_class_cache)?;
+        let (class_mappings, class_data) = resolve_class_data(
+            call,
+            classes_data,
+            cached_fork_state,
+            &mut local_class_cache,
+        )?;
 
         if let Some(class_mappings) = class_mappings {
             if with_storage_and_events {
@@ -214,8 +218,7 @@ fn resolve_class_data<'a, D: ClassDataProvider>(
                         match ClassMappings::new(&converted, compiled, compiler_version) {
                             Ok(class_mappings) => {
                                 let class_mappings = Arc::new(class_mappings);
-                                local_class_cache
-                                    .insert(class_hash_str, class_mappings.clone());
+                                local_class_cache.insert(class_hash_str, class_mappings.clone());
                                 return Ok((Some(class_mappings), None));
                             }
                             Err(e) => return Err(anyhow::anyhow!(format!("{:?}", e))),

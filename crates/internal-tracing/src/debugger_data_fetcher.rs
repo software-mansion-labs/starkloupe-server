@@ -264,7 +264,9 @@ pub async fn fetch_classes_debugger_data_with_external(
         let missing_classes: Vec<String> = classes
             .iter()
             .filter(|c| !classes_debugger_data.contains_key(*c))
-            .filter(|c| c.as_str() != "0x0000000000000000000000000000000000000000000000000000000000000117")
+            .filter(|c| {
+                c.as_str() != "0x0000000000000000000000000000000000000000000000000000000000000117"
+            })
             .cloned()
             .collect();
 
@@ -378,10 +380,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                                 // Persist to S3 + DB so future requests skip the Voyager
                                 // refetch + recompile after restart or cache TTL.
                                 persist_compiled_voyager_class(
-                                    s3_client,
-                                    db_pool,
-                                    &compiled,
-                                    "voyager",
+                                    s3_client, db_pool, &compiled, "voyager",
                                 )
                                 .await;
 
