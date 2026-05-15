@@ -28,39 +28,39 @@ pub async fn download_scarb_and_sozo_binaries_from_s3(
             )))
         }
     };
-    download_binary(&s3_client, format!("sozo/{s3_folder}/sozo_v1.0.1").as_str()).await?;
+    download_binary(s3_client, format!("sozo/{s3_folder}/sozo_v1.0.1").as_str()).await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("sozo/{s3_folder}/sozo_v1.0.12").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v_2_6_3").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v_2_6_4").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v_2_7_0").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v2.8.2").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v2.8.4").as_str(),
     )
     .await?;
     download_binary(
-        &s3_client,
+        s3_client,
         format!("scarb/{s3_folder}/scarb_cairo_v2.8.5").as_str(),
     )
     .await?;
@@ -120,7 +120,7 @@ async fn download_binary(
         fs::create_dir_all(parent_dir).expect("Failed to create parent directories");
     }
     let mut file = File::create(&local_file_path)
-        .expect(format!("Failed to create file: {}", local_file_path).as_str());
+        .unwrap_or_else(|_| panic!("Failed to create file: {}", local_file_path));
 
     // Stream the object content to the file
     let data = resp.body.collect().await?;

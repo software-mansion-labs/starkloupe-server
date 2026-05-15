@@ -11,7 +11,6 @@ use starknet_api::core::ChainId;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{error, instrument};
 use url::Url;
-use toml;
 use utoipa::ToSchema;
 use uuid::Uuid;
 use verification::verification::{verify_by_class_hash, verify_by_contract_address};
@@ -339,7 +338,7 @@ pub async fn verify_handler_with_rpc(
             Err(e) => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    format!("Failed to convert class hash: {}", e.to_string()),
+                    format!("Failed to convert class hash: {}", e),
                 )
                     .into_response();
             }

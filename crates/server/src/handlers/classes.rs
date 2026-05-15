@@ -8,7 +8,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use chrono;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use starknet_api::core::ChainId;
@@ -342,7 +341,7 @@ pub async fn get_contracts_by_class_hash_handler(
                     let address = contract.address.clone();
                     contract_networks
                         .entry(address.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(source.clone());
 
                     // Only add contract once (avoid duplicates)
@@ -394,7 +393,7 @@ async fn get_contracts_from_voyager(
     class_hash: &str,
 ) -> Result<Vec<ContractInfo>, Box<dyn std::error::Error>> {
     let voyager_url =
-        get_voyager_api_url(chain_id).ok_or_else(|| "Unsupported chain for Voyager API")?;
+        get_voyager_api_url(chain_id).ok_or("Unsupported chain for Voyager API")?;
 
     let url = format!("{}classes/{}/contracts", voyager_url, class_hash);
 
