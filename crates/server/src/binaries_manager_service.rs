@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 use tokio::spawn;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use verification::scarb_and_dojo_download_scheduler::{
     check_periodically_scarb_updates, check_periodically_sozo_updates,
 };
@@ -91,14 +91,30 @@ async fn download_binary(
     }
     info!("Downloading object: {}/{}", bucket_name, object_key);
 
-    // Fetch the object from the S3 bucket
-    let resp = s3_client
+     // Fetch the object from the S3 bucket
+    let resp = match s3_client
         .get_object()
         .bucket(bucket_name)
         .key(object_key)
         .send()
-        .await?;
-
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            // If the object simply isn't in the bucket (404 NoSuchKey), don't crash the
+            // server — just log it and skip this binary. Other errors (auth, network,
+            // wrong region/endpoint) still bubble up, since those mean S3 is misconfigured.
+            if err
+                .as_service_error()
+                .map(|e| e.is_no_such_key())
+                .unwrap_or(false)
+            {
+                warn!("Binary not found in S3 (skipping download): {}", object_key);
+                return Ok(());
+            }
+            return Err(err.into());
+        }
+    };
     // Ensure the directory exists
     if let Some(parent_dir) = std::path::Path::new(&local_file_path).parent() {
         fs::create_dir_all(parent_dir).expect("Failed to create parent directories");

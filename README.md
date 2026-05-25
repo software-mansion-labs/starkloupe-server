@@ -19,15 +19,28 @@ cargo sqlx prepare
 1. Start Postgres
 Assure you have `Docker` installed and running (with `docker compose` support).
 ```
-cd scripts
+cd local
 ./start-db-local.sh
 ```
+(or just `make postgres` from the repo root)
 Postgres will run on `localhost:1234`.
-If you need to change ports, modify `db-docker-compose.yaml` file. If anything changes, assure to update `.env` file with the new values.
+If you need to change ports, modify `local/db-docker-compose.yaml` file. If anything changes, assure to update `.env` file with the new values.
 
-2. Build and run the server
+2. Install the Universal Sierra Compiler
+The server shells out to the `universal-sierra-compiler` binary to compile Sierra classes during simulation and replay, so it must be installed before running the server.
+```
+make deps
+```
+This runs `scripts/install-usc.sh`, which downloads the binary into the repo root.
+Copy the env file and point the server at the binary through the `UNIVERSAL_SIERRA_COMPILER` variable (matching `local/dev-docker-compose.yaml`):
 ```
 cp .env.example .env
+echo "UNIVERSAL_SIERRA_COMPILER=./universal-sierra-compiler" >> .env
+```
+If the binary is already on your `PATH` under its default name, the env var can be skipped.
+
+3. Build and run the server
+```
 cargo run --bin server
 ```
 Rust version is specified in `rust-toolchain.toml` file.
