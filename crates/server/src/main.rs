@@ -2,11 +2,12 @@ extern crate dotenv;
 mod abi_fetcher;
 mod app_state;
 mod appsmith_api;
+mod auth;
 mod binaries_manager_service;
 mod calldata_encoder;
 mod handlers;
-mod services;
 mod notification_service;
+mod services;
 
 use app_state::AppState;
 use aws_sdk_s3::config::Region;
@@ -51,6 +52,8 @@ use tokio::time::{timeout, Duration};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
+    // Refuse to start without the admin token configured.
+    std::env::var("WALNUT_ADMIN_TOKEN").expect("WALNUT_ADMIN_TOKEN env var must be set");
     // SENTRY CONFIGURATION
     // _guard must be defined on top level so Sentry will catch errors
     // Also Tokio must be initialized manually (not with attribute)
