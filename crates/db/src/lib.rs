@@ -1,7 +1,7 @@
 use chrono::{Datelike, NaiveDateTime, Timelike};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::types::{
-    time::{Date, OffsetDateTime, PrimitiveDateTime, Time},
+    time::{Date, PrimitiveDateTime, Time},
     Uuid,
 };
 use time::Month;
@@ -136,35 +136,4 @@ pub struct Project {
 #[derive(Clone, Debug)]
 pub struct User {
     pub email: String,
-}
-
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct Tenant {
-    pub id: Uuid,
-    pub name: String,
-    pub created_at: OffsetDateTime,
-}
-
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct TenantMember {
-    pub id: Uuid,
-    pub tenant_id: Uuid,
-    pub github_email: String,
-    pub added_at: OffsetDateTime,
-    pub added_by_email: String,
-    pub removed_at: Option<OffsetDateTime>,
-    pub removed_by_email: Option<String>,
-}
-
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct ApiKey {
-    pub id: Uuid,
-    pub tenant_id: Uuid,
-    pub key_hash: Vec<u8>,
-    pub key_prefix: String,
-    pub status: String,
-    pub created_at: OffsetDateTime,
-    pub created_by_email: String,
-    pub revoked_at: Option<OffsetDateTime>,
-    pub revoked_by_email: Option<String>,
 }
