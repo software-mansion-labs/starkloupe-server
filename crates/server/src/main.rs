@@ -138,6 +138,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache.clone(),
             );
 
+            let api_key_cache = moka::future::Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(Duration::from_secs(60))
+                .build();
+
             let shared_state = Arc::new(AppState {
                 db_pool,
                 s3_client,
@@ -145,6 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache,
                 voyager_client,
                 background_retry,
+                api_key_cache,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
