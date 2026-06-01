@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let api_key_cache = moka::future::Cache::builder()
                 .max_capacity(10_000)
-                .time_to_live(Duration::from_secs(60))
+                .time_to_live(Duration::from_secs(15 * 60))
                 .build();
 
             let shared_state = Arc::new(AppState {
