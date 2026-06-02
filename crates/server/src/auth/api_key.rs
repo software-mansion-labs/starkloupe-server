@@ -4,6 +4,7 @@ use axum::{
     http::{request::Parts, HeaderMap, StatusCode},
 };
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -92,6 +93,19 @@ impl FromRequestParts<AppState> for ApiKeyAuth {
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let tenant_id = authenticate(&parts.headers, state).await?;
+        Ok(ApiKeyAuth { tenant_id })
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<Arc<AppState>> for ApiKeyAuth {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         let tenant_id = authenticate(&parts.headers, state).await?;
         Ok(ApiKeyAuth { tenant_id })
