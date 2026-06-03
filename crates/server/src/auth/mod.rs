@@ -1,6 +1,8 @@
 pub mod admin_token;
+pub mod api_key;
 
 pub use admin_token::AdminAuth;
+pub use api_key::ApiKeyAuth;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};

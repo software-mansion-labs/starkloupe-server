@@ -31,6 +31,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 use utoipa::OpenApi;
 
 use crate::appsmith_api::get_verification_data;
+use crate::auth::ApiKeyAuth;
 use crate::binaries_manager_service::{
     download_scarb_and_sozo_binaries_from_s3, start_github_dojo_binaries_downloader_scheduler,
     start_github_scarb_binaries_downloader_scheduler,
@@ -138,6 +139,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache.clone(),
             );
 
+            let api_key_cache = moka::future::Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(Duration::from_secs(15 * 60))
+                .build();
+
             let shared_state = Arc::new(AppState {
                 db_pool,
                 s3_client,
@@ -145,6 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache,
                 voyager_client,
                 background_retry,
+                api_key_cache,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
@@ -152,6 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = Router::new()
                 .route("/dashboard/data", get(get_verification_data))
                 .route("/health", get(health_check))
+                .route("/health-check-api-key", get(health_check_api_key))
                 .route("/v1/simulate-transaction", post(simulate_transaction))
                 .route(
                     "/v1/:chain_id/simulate-transaction/:tx_hash",
@@ -201,6 +209,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         })
+}
+
+async fn health_check_api_key(_auth: ApiKeyAuth) -> StatusCode {
+    StatusCode::OK
 }
 
 // If DB is down SQLX query is hanging, this is why 3 secs timeout
