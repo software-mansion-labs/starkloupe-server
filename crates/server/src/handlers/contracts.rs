@@ -20,7 +20,7 @@ use tracing::error;
 use url::Url;
 use utoipa::ToSchema;
 use verification::{
-    db::{class_has_voyager_provenance, fetch_verified_class},
+    db::{build_class_sources, fetch_verified_class},
     s3::fetch_verified_class_hash_with_source_code_data,
 };
 use walnut_shared::abi::{get_enums, get_functions, get_structs, Function, Item};
@@ -405,23 +405,8 @@ pub async fn get_contract_handler(
         }
     }
 
-    // Build provenance list. "walnut" if we have it locally; "voyager" if either
-    // we just fetched from Voyager OR the locally cached class was originally
-    // pulled from Voyager (verification_requests.status = 'voyager').
-    let mut sources: Vec<String> = Vec::new();
-    if is_verified_locally {
-        sources.push("walnut".to_string());
-        if class_has_voyager_provenance(&state.db_pool, &class_hash)
-            .await
-            .unwrap_or(false)
-            && !voyager_hit
-        {
-            sources.push("voyager".to_string());
-        }
-    }
-    if voyager_hit && !sources.iter().any(|s| s == "voyager") {
-        sources.push("voyager".to_string());
-    }
+    let sources =
+        build_class_sources(&state.db_pool, &class_hash, is_verified_locally, voyager_hit).await;
 
     let response_body = GetContractResponse {
         class_hash,

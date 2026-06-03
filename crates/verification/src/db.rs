@@ -287,7 +287,7 @@ pub async fn insert_class_hash_profiles(
 /// class_hash_profiles has status='voyager' — i.e. the class was originally
 /// fetched from Voyager and persisted by us, not verified through the regular
 /// Walnut flow.
-pub async fn class_has_voyager_provenance(
+async fn class_has_voyager_provenance(
     db_pool: &Pool<Postgres>,
     class_hash: &str,
 ) -> Result<bool> {
@@ -305,6 +305,32 @@ pub async fn class_has_voyager_provenance(
     .await?;
 
     Ok(row.is_some())
+}
+
+/// Build the provenance list for a class. "walnut" when it's verified locally;
+/// "voyager" when we just fetched it from Voyager, or the local copy was
+/// originally pulled from Voyager (verification_requests.status = 'voyager').
+pub async fn build_class_sources(
+    db_pool: &Pool<Postgres>,
+    class_hash: &str,
+    is_verified_locally: bool,
+    voyager_hit: bool,
+) -> Vec<String> {
+    let mut sources = Vec::new();
+    if is_verified_locally {
+        sources.push("walnut".to_string());
+        if !voyager_hit
+            && class_has_voyager_provenance(db_pool, class_hash)
+                .await
+                .unwrap_or(false)
+        {
+            sources.push("voyager".to_string());
+        }
+    }
+    if voyager_hit {
+        sources.push("voyager".to_string());
+    }
+    sources
 }
 
 pub async fn insert_verification_request(
