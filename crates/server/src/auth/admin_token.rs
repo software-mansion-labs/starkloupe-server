@@ -3,6 +3,7 @@ use axum::{
     extract::FromRequestParts,
     http::{request::Parts, HeaderMap, StatusCode},
 };
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 use crate::app_state::AppState;
@@ -31,6 +32,18 @@ impl FromRequestParts<AppState> for AdminAuth {
     async fn from_request_parts(
         parts: &mut Parts,
         _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        verify_admin_token(&parts.headers).map(|_| AdminAuth)
+    }
+}
+
+#[async_trait]
+impl FromRequestParts<Arc<AppState>> for AdminAuth {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         verify_admin_token(&parts.headers).map(|_| AdminAuth)
     }
@@ -73,6 +86,8 @@ mod tests {
     #[test]
     fn admin_auth_accepts_correct_value() {
         std::env::set_var(ENV_VAR, "secret-correct-token");
-        assert!(verify_admin_token(&headers_with(&[("x-admin-token", "secret-correct-token")])).is_ok());
+        assert!(
+            verify_admin_token(&headers_with(&[("x-admin-token", "secret-correct-token")])).is_ok()
+        );
     }
 }
