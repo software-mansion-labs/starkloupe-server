@@ -251,7 +251,7 @@ pub fn build_l1_data_flamegraph(
         .n_compiled_class_hash_updates as u64;
 
     let on_chain_data_segment_length = n_modified_contracts * 2
-        + n_class_hash_updates * 1
+        + n_class_hash_updates
         + n_storage_updates * 2
         + n_compiled_class_hash_updates * 2;
 
@@ -267,7 +267,7 @@ pub fn build_l1_data_flamegraph(
 
     // Storage updates: contract address -> storage key
     let mut contract_to_storage_keys: HashMap<String, Vec<String>> = HashMap::new();
-    for ((contract_addr, storage_key), _) in &post_exec_state_data.state_changes.state_maps.storage
+    for (contract_addr, storage_key) in post_exec_state_data.state_changes.state_maps.storage.keys()
     {
         let contract_str = contract_addr.0.to_hex_string();
         let storage_key_str = storage_key.0.to_hex_string();
@@ -428,7 +428,7 @@ pub fn build_l1_data_flamegraph(
                     FlameChartNode {
                         call_id: 0,
                         name: Some("Class hash updates".to_string()),
-                        raw_value: n_class_hash_updates * 1 * DATA_GAS_PER_FIELD_ELEMENT as u64,
+                        raw_value: n_class_hash_updates * DATA_GAS_PER_FIELD_ELEMENT as u64,
                         value: 0.0,
                         node_type: Some(FlameChartNodeType::Category),
                         children: class_hash_nodes,
@@ -466,8 +466,8 @@ pub fn build_l1_data_flamegraph(
                             };
 
                             // Add unique contract addresses from storage updates, excluding StarkGate
-                            for (contract_addr, _) in
-                                &post_exec_state_data.state_changes.state_maps.storage
+                            for contract_addr in
+                                post_exec_state_data.state_changes.state_maps.storage.keys()
                             {
                                 if contract_addr.0 != starkgate_address {
                                     unique_contracts.insert(contract_addr.0.to_string());

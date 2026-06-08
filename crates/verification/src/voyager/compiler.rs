@@ -10,7 +10,7 @@ use cairo_lang_starknet_classes::contract_class::ContractClass;
 use scarb_dep_resolver::{is_dep_resolution_error, resolve_registry_deps};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -172,7 +172,7 @@ pub async fn compile_voyager_phase1(
                 );
                 true
             }
-            Err(e) => false,
+            Err(_) => false,
         };
 
     // Build release profile first, then dev if release doesn't match.
@@ -473,7 +473,7 @@ pub fn cleanup_tmp_dir(tmp_dir: &PathBuf) {
 ///
 /// Only adds packages that are not already declared — existing entries are not overwritten
 /// so that pinned deps (e.g. starknet = "=2.11.4") set by earlier passes are preserved.
-async fn apply_dep_resolution_fallback(manifest: &Manifest, tmp_dir: &PathBuf) -> Result<()> {
+async fn apply_dep_resolution_fallback(manifest: &Manifest, tmp_dir: &Path) -> Result<()> {
     let toml_path = tmp_dir.join("Scarb.toml");
     let content = fs::read_to_string(&toml_path)?;
     let starknet_version = format!(

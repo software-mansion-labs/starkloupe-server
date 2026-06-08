@@ -251,19 +251,17 @@ pub async fn initiate_verification(
                         {
                             error!("Failed to update verification  status: {:?}", err)
                         };
-                    } else {
-                        if let Err(e) = insert_verification_status(
-                            &db_pool_clone,
-                            verification_status_id,
-                            class_hash,
-                            status.as_str(),
-                            message.as_deref(),
-                            chain_id.as_deref(),
-                        )
-                        .await
-                        {
-                            error!("Failed to insert verification status entry: {:?}", e);
-                        }
+                    } else if let Err(e) = insert_verification_status(
+                        &db_pool_clone,
+                        verification_status_id,
+                        class_hash,
+                        status.as_str(),
+                        message.as_deref(),
+                        chain_id.as_deref(),
+                    )
+                    .await
+                    {
+                        error!("Failed to insert verification status entry: {:?}", e);
                     }
 
                     match status {

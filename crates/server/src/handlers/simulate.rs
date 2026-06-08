@@ -26,6 +26,8 @@ use tracing::{debug, error, info, instrument};
 use walnut_shared::{chain_id_to_readable_string, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+// Variant names are part of the JSON wire format; keep the `With` prefix.
+#[allow(clippy::enum_variant_names)]
 pub enum SimulationPayload {
     WithCalldata(SimulationRawArgs),
     WithDecodedCalldata(SimulationDecodedArgs),
@@ -128,10 +130,18 @@ async fn run_simulation_with_cache(
         resolved_block_number.as_ref(),
     );
     if let Some(cached_result) = state.simulation_cache.get(&cache_key, Some(db_pool)).await {
-        info!("Cache hit {} ({}), returning cached result", cache_key.display_id(), label);
+        info!(
+            "Cache hit {} ({}), returning cached result",
+            cache_key.display_id(),
+            label
+        );
         return Ok(cached_result);
     }
-    info!("Cache miss {} ({}), proceeding with simulation", cache_key.display_id(), label);
+    info!(
+        "Cache miss {} ({}), proceeding with simulation",
+        cache_key.display_id(),
+        label
+    );
 
     // Notification
     if !skip_tracking {
@@ -157,7 +167,11 @@ async fn run_simulation_with_cache(
                 .simulation_cache
                 .set(&cache_key, sim_info_arc.clone(), Some(db_pool))
                 .await;
-            info!("Cached simulation result {} ({})", cache_key.display_id(), label);
+            info!(
+                "Cached simulation result {} ({})",
+                cache_key.display_id(),
+                label
+            );
             Ok(sim_info_arc)
         }
         Err(e) => {

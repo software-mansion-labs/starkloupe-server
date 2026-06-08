@@ -13,6 +13,12 @@ use walnut_shared::STRK_FEE_TOKEN_ADDRESS;
 #[derive(Debug, Serialize, Clone)]
 pub struct ContractCallsMap(pub HashMap<u32, ContractCall>);
 
+impl Default for ContractCallsMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContractCallsMap {
     pub fn new() -> Self {
         ContractCallsMap(HashMap::new())

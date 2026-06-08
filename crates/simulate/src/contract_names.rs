@@ -76,8 +76,8 @@ impl ContractNamesFetcher {
     }
 
     async fn fetch_token_contract_names(&self) -> HashMap<ContractAddress, ContractName> {
-        let name_method_selector: Felt = selector!("name").into();
-        let symbol_method_selector: Felt = selector!("symbol").into();
+        let name_method_selector: Felt = selector!("name");
+        let symbol_method_selector: Felt = selector!("symbol");
 
         let futures = self.token_addresses.iter().map(|token_contract_address| {
             let contract_address_felt: Felt = (*token_contract_address).into();

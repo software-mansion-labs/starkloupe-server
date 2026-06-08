@@ -1,3 +1,18 @@
+// These simulation entry points share the same wide set of inputs.
+#![allow(clippy::too_many_arguments)]
+
+// What a full simulation returns: info, block timestamp, two counts,
+// optional flame charts (full and trimmed), and execution resources.
+type SimulationOutput = (
+    SimulationInfo,
+    BlockTimestamp,
+    usize,
+    usize,
+    Option<FlameChartNode>,
+    Option<FlameChartNode>,
+    Option<ExecutionResources>,
+);
+
 use crate::contract_calls_map::ContractCallsMap;
 use crate::contract_calls_map::ContractCallsMapBuilder;
 use crate::contract_names::ContractNamesFetcher;
@@ -106,18 +121,7 @@ pub async fn simulate(
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
     background_retry: Option<&BackgroundRetryService>,
-) -> Result<
-    (
-        SimulationInfo,
-        BlockTimestamp,
-        usize,
-        usize,
-        Option<FlameChartNode>,
-        Option<FlameChartNode>,
-        Option<ExecutionResources>,
-    ),
-    TransactionSimulationError,
-> {
+) -> Result<SimulationOutput, TransactionSimulationError> {
     let provider_client = create_rpc_client_from_url(args.rpc_url.clone());
     let chain_id = args.chain_id.clone();
     let block_number = if let Some(bn) = args.block_number {

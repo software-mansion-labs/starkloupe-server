@@ -12,8 +12,8 @@ pub async fn send_notification_tx_id(
     let message = format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true");
 
     let _ = send_telegram_notification(&message).await;
-    let _ = send_grafana_annotation(&tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(&tx_id, &message, chain_id, "transaction").await;
+    let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
+    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }
@@ -26,8 +26,8 @@ pub async fn send_notification_custom_rpc(
     let chain_id = "custom_rpc";
 
     let _ = send_telegram_notification(&message).await;
-    let _ = send_grafana_annotation(&tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(&tx_id, &message, chain_id, "transaction").await;
+    let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
+    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }

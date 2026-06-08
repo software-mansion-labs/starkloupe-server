@@ -217,17 +217,14 @@ async fn health_check_api_key(_auth: ApiKeyAuth) -> StatusCode {
 
 // If DB is down SQLX query is hanging, this is why 3 secs timeout
 async fn health_check(State(state): State<Arc<AppState>>) -> StatusCode {
-    let db_status = match timeout(
+    // If the database is down, we should return an error
+    match timeout(
         Duration::from_secs(3),
         sqlx::query("SELECT 1").execute(&state.db_pool),
     )
     .await
     {
-        db_status => match db_status {
-            Ok(_) => StatusCode::OK,
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        },
-    };
-    // If the database is down, we should return an error
-    db_status
+        Ok(_) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
