@@ -36,6 +36,9 @@ pub struct ContractAbiResponse {
     pub entry_point_datas: Vec<(String, Function)>,
 }
 
+// One class found on a source: (source, class hash, cairo version, optional ABI).
+type ClassLookup = (ESource, Felt, (u32, u32, u32), Option<String>);
+
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct ContractAddressQuery {
     pub rpc_url: Option<String>,
@@ -229,7 +232,7 @@ pub async fn get_contract_handler(
 
     let include_abi = query.include_abi.unwrap_or_default();
 
-    let results: Vec<Option<(ESource, Felt, (u32, u32, u32), Option<String>)>> = sources
+    let results: Vec<Option<ClassLookup>> = sources
         .iter()
         .filter_map(|source| {
             if let ESourceType::ChainId(e_chain_id) = source {
@@ -275,8 +278,7 @@ pub async fn get_contract_handler(
         .collect::<Vec<_>>()
         .await;
 
-    let valid_results: Vec<(ESource, Felt, (u32, u32, u32), Option<String>)> =
-        results.into_iter().flatten().collect();
+    let valid_results: Vec<ClassLookup> = results.into_iter().flatten().collect();
 
     if valid_results.is_empty() {
         let network_list: Vec<String> = sources

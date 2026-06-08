@@ -26,6 +26,8 @@ use tracing::{debug, error, info, instrument};
 use walnut_shared::{chain_id_to_readable_string, extract_chain_id, get_rpc_urls, ENetwork};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+// Variant names are part of the JSON wire format; keep the `With` prefix.
+#[allow(clippy::enum_variant_names)]
 pub enum SimulationPayload {
     WithCalldata(SimulationRawArgs),
     WithDecodedCalldata(SimulationDecodedArgs),

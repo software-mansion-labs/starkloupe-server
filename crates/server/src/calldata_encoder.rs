@@ -52,6 +52,8 @@ fn extract_generic_inner(type_name: &str) -> Option<&str> {
 }
 
 /// Encode a single decoded value to calldata format
+// `structs` is threaded through for upcoming struct-encoding support; not read yet.
+#[allow(clippy::only_used_in_recursion)]
 pub fn encode_decoded_value(
     value: &DecodedValue,
     enums: &HashMap<String, Enum>,

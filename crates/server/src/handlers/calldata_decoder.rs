@@ -56,11 +56,7 @@ fn parse_calldata_from_url(calldata_str: &str) -> Result<Vec<Felt>, String> {
         }
 
         // Remove 0x prefix if present
-        let hex_str = if trimmed.starts_with("0x") {
-            &trimmed[2..]
-        } else {
-            trimmed
-        };
+        let hex_str = trimmed.strip_prefix("0x").unwrap_or(trimmed);
 
         // Parse as hex
         let felt = Felt::from_hex(hex_str)

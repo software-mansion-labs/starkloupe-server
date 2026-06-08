@@ -1,7 +1,6 @@
 pub mod admin_token;
 pub mod api_key;
 
-pub use admin_token::AdminAuth;
 pub use api_key::ApiKeyAuth;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -9,13 +8,16 @@ use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
 /// An opaque API token together with its sha256 hash and a short lookup prefix.
-
+// Used by M1 (Devnet Tokens, `dt_` prefix); not wired up yet.
+#[allow(dead_code)]
 pub struct GeneratedToken {
     pub plaintext: String,
     pub hash: [u8; 32],
     pub key_prefix: String,
 }
 
+// Used by M1 (Devnet Tokens); not wired up yet.
+#[allow(dead_code)]
 pub fn gen_token(prefix: &str) -> GeneratedToken {
     let mut raw = [0u8; 32];
     OsRng.fill_bytes(&mut raw);

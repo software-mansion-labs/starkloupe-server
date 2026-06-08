@@ -15,6 +15,8 @@ const DEVNET_PREFIX: &str = "dt_";
 
 #[derive(Debug, Clone)]
 pub struct ApiKeyAuth {
+    // Read by M1 handlers to scope queries per tenant; not consumed yet.
+    #[allow(dead_code)]
     pub tenant_id: Uuid,
 }
 
