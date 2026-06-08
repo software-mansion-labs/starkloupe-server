@@ -1,3 +1,6 @@
+// These builders share the same wide set of trace inputs.
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     call_trace::{get_internal_call_trace, get_simple_internal_call_trace},
     event_calls_map::EventCallsMap,

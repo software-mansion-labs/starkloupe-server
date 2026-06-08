@@ -6,6 +6,12 @@ use crate::function_call::FunctionCall;
 #[derive(Debug, Serialize, Clone)]
 pub struct FunctionCallsMap(pub HashMap<u32, FunctionCall>);
 
+impl Default for FunctionCallsMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FunctionCallsMap {
     pub fn new() -> Self {
         FunctionCallsMap(HashMap::new())
