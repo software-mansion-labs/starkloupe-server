@@ -211,11 +211,9 @@ pub async fn fetch_classes_debugger_data_with_external(
                                                         .file_path
                                                         .find("tmp/verification/")
                                                     {
-                                                        let after_tmp = &code_location
-                                                            .file_path
+                                                        let after_tmp = &code_location.file_path
                                                             [pos + "tmp/verification/".len()..];
-                                                        if let Some(slash_pos) =
-                                                            after_tmp.find('/')
+                                                        if let Some(slash_pos) = after_tmp.find('/')
                                                         {
                                                             code_location.file_path = after_tmp
                                                                 [slash_pos + 1..]
@@ -371,8 +369,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                     };
 
                     let source_for_retry = source_response.clone();
-                    match compile_voyager_source(source_response, default_build_timeout()).await
-                    {
+                    match compile_voyager_source(source_response, default_build_timeout()).await {
                         Ok(compiled) => {
                             // Persist to S3 + DB so future requests skip the Voyager
                             // refetch + recompile after restart or cache TTL.
@@ -423,8 +420,7 @@ pub async fn fetch_classes_debugger_data_with_external(
                             }
                             if is_timeout {
                                 if let Some(retry_svc) = background_retry {
-                                    retry_svc
-                                        .enqueue_retry(class_hash.clone(), source_for_retry);
+                                    retry_svc.enqueue_retry(class_hash.clone(), source_for_retry);
                                 }
                             }
                         }

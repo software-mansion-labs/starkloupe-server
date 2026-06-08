@@ -361,8 +361,7 @@ impl DecodedValueType {
         // }
 
         // Try parsing as BigUint directly for very large numbers
-        s.parse::<BigUint>()
-            .map_err(serde::de::Error::custom)
+        s.parse::<BigUint>().map_err(serde::de::Error::custom)
     }
 
     /// Try to parse string as signed integer (i8, i16, i32, i64, i128)
@@ -413,7 +412,6 @@ impl<'de> Deserialize<'de> for DecodedValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_basic_decoded_value_creation() {
@@ -613,7 +611,6 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    
 
     #[test]
     fn test_enum_serialization_without_redundant_wrapping() {
