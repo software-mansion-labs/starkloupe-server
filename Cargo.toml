@@ -2,12 +2,15 @@
 members = [
   "crates/server",
   "crates/team-onboarding",
-  "crates/batch-sim",
   "crates/internal-tracing",
   "crates/walnut-shared",
   "crates/data-decoder",
   "crates/scarb-dep-resolver",
 ]
+# batch-sim is an unused batch-simulation script that no longer compiles after
+# the simulate API drifted (last touched 2025-12). Excluded from the build until
+# someone revives it; remove the directory if it stays dead.
+exclude = ["crates/batch-sim"]
 resolver = "2"
 
 [workspace.package]

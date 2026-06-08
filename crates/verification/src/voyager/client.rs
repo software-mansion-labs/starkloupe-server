@@ -2,7 +2,7 @@ use super::types::{VoyagerConfig, VoyagerSourceResponse};
 use anyhow::Result;
 use reqwest::Client;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// HTTP client for Voyager API
 #[derive(Clone)]

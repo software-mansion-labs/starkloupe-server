@@ -24,7 +24,9 @@ data-decoder.workspace = true
 reqwest.workspace = true
 starknet-selector-decoder.workspace = true
 anyhow.workspace = true
-uuid.workspace = true
+# `serde` is needed for #[derive(Serialize/Deserialize)] on structs with Uuid
+# fields; without it this crate only builds via feature unification with sqlx.
+uuid = { workspace = true, features = ["serde"] }
 time.workspace = true
 scarb-api.workspace = true
 toml.workspace = true

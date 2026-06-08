@@ -1,13 +1,11 @@
-use data_decoder::type_decoder::{
-    expand_enums_recursively, expand_structs_recursively, TypeDecoder,
-};
+use data_decoder::type_decoder::{expand_enums_recursively, expand_structs_recursively};
 use moka::future::Cache;
 use starknet_rust::core::types::{BlockId, BlockTag, ContractClass, Felt};
 use starknet_rust::providers::Provider;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::info;
 use walnut_shared::abi::{get_enums, get_functions, get_structs, Enum, Function, Item, Struct};
 use walnut_shared::utils::simplify_type_name;
 use walnut_shared::{extract_chain_id, get_rpc_urls};
@@ -16,7 +14,6 @@ use walnut_shared::{extract_chain_id, get_rpc_urls};
 /// Wrapped in `Arc` inside the cache so hits are cheap (no deep clones).
 pub struct ContractAbiData {
     pub functions: Vec<Function>,
-    pub type_decoder: TypeDecoder,
     pub structs: HashMap<String, Struct>,
     pub enums: HashMap<String, Enum>,
 }
@@ -105,13 +102,8 @@ async fn fetch_contract_abi_uncached(
                     let expanded_enum_map =
                         expand_enums_recursively(&enum_map, &expanded_struct_map);
 
-                    // Create TypeDecoder with complete type information
-                    let type_decoder =
-                        TypeDecoder::new(expanded_struct_map.clone(), expanded_enum_map.clone());
-
                     Ok(ContractAbiData {
                         functions,
-                        type_decoder,
                         structs: expanded_struct_map,
                         enums: expanded_enum_map,
                     })

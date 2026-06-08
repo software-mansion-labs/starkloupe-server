@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use blockifier::execution::contract_class::{
     CompiledClassV0 as ContractClassV0, CompiledClassV1 as ContractClassV1,
     RunnableCompiledClass as ContractClassBlockifier,
@@ -10,10 +12,19 @@ use cairo_lang_utils::bigint::BigUintAsHex;
 use cheatnet::state::BlockInfoReader;
 use conversions::FromConv;
 use flate2::read::GzDecoder;
+use internal_tracing::external_class_cache::ExternalClassCache;
 use num_bigint::BigUint;
 use runtime::starknet::context::SerializableGasPrices;
 use sqlx::Pool;
 use sqlx::Postgres;
+use starknet_api::block::BlockInfo;
+use starknet_api::block::{BlockNumber, BlockTimestamp};
+use starknet_api::contract_class::{EntryPointType, SierraVersion};
+use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
+use starknet_api::deprecated_contract_class::{
+    ContractClass as DeprecatedContractClass, EntryPointV0,
+};
+use starknet_api::state::StorageKey;
 use starknet_rust::core::types::{
     BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet,
     ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, EntryPointsByType, Felt,
@@ -24,20 +35,11 @@ use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
     Provider, ProviderError, Url,
 };
-use starknet_api::block::BlockInfo;
-use starknet_api::block::{BlockNumber, BlockTimestamp};
-use starknet_api::contract_class::{EntryPointType, SierraVersion};
-use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
-use starknet_api::deprecated_contract_class::{
-    ContractClass as DeprecatedContractClass, EntryPointV0,
-};
-use starknet_api::state::StorageKey;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 use tracing::error;
 use universal_sierra_compiler_api::{compile_sierra, SierraType};
-use internal_tracing::external_class_cache::ExternalClassCache;
 use verification::s3::fetch_verified_class_hash_with_contract_class_data;
 use walnut_shared::create_rpc_client_from_url;
 
@@ -312,9 +314,9 @@ impl ForkStateReader {
         let mut cache = self.in_memory_fork_cache.borrow_mut();
         for storage_diff in storage_diffs.iter() {
             let contract_address: ContractAddress =
-                ContractAddress::try_from(Felt::from(storage_diff.address)).unwrap();
+                ContractAddress::try_from(storage_diff.address).unwrap();
             for storage_entry in storage_diff.storage_entries.iter() {
-                let key = StorageKey::try_from(Felt::from(storage_entry.key)).unwrap();
+                let key = StorageKey::try_from(storage_entry.key).unwrap();
                 let value: Felt = storage_entry.value;
                 cache.cache_storage_at(contract_address, key, value);
             }
@@ -325,16 +327,16 @@ impl ForkStateReader {
         let mut cache = self.in_memory_fork_cache.borrow_mut();
         for contract in deploy_contract.iter() {
             let contract_address: ContractAddress =
-                ContractAddress::try_from(Felt::from(contract.address)).unwrap();
-            let class_hash = ClassHash(contract.class_hash.into());
+                ContractAddress::try_from(contract.address).unwrap();
+            let class_hash = ClassHash(contract.class_hash);
             cache.cache_class_hash_at(contract_address, class_hash);
         }
     }
 
     fn collect_declared_classes(&mut self, declare_class: &[DeclaredClassItem]) {
         for class in declare_class.iter() {
-            let class_hash = ClassHash(class.class_hash.into());
-            let compiled_class_hash = CompiledClassHash(class.compiled_class_hash.into());
+            let class_hash = ClassHash(class.class_hash);
+            let compiled_class_hash = CompiledClassHash(class.compiled_class_hash);
             {
                 let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
                 in_memory_fork_cache.cache_compiled_class_hash(class_hash, compiled_class_hash);
@@ -719,8 +721,7 @@ impl StateReader for ForkStateReader {
             if let Some(ref external_cache) = self.external_cache {
                 let class_hash_hex = class_hash.to_fixed_hex_string();
                 if let Some(cached) = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(external_cache.get(&class_hash_hex))
+                    tokio::runtime::Handle::current().block_on(external_cache.get(&class_hash_hex))
                 }) {
                     if let Some(ref data) = cached.data {
                         // Phase 2 complete — use the inline class for simulation
@@ -772,10 +773,7 @@ impl StateReader for ForkStateReader {
                     })
             }
             _ => {
-                self.fetch_and_compile_contract_class(
-                    class_hash,
-                    self.adjusted_block_id(),
-                )?;
+                self.fetch_and_compile_contract_class(class_hash, self.adjusted_block_id())?;
                 self.in_memory_fork_cache
                     .borrow()
                     .get_compiled_class(class_hash)

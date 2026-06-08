@@ -68,14 +68,13 @@ impl CacheKey {
 
         hasher.update(args.sender_address.to_bytes_be());
         hasher.update(
-            &args
-                .calldata
+            args.calldata
                 .0
                 .iter()
                 .flat_map(|f| f.to_bytes_be())
                 .collect::<Vec<_>>(),
         );
-        hasher.update(&args.transaction_version.0.to_bytes_be());
+        hasher.update(args.transaction_version.0.to_bytes_be());
         hasher.update(args.chain_id.to_string().as_bytes());
 
         // Include resolved block_number to prevent incorrect cache hits

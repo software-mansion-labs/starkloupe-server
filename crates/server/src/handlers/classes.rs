@@ -8,7 +8,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use chrono;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use starknet_api::core::ChainId;
@@ -17,7 +16,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::{error, warn};
 use utoipa::ToSchema;
 use verification::{
-    db::fetch_verified_class,
+    db::{build_class_sources, fetch_verified_class},
     s3::{fetch_verified_class_hash_with_source_code_data, fetch_verified_class_with_data},
 };
 use walnut_shared::{get_voyager_api_url, VOYAGER_API_KEY};
@@ -90,7 +89,7 @@ pub struct GetClassResponse {
     pub verified: bool,
     pub declared_sources: Vec<ESource>,
     pub source_code: Option<HashMap<String, String>>,
-    pub source: Option<String>,
+    pub sources: Vec<String>,
     pub class_name: Option<String>,
 }
 
@@ -150,71 +149,74 @@ pub async fn get_class_handler(
         .await
         .is_ok();
 
-    let (source_code, source, is_verified, class_name) = if query
-        .include_source_code
-        .unwrap_or(false)
-    {
-        if is_verified_locally {
-            // Try local (Walnut) first
-            match fetch_verified_class_hash_with_source_code_data(
-                &state.db_pool,
-                &state.s3_client,
-                &class_hash_fixed,
-            )
-            .await
-            {
-                Ok(Some(code)) => (Some(code), Some("walnut".to_string()), true, None),
-                _ => {
-                    // Fallback to Voyager
-                    if let Some(voyager_client) = &state.voyager_client {
-                        match voyager_client.fetch_source_code(&class_hash_fixed).await {
-                            Ok(Some(voyager_response)) => (
-                                Some(voyager_response.source_code),
-                                Some("voyager".to_string()),
-                                true,
-                                Some(voyager_response.verified_name),
-                            ),
-                            _ => (None, None, true, None), // Still verified locally even if no source code
+    let (source_code, voyager_hit, is_verified, class_name) =
+        if query.include_source_code.unwrap_or(false) {
+            if is_verified_locally {
+                // Try local (Walnut) first
+                match fetch_verified_class_hash_with_source_code_data(
+                    &state.db_pool,
+                    &state.s3_client,
+                    &class_hash_fixed,
+                )
+                .await
+                {
+                    Ok(Some(code)) => (Some(code), false, true, None),
+                    _ => {
+                        // Fallback to Voyager
+                        if let Some(voyager_client) = &state.voyager_client {
+                            match voyager_client.fetch_source_code(&class_hash_fixed).await {
+                                Ok(Some(voyager_response)) => (
+                                    Some(voyager_response.source_code),
+                                    true,
+                                    true,
+                                    Some(voyager_response.verified_name),
+                                ),
+                                _ => (None, false, true, None), // Still verified locally even if no source code
+                            }
+                        } else {
+                            (None, false, true, None)
                         }
-                    } else {
-                        (None, None, true, None)
                     }
                 }
+            } else {
+                // Not verified locally, try Voyager
+                if let Some(voyager_client) = &state.voyager_client {
+                    match voyager_client.fetch_source_code(&class_hash_fixed).await {
+                        Ok(Some(voyager_response)) => (
+                            Some(voyager_response.source_code),
+                            true,
+                            true,
+                            Some(voyager_response.verified_name),
+                        ),
+                        _ => (None, false, false, None),
+                    }
+                } else {
+                    (None, false, false, None)
+                }
             }
         } else {
-            // Not verified locally, try Voyager
-            if let Some(voyager_client) = &state.voyager_client {
+            // No source code requested, check Voyager for verification status
+            if is_verified_locally {
+                (None, false, true, None)
+            } else if let Some(voyager_client) = &state.voyager_client {
                 match voyager_client.fetch_source_code(&class_hash_fixed).await {
-                    Ok(Some(voyager_response)) => (
-                        Some(voyager_response.source_code),
-                        Some("voyager".to_string()),
-                        true,
-                        Some(voyager_response.verified_name),
-                    ),
-                    _ => (None, None, false, None),
+                    Ok(Some(voyager_response)) => {
+                        (None, true, true, Some(voyager_response.verified_name))
+                    }
+                    _ => (None, false, false, None),
                 }
             } else {
-                (None, None, false, None)
+                (None, false, false, None)
             }
-        }
-    } else {
-        // No source code requested, check Voyager for verification status
-        if is_verified_locally {
-            (None, None, true, None)
-        } else if let Some(voyager_client) = &state.voyager_client {
-            match voyager_client.fetch_source_code(&class_hash_fixed).await {
-                Ok(Some(voyager_response)) => (
-                    None,
-                    Some("voyager".to_string()),
-                    true,
-                    Some(voyager_response.verified_name),
-                ),
-                _ => (None, None, false, None),
-            }
-        } else {
-            (None, None, false, None)
-        }
-    };
+        };
+
+    let sources = build_class_sources(
+        &state.db_pool,
+        &class_hash_fixed,
+        is_verified_locally,
+        voyager_hit,
+    )
+    .await;
 
     (
         StatusCode::OK,
@@ -222,7 +224,7 @@ pub async fn get_class_handler(
             verified: is_verified,
             declared_sources,
             source_code,
-            source,
+            sources,
             class_name,
         }),
     )
@@ -334,7 +336,7 @@ pub async fn get_contracts_by_class_hash_handler(
                     let address = contract.address.clone();
                     contract_networks
                         .entry(address.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(source.clone());
 
                     // Only add contract once (avoid duplicates)
@@ -385,8 +387,7 @@ async fn get_contracts_from_voyager(
     chain_id: &ChainId,
     class_hash: &str,
 ) -> Result<Vec<ContractInfo>, Box<dyn std::error::Error>> {
-    let voyager_url =
-        get_voyager_api_url(chain_id).ok_or_else(|| "Unsupported chain for Voyager API")?;
+    let voyager_url = get_voyager_api_url(chain_id).ok_or("Unsupported chain for Voyager API")?;
 
     let url = format!("{}classes/{}/contracts", voyager_url, class_hash);
 

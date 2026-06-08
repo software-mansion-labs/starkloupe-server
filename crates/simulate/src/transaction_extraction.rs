@@ -37,10 +37,8 @@ use crate::transaction_info::TransactionInformation;
 use crate::SimulationArgs;
 use crate::TransactionSimulationError;
 
-// TODO: Refactor this one
-pub fn extract_submitted_tx(
-    transaction: Transaction,
-) -> Option<(
+// Fields pulled out of a submitted (account) transaction.
+type SubmittedTxFields = (
     Nonce,
     ContractAddress,
     EntryPointSelector,
@@ -51,7 +49,10 @@ pub fn extract_submitted_tx(
     Fee,
     ValidResourceBounds,
     PaymasterData,
-)> {
+);
+
+// TODO: Refactor this one
+pub fn extract_submitted_tx(transaction: Transaction) -> Option<SubmittedTxFields> {
     match transaction {
         Transaction::Invoke(invoke_transaction) => match invoke_transaction {
             InvokeTransaction::V0(tx) => Some((
@@ -422,7 +423,6 @@ fn create_current_info(args: &SimulationArgs) -> TransactionInfo {
         },
         resource_bounds: args
             .resource_bounds
-            .clone()
             .unwrap_or_else(resource_bounds_mapping_to_default_valid_resource_bounds),
         tip: Default::default(),
         nonce_data_availability_mode: DataAvailabilityMode::L1,

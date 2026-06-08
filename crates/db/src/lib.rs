@@ -12,7 +12,7 @@ pub struct SerializableUuid(pub Uuid);
 
 impl std::fmt::Display for SerializableUuid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.to_string())
+        write!(f, "{}", self.0)
     }
 }
 
@@ -38,7 +38,7 @@ impl<'de> Deserialize<'de> for SerializableUuid {
     {
         let s = String::deserialize(deserializer)?;
         let uuid = UuidStd::parse_str(&s).map_err(serde::de::Error::custom)?;
-        Ok(SerializableUuid(Uuid::from(uuid)))
+        Ok(SerializableUuid(uuid))
     }
 }
 
@@ -91,7 +91,8 @@ impl<'de> Deserialize<'de> for SerializableDateTime {
         D: Deserializer<'de>,
     {
         let timestamp = i64::deserialize(deserializer)?;
-        let naive_datetime = NaiveDateTime::from_timestamp(timestamp, 0);
+        let naive_datetime = NaiveDateTime::from_timestamp_opt(timestamp, 0)
+            .ok_or_else(|| serde::de::Error::custom("invalid timestamp"))?;
 
         let year = naive_datetime.year();
         let month = Month::try_from(naive_datetime.month() as u8).unwrap();

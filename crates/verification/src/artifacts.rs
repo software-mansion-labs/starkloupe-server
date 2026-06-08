@@ -5,7 +5,7 @@ use cairo_lang_starknet_classes::contract_class::ContractClass;
 use serde::{Deserialize, Serialize};
 use starknet_rust::core::types::contract::SierraClass;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, error, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ struct ContractArtifact {
 }
 
 pub fn read_new_cairo_version_artifacts(
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     package_name: &str,
     build_profile: &str,
 ) -> Result<Vec<(String, ContractClass)>> {
@@ -41,7 +41,7 @@ pub fn read_new_cairo_version_artifacts(
 }
 
 pub fn read_old_cairo_version_artifacts(
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     package_name: &str,
     build_profile: &str,
 ) -> Result<Vec<(String, ContractClass, PathBuf)>> {
@@ -56,7 +56,7 @@ pub fn read_old_cairo_version_artifacts(
 }
 
 pub fn read_starknet_artifacts(
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     package_name: &str,
     build_profile: &str,
     include_debug_info: bool,
@@ -90,11 +90,11 @@ pub fn read_starknet_artifacts(
         Ok(entries) => {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "json")
+                if path.extension().is_some_and(|ext| ext == "json")
                     && path
                         .file_name()
                         .and_then(|n| n.to_str())
-                        .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
+                        .is_some_and(|n| n.ends_with(".starknet_artifacts.json"))
                 {
                     found_any = true;
                     debug!("Reading artifact file: {}", path.display());
@@ -140,7 +140,7 @@ pub fn read_starknet_artifacts(
 
 fn read_single_artifact_file(
     artifact_path: &PathBuf,
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     build_profile: &str,
     include_debug_info: bool,
 ) -> Result<Vec<(String, ContractClass, Option<PathBuf>)>> {
@@ -175,7 +175,7 @@ fn read_single_artifact_file(
 /// Find the compiled class hash for a specific contract name in the build artifacts.
 /// Used by Voyager compiler to select the correct contract from multi-contract projects.
 pub fn find_class_hash_by_contract_name(
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     package_name: &str,
     build_profile: &str,
     contract_name: &str,
@@ -196,7 +196,7 @@ pub fn find_class_hash_by_contract_name(
             if path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with(".starknet_artifacts.json"))
+                .is_some_and(|n| n.ends_with(".starknet_artifacts.json"))
                 && path != specific_path
             {
                 artifact_paths.push(path);
@@ -236,7 +236,7 @@ pub fn find_class_hash_by_contract_name(
 }
 
 fn process_contract_artifact(
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     build_profile: &str,
     contract_artifact: &ContractArtifacts,
     include_debug_info_file: bool,

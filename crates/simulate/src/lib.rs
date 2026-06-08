@@ -1,3 +1,7 @@
+// TransactionSimulationError is large by nature; boxing it would churn the
+// `?`/From error paths across the crate for a stack-size-only win.
+#![allow(clippy::result_large_err)]
+
 pub mod contract_call;
 pub mod contract_calls_map;
 pub mod contract_names;

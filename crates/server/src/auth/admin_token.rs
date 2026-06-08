@@ -1,3 +1,6 @@
+// Admin-token auth extractor; not wired up to any route yet (used by M1).
+#![allow(dead_code)]
+
 use axum::{
     async_trait,
     extract::FromRequestParts,

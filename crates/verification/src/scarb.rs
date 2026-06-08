@@ -84,17 +84,13 @@ async fn run_project_build_for_profile(
 
     unsafe {
         cmd.pre_exec(move || {
-            set_limits(cpu_limit).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to set resource limits: {}", e),
-                )
-            })
+            set_limits(cpu_limit)
+                .map_err(|e| std::io::Error::other(format!("Failed to set resource limits: {}", e)))
         });
     }
 
     let build_start = std::time::Instant::now();
-    let mut child = cmd.spawn()?;
+    let child = cmd.spawn()?;
 
     let wait_result = if let Some(timeout_duration) = build_timeout {
         match tokio::time::timeout(timeout_duration, child.wait_with_output()).await {

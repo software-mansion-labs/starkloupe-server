@@ -176,76 +176,72 @@ pub async fn fetch_classes_debugger_data_with_external(
                         .clone(),
                     source_code: verified_class_data.source_code.clone(),
                 })
-            } else {
-                if let Some(debug_info) =
-                    &verified_class_data.contract_class.sierra_program_debug_info
-                {
-                    match VersionedCoverageAnnotations::try_from_debug_info(debug_info) {
-                        Ok(annotations) => match annotations {
-                            VersionedCoverageAnnotations::V1(annotations) => {
-                                let mut sierra_statements_to_cairo_info: HashMap<
-                                    usize,
-                                    SierraStatementToCairoDebugInfo,
-                                > = HashMap::new();
-                                for (id, code_locations) in annotations.statements_code_locations {
-                                    sierra_statements_to_cairo_info.insert(
-                                        id.0,
-                                        SierraStatementToCairoDebugInfo {
-                                            cairo_locations: code_locations
-                                                .into_iter()
-                                                .filter_map(|c| {
-                                                    let mut code_location =
-                                                        CodeLocation::from_coverage(c);
+            } else if let Some(debug_info) =
+                &verified_class_data.contract_class.sierra_program_debug_info
+            {
+                match VersionedCoverageAnnotations::try_from_debug_info(debug_info) {
+                    Ok(annotations) => match annotations {
+                        VersionedCoverageAnnotations::V1(annotations) => {
+                            let mut sierra_statements_to_cairo_info: HashMap<
+                                usize,
+                                SierraStatementToCairoDebugInfo,
+                            > = HashMap::new();
+                            for (id, code_locations) in annotations.statements_code_locations {
+                                sierra_statements_to_cairo_info.insert(
+                                    id.0,
+                                    SierraStatementToCairoDebugInfo {
+                                        cairo_locations: code_locations
+                                            .into_iter()
+                                            .filter_map(|c| {
+                                                let mut code_location =
+                                                    CodeLocation::from_coverage(c);
+                                                if code_location
+                                                    .file_path
+                                                    .contains("tmp/verification")
+                                                {
                                                     if code_location
                                                         .file_path
-                                                        .contains("tmp/verification")
+                                                        .ends_with("[contract]")
                                                     {
-                                                        if code_location
+                                                        code_location.file_path = code_location
                                                             .file_path
-                                                            .ends_with("[contract]")
-                                                        {
-                                                            code_location.file_path = code_location
-                                                                .file_path
-                                                                .replace("[contract]", "");
-                                                        }
-                                                        if let Some(pos) = code_location
-                                                            .file_path
-                                                            .find("tmp/verification/")
-                                                        {
-                                                            let after_tmp = &code_location
-                                                                .file_path
-                                                                [pos + "tmp/verification/".len()..];
-                                                            if let Some(slash_pos) =
-                                                                after_tmp.find('/')
-                                                            {
-                                                                code_location.file_path = after_tmp
-                                                                    [slash_pos + 1..]
-                                                                    .to_string();
-                                                            }
-                                                        }
-                                                        Some(code_location)
-                                                    } else {
-                                                        None
+                                                            .replace("[contract]", "");
                                                     }
-                                                })
-                                                .collect_vec(),
-                                        },
-                                    );
-                                }
-                                Some(ClassDebuggerData {
-                                    sierra_statements_to_cairo_info,
-                                    source_code: verified_class_data.source_code.clone(),
-                                })
+                                                    if let Some(pos) = code_location
+                                                        .file_path
+                                                        .find("tmp/verification/")
+                                                    {
+                                                        let after_tmp = &code_location.file_path
+                                                            [pos + "tmp/verification/".len()..];
+                                                        if let Some(slash_pos) = after_tmp.find('/')
+                                                        {
+                                                            code_location.file_path = after_tmp
+                                                                [slash_pos + 1..]
+                                                                .to_string();
+                                                        }
+                                                    }
+                                                    Some(code_location)
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect_vec(),
+                                    },
+                                );
                             }
-                        },
-                        Err(e) => {
-                            error!("Failed to parse coverage info: {:?}", e);
-                            None
+                            Some(ClassDebuggerData {
+                                sierra_statements_to_cairo_info,
+                                source_code: verified_class_data.source_code.clone(),
+                            })
                         }
+                    },
+                    Err(e) => {
+                        error!("Failed to parse coverage info: {:?}", e);
+                        None
                     }
-                } else {
-                    None
                 }
+            } else {
+                None
             };
 
             classes_debugger_data.insert(
@@ -264,7 +260,9 @@ pub async fn fetch_classes_debugger_data_with_external(
         let missing_classes: Vec<String> = classes
             .iter()
             .filter(|c| !classes_debugger_data.contains_key(*c))
-            .filter(|c| c.as_str() != "0x0000000000000000000000000000000000000000000000000000000000000117")
+            .filter(|c| {
+                c.as_str() != "0x0000000000000000000000000000000000000000000000000000000000000117"
+            })
             .cloned()
             .collect();
 
@@ -358,92 +356,84 @@ pub async fn fetch_classes_debugger_data_with_external(
                 }
 
                 debug!("Fetching source from Voyager for class {}", class_hash);
-                match client.fetch_source_code(&class_hash).await {
-                    Ok(Some(source_response)) => {
-                        info!(
-                            "Fetched source from Voyager for {} ({})",
-                            class_hash, source_response.verified_name
-                        );
+                if let Ok(Some(source_response)) = client.fetch_source_code(&class_hash).await {
+                    info!(
+                        "Fetched source from Voyager for {} ({})",
+                        class_hash, source_response.verified_name
+                    );
 
-                        let notifier = if let Some(cache) = external_cache {
-                            cache.start_compilation(&class_hash).await
-                        } else {
-                            None
-                        };
+                    let notifier = if let Some(cache) = external_cache {
+                        cache.start_compilation(&class_hash).await
+                    } else {
+                        None
+                    };
 
-                        let source_for_retry = source_response.clone();
-                        match compile_voyager_source(source_response, default_build_timeout()).await
-                        {
-                            Ok(compiled) => {
-                                // Persist to S3 + DB so future requests skip the Voyager
-                                // refetch + recompile after restart or cache TTL.
-                                persist_compiled_voyager_class(
-                                    s3_client,
-                                    db_pool,
-                                    &compiled,
-                                    "voyager",
-                                )
-                                .await;
+                    let source_for_retry = source_response.clone();
+                    match compile_voyager_source(source_response, default_build_timeout()).await {
+                        Ok(compiled) => {
+                            // Persist to S3 + DB so future requests skip the Voyager
+                            // refetch + recompile after restart or cache TTL.
+                            persist_compiled_voyager_class(
+                                s3_client, db_pool, &compiled, "voyager",
+                            )
+                            .await;
 
-                                let class_debugger_data = extract_debugger_data_from_contract_class(
-                                    &compiled.contract_class,
-                                    &compiled.source_code,
-                                );
+                            let class_debugger_data = extract_debugger_data_from_contract_class(
+                                &compiled.contract_class,
+                                &compiled.source_code,
+                            );
 
-                                let data = ClassDebuggerDataWithContractClass {
-                                    inline_strategy_class_hash: Some(
-                                        compiled.inline_class_hash.clone(),
-                                    ),
-                                    class_debugger_data,
-                                    contract_class: compiled.contract_class,
-                                };
+                            let data = ClassDebuggerDataWithContractClass {
+                                inline_strategy_class_hash: Some(
+                                    compiled.inline_class_hash.clone(),
+                                ),
+                                class_debugger_data,
+                                contract_class: compiled.contract_class,
+                            };
 
-                                if let Some(cache) = external_cache {
-                                    cache
-                                        .set(
-                                            &compiled.original_class_hash,
-                                            Some(data.clone()),
-                                            compiled.original_contract_class,
-                                            Some(compiled.inline_class_hash),
-                                            "voyager",
-                                        )
-                                        .await;
-                                }
-
-                                classes_debugger_data.insert(compiled.original_class_hash, data);
-
-                                info!("Successfully compiled Voyager source for {}", class_hash);
-                            }
-                            Err(e) => {
-                                let is_timeout = is_build_timeout_error(&e);
-                                warn!(
-                                    "Failed to compile Voyager source for {}: {:?}{}",
-                                    class_hash,
-                                    e,
-                                    timeout_suffix(is_timeout)
-                                );
-                                if let Some(cache) = external_cache {
-                                    cache.mark_failed(&class_hash).await;
-                                }
-                                if is_timeout {
-                                    if let Some(retry_svc) = background_retry {
-                                        retry_svc
-                                            .enqueue_retry(class_hash.clone(), source_for_retry);
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some(cache) = external_cache {
-                            if let Some((phase1_notifier, phase2_notifier)) = notifier {
+                            if let Some(cache) = external_cache {
                                 cache
-                                    .signal_phase1_ready(&class_hash, phase1_notifier)
+                                    .set(
+                                        &compiled.original_class_hash,
+                                        Some(data.clone()),
+                                        compiled.original_contract_class,
+                                        Some(compiled.inline_class_hash),
+                                        "voyager",
+                                    )
                                     .await;
-                                cache.finish_compilation(&class_hash, phase2_notifier).await;
+                            }
+
+                            classes_debugger_data.insert(compiled.original_class_hash, data);
+
+                            info!("Successfully compiled Voyager source for {}", class_hash);
+                        }
+                        Err(e) => {
+                            let is_timeout = is_build_timeout_error(&e);
+                            warn!(
+                                "Failed to compile Voyager source for {}: {:?}{}",
+                                class_hash,
+                                e,
+                                timeout_suffix(is_timeout)
+                            );
+                            if let Some(cache) = external_cache {
+                                cache.mark_failed(&class_hash).await;
+                            }
+                            if is_timeout {
+                                if let Some(retry_svc) = background_retry {
+                                    retry_svc.enqueue_retry(class_hash.clone(), source_for_retry);
+                                }
                             }
                         }
                     }
-                    Ok(None) | Err(_) => {}
+
+                    if let Some(cache) = external_cache {
+                        if let Some((phase1_notifier, phase2_notifier)) = notifier {
+                            cache
+                                .signal_phase1_ready(&class_hash, phase1_notifier)
+                                .await;
+                            cache.finish_compilation(&class_hash, phase2_notifier).await;
+                        }
+                    }
                 }
             }
         }

@@ -31,10 +31,10 @@ use cairo_lang_starknet_classes::keccak::starknet_keccak;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cairo_lang_utils::ordered_hash_set::OrderedHashSet;
 use cairo_lang_utils::require;
+use cairo_lang_utils::smol_str::SmolStr;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::{Signed, ToPrimitive};
-use cairo_lang_utils::smol_str::SmolStr;
 use thiserror::Error;
 
 use crate::felt252_vec_compression::{compress, decompress};
