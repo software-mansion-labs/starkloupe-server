@@ -12,7 +12,7 @@ pub struct SerializableUuid(pub Uuid);
 
 impl std::fmt::Display for SerializableUuid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.to_string())
+        write!(f, "{}", self.0)
     }
 }
 
@@ -38,7 +38,7 @@ impl<'de> Deserialize<'de> for SerializableUuid {
     {
         let s = String::deserialize(deserializer)?;
         let uuid = UuidStd::parse_str(&s).map_err(serde::de::Error::custom)?;
-        Ok(SerializableUuid(Uuid::from(uuid)))
+        Ok(SerializableUuid(uuid))
     }
 }
 

@@ -277,8 +277,8 @@ impl DecodedValueType {
             return Ok(DecodedValueType::Bool(parsed));
         }
 
-        if s.starts_with("0x") {
-            if let Ok(felt) = Felt::from_hex(&s[2..]) {
+        if let Some(hex) = s.strip_prefix("0x") {
+            if let Ok(felt) = Felt::from_hex(hex) {
                 return Ok(DecodedValueType::Single(felt));
             }
         }
@@ -362,7 +362,7 @@ impl DecodedValueType {
 
         // Try parsing as BigUint directly for very large numbers
         s.parse::<BigUint>()
-            .map_err(|e| serde::de::Error::custom(e))
+            .map_err(serde::de::Error::custom)
     }
 
     /// Try to parse string as signed integer (i8, i16, i32, i64, i128)
@@ -385,7 +385,7 @@ impl DecodedValueType {
         // }
 
         // Try parsing as BigInt directly for very large numbers
-        s.parse::<BigInt>().map_err(|e| serde::de::Error::custom(e))
+        s.parse::<BigInt>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -413,7 +413,7 @@ impl<'de> Deserialize<'de> for DecodedValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
+    
 
     #[test]
     fn test_basic_decoded_value_creation() {
@@ -613,7 +613,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use serde_json;
+    
 
     #[test]
     fn test_enum_serialization_without_redundant_wrapping() {
@@ -1059,7 +1059,7 @@ mod integration_tests {
                 // "true" -> Bool
                 match &arr[3] {
                     DecodedValueType::Bool(b) => {
-                        assert_eq!(*b, true);
+                        assert!(*b);
                     }
                     _ => panic!("Expected Bool for fourth element"),
                 }
