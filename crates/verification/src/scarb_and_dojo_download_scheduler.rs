@@ -83,7 +83,7 @@ async fn extract_cairo_version(binary_path: &str) -> Result<Version, Box<dyn Err
     let version_str = regex
         .captures(&scarb_output)
         .and_then(|caps| caps.get(1))
-        .ok_or_else(|| "Failed to find cairo version in scarb output")?
+        .ok_or("Failed to find cairo version in scarb output")?
         .as_str();
 
     let version = Version::parse(version_str)?;

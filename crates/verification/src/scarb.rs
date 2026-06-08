@@ -85,8 +85,7 @@ async fn run_project_build_for_profile(
     unsafe {
         cmd.pre_exec(move || {
             set_limits(cpu_limit).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                std::io::Error::other(
                     format!("Failed to set resource limits: {}", e),
                 )
             })

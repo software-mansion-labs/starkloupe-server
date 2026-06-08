@@ -3,16 +3,16 @@ use anyhow::Result;
 use libc::{rlimit, setrlimit, RLIMIT_AS, RLIMIT_CPU};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{collections::HashMap, fs::File};
 use tracing::{error, info};
 
 pub fn create_files_from_map(
     source_code: &HashMap<String, String>,
-    dir_path: &PathBuf,
+    dir_path: &Path,
 ) -> Result<()> {
     for (path, content) in source_code {
-        let mut full_path = dir_path.clone();
+        let mut full_path = dir_path.to_path_buf();
         full_path.push(path);
 
         if let Some(dir) = full_path.parent() {
