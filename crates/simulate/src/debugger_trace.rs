@@ -54,7 +54,7 @@ impl DebuggerTraceBuilder {
 
         if let Some(contract_call) = contract_calls_map.0.get(contract_call_id) {
             if let Some(call_debugger_data) = &contract_call.call_debugger_data {
-                if call_debugger_data.execution_trace.len() > 0 {
+                if !call_debugger_data.execution_trace.is_empty() {
                     for step in call_debugger_data.execution_trace.iter() {
                         match step {
                             DebuggerTraceEntry::WithLocation(with_location) => {
@@ -100,11 +100,11 @@ impl DebuggerTraceBuilder {
             no_trace_reason = Some("Contract call not found".to_string());
         }
 
-        if no_trace_reason.is_some() {
+        if let Some(reason) = no_trace_reason {
             self.trace.push(DebuggerTraceEntry::WithContractCall(
                 DebuggerTraceEntryWithContractCall {
                     contract_call_id: *contract_call_id,
-                    reason: Some(no_trace_reason.unwrap()),
+                    reason: Some(reason),
                 },
             ));
 

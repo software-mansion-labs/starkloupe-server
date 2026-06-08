@@ -1,3 +1,6 @@
+// These execution helpers share the same wide set of inputs.
+#![allow(clippy::too_many_arguments)]
+
 use crate::convert_entry_point_error_with_block;
 use crate::gas_counter::GasCounter;
 use crate::state::ForkStateReader;

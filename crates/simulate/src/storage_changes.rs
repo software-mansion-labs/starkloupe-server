@@ -27,23 +27,20 @@ pub fn get_storage_changes(
     for trace_entry in vm_trace {
         let syscall =
             get_system_call_at_trace_step(&pc_to_ptr_sys_calls, vm_memory, trace_entry, None, None);
-        match syscall {
-            Some(ESysCall::StorageWrite(storage_write)) => {
-                let before = storage_view
-                    .get(&(
-                        contract_address,
-                        StorageKey(storage_write.address.try_into().unwrap()),
-                    ))
-                    .cloned();
-                storage_changes.insert(
-                    storage_write.address.to_hex_string(),
-                    (
-                        before.map(|before| before.to_hex_string()),
-                        storage_write.value.to_hex_string(),
-                    ),
-                );
-            }
-            _ => {}
+        if let Some(ESysCall::StorageWrite(storage_write)) = syscall {
+            let before = storage_view
+                .get(&(
+                    contract_address,
+                    StorageKey(storage_write.address.try_into().unwrap()),
+                ))
+                .cloned();
+            storage_changes.insert(
+                storage_write.address.to_hex_string(),
+                (
+                    before.map(|before| before.to_hex_string()),
+                    storage_write.value.to_hex_string(),
+                ),
+            );
         }
     }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use blockifier::execution::contract_class::{
     CompiledClassV0 as ContractClassV0, CompiledClassV1 as ContractClassV1,
     RunnableCompiledClass as ContractClassBlockifier,
@@ -312,9 +314,9 @@ impl ForkStateReader {
         let mut cache = self.in_memory_fork_cache.borrow_mut();
         for storage_diff in storage_diffs.iter() {
             let contract_address: ContractAddress =
-                ContractAddress::try_from(Felt::from(storage_diff.address)).unwrap();
+                ContractAddress::try_from(storage_diff.address).unwrap();
             for storage_entry in storage_diff.storage_entries.iter() {
-                let key = StorageKey::try_from(Felt::from(storage_entry.key)).unwrap();
+                let key = StorageKey::try_from(storage_entry.key).unwrap();
                 let value: Felt = storage_entry.value;
                 cache.cache_storage_at(contract_address, key, value);
             }
@@ -325,16 +327,16 @@ impl ForkStateReader {
         let mut cache = self.in_memory_fork_cache.borrow_mut();
         for contract in deploy_contract.iter() {
             let contract_address: ContractAddress =
-                ContractAddress::try_from(Felt::from(contract.address)).unwrap();
-            let class_hash = ClassHash(contract.class_hash.into());
+                ContractAddress::try_from(contract.address).unwrap();
+            let class_hash = ClassHash(contract.class_hash);
             cache.cache_class_hash_at(contract_address, class_hash);
         }
     }
 
     fn collect_declared_classes(&mut self, declare_class: &[DeclaredClassItem]) {
         for class in declare_class.iter() {
-            let class_hash = ClassHash(class.class_hash.into());
-            let compiled_class_hash = CompiledClassHash(class.compiled_class_hash.into());
+            let class_hash = ClassHash(class.class_hash);
+            let compiled_class_hash = CompiledClassHash(class.compiled_class_hash);
             {
                 let mut in_memory_fork_cache = self.in_memory_fork_cache.borrow_mut();
                 in_memory_fork_cache.cache_compiled_class_hash(class_hash, compiled_class_hash);

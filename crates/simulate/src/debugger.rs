@@ -273,7 +273,7 @@ fn find_real_step_for_function(
         .filter_map(|child_id| function_calls_map.0.get(child_id))
         .find(|child| {
             !child.is_hidden
-                && !child.fn_name.as_ref().map_or(false, |n| {
+                && !child.fn_name.as_ref().is_some_and(|n| {
                     n.contains("unsafe_new_") || n.contains("__wrapper__")
                 })
         })
@@ -282,7 +282,7 @@ fn find_real_step_for_function(
 
 fn is_wrapper_or_unsafe(fc: &internal_tracing::function_call::FunctionCall) -> bool {
     fc.is_hidden
-        || fc.fn_name.as_ref().map_or(false, |n| {
+        || fc.fn_name.as_ref().is_some_and(|n| {
             n.contains("unsafe_new_") || n.contains("__wrapper__")
         })
 }

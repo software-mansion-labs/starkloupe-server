@@ -20,6 +20,22 @@ use tracing::warn;
 use walnut_shared::utils::convert_contract_class;
 use walnut_shared::utils::is_version_gte;
 
+// Storage changes per call id: call id -> (storage key -> (before, after)).
+type StorageChangesByCall = HashMap<u32, HashMap<String, (Option<String>, String)>>;
+
+// Builds the debugger data for one contract call.
+type ContractCallBuilderFn<D> = fn(
+    &[Option<Felt>],
+    &Vec<RelocatedTraceEntry>,
+    &D,
+    &mut FunctionCallsMap,
+    &mut EventCallsMap,
+    &mut u32,
+    u32,
+    &[u32],
+    Arc<ClassMappings>,
+) -> Result<ContractCallBuildResult>;
+
 pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     contract_calls_map: &mut ContractCallsMap,
     next_call_id: &mut u32,
@@ -27,21 +43,11 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
     classes_data: &HashMap<String, D>,
     cached_fork_state: &CachedState<ForkStateReader>,
     with_storage_and_events: bool,
-    builder: fn(
-        &[Option<Felt>],
-        &Vec<RelocatedTraceEntry>,
-        &D,
-        &mut FunctionCallsMap,
-        &mut EventCallsMap,
-        &mut u32,
-        u32,
-        &[u32],
-        Arc<ClassMappings>,
-    ) -> Result<ContractCallBuildResult>,
+    builder: ContractCallBuilderFn<D>,
 ) -> Result<(
     FunctionCallsMap,
     Option<EventCallsMap>,
-    Option<HashMap<u32, HashMap<String, (Option<String>, String)>>>,
+    Option<StorageChangesByCall>,
 )> {
     let mut function_calls_map = FunctionCallsMap::new();
     let mut event_calls_map = EventCallsMap::default();
@@ -60,7 +66,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
         .filter(|call| call.vm_memory.is_some() && call.vm_trace.is_some())
         .collect();
 
-    for (_idx, call) in calls_with_vm_data.iter_mut().enumerate() {
+    for call in calls_with_vm_data.iter_mut() {
         // Safety: We already filtered for calls with VM data
         let vm_memory = call.vm_memory.as_ref().unwrap();
         let vm_trace = call.vm_trace.as_ref().unwrap();
@@ -83,7 +89,7 @@ pub fn create_function_calls_map_generic<D: ClassDataProvider>(
             }
 
             if let Some(class_data) = class_data {
-                let compiler_version = class_mappings.compiler_version.clone();
+                let compiler_version = class_mappings.compiler_version;
                 let result = builder(
                     vm_memory,
                     vm_trace,
