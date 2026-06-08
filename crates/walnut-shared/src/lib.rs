@@ -301,6 +301,47 @@ pub fn chain_id_to_url_format(chain_id: &ChainId) -> String {
     }
 }
 
+const WALNUT_APP_URL: &str = "https://app.walnut.dev";
+
+pub fn simulation_deep_link(
+    sender_address: &str,
+    calldata: &[String],
+    transaction_version: usize,
+    chain_id: &ChainId,
+    block_number: Option<u64>,
+    rpc_url: &str,
+) -> String {
+    let calldata_csv = calldata.join(",");
+    let calldata_joined = urlencoding::encode(&calldata_csv);
+    let mut params = vec![
+        format!("senderAddress={sender_address}"),
+        format!("calldata={calldata_joined}"),
+        format!("transactionVersion={transaction_version}"),
+        format!("chainId={}", chain_id_to_url_format(chain_id)),
+    ];
+    if let Some(bn) = block_number {
+        params.push(format!("blockNumber={bn}"));
+    }
+    if !matches!(chain_id, ChainId::Mainnet | ChainId::Sepolia) {
+        params.push(format!("rpcUrl={}", urlencoding::encode(rpc_url)));
+    }
+    format!("{WALNUT_APP_URL}/simulations?{}", params.join("&"))
+}
+
+pub fn transaction_deep_link(
+    chain_id_url: Option<&str>,
+    rpc_url: Option<&str>,
+    tx_hash: &str,
+) -> String {
+    match chain_id_url {
+        Some(chain) => format!("{WALNUT_APP_URL}/transactions?chainId={chain}&txHash={tx_hash}"),
+        None => {
+            let rpc = urlencoding::encode(rpc_url.unwrap_or(""));
+            format!("{WALNUT_APP_URL}/transactions?rpcUrl={rpc}&txHash={tx_hash}")
+        }
+    }
+}
+
 pub fn to_chain_id(chain_id: &EChainId) -> EChainId {
     match chain_id {
         EChainId::EthereumMainnet => EChainId::StarknetMainnet,
@@ -610,4 +651,48 @@ pub fn format_fee_payment(fee: &FeePayment) -> Option<String> {
     };
 
     Some(format!("{}.{} {}", whole, fraction_str, unit_str))
+}
+
+#[cfg(test)]
+mod deep_link_tests {
+    use super::*;
+    use starknet_api::core::ChainId;
+
+    #[test]
+    fn simulation_link_mainnet_omits_rpc_url() {
+        let url = simulation_deep_link(
+            "0x123",
+            &["0x1".to_string(), "0x2".to_string()],
+            1,
+            &ChainId::Mainnet,
+            Some(42),
+            "https://rpc.example",
+        );
+        assert!(url.contains("chainId=SN_MAINNET"));
+        assert!(url.contains("blockNumber=42"));
+        assert!(!url.contains("rpcUrl="));
+    }
+
+    #[test]
+    fn simulation_link_custom_chain_includes_rpc_url() {
+        let url = simulation_deep_link(
+            "0x123",
+            &["0x1".to_string()],
+            1,
+            &ChainId::Other("my_chain".to_string()),
+            None,
+            "https://rpc.example",
+        );
+        assert!(url.contains("rpcUrl="));
+        assert!(!url.contains("blockNumber="));
+    }
+
+    #[test]
+    fn transaction_link_known_chain_vs_custom_rpc() {
+        let known = transaction_deep_link(Some("SN_MAINNET"), None, "0xabc");
+        assert!(known.contains("chainId=SN_MAINNET") && known.contains("txHash=0xabc"));
+
+        let custom = transaction_deep_link(None, Some("https://rpc.example"), "0xabc");
+        assert!(custom.contains("rpcUrl=") && custom.contains("txHash=0xabc"));
+    }
 }

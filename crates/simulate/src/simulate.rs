@@ -86,8 +86,8 @@ use walnut_shared::mask_private_token_in_url;
 use walnut_shared::parse_transaction_hash_per_network;
 use walnut_shared::utils::extract_sierra_and_cairo_versions;
 use walnut_shared::{
-    chain_id_to_readable_string, create_eth_provider_from_url, create_rpc_client_from_url,
-    to_chain_id, EChainId, ENetwork, ETransactionHashType,
+    chain_id_to_readable_string, chain_id_to_url_format, create_eth_provider_from_url,
+    create_rpc_client_from_url, to_chain_id, EChainId, ENetwork, ETransactionHashType,
 };
 
 const VOYAGER_PHASE_1_TIMEOUT: Duration = Duration::from_secs(45);
@@ -654,6 +654,16 @@ pub async fn simulate_by_calldata(
         .map(|felt| felt.to_hex_string())
         .collect::<Vec<String>>();
     let transaction_version: usize = args.transaction_version.0.to_u64().unwrap() as usize;
+
+    let walnut_webapp_url = Some(walnut_shared::simulation_deep_link(
+        &sender_address.to_string(),
+        &calldata,
+        transaction_version,
+        &args.chain_id,
+        args.block_number.map(|b| b.0),
+        args.rpc_url.as_str(),
+    ));
+
     let (
         simulation_result,
         block_timestamp,
@@ -696,6 +706,7 @@ pub async fn simulate_by_calldata(
     Ok(TransactionSimulationResult {
         l1_transaction_data: None,
         l2_transaction_data: Some(l2_transaction_data),
+        walnut_webapp_url,
     })
 }
 
@@ -716,7 +727,8 @@ pub async fn simulate_transaction_by_hash(
     background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     if let Some(transaction_hash) = parse_transaction_hash_per_network(tx_hash, network) {
-        let result = match transaction_hash {
+        let rpc_url_str = starknet_rpc_url.as_ref().map(|u| u.as_str().to_string());
+        let mut result = match transaction_hash {
             ETransactionHashType::Starknet(starknet_hash) => {
                 simulate_starknet_transaction_by_hash(
                     db_pool,
@@ -746,6 +758,12 @@ pub async fn simulate_transaction_by_hash(
                 .await?
             }
         };
+        let chain_id_url = chain_id.map(|c| chain_id_to_url_format(&ChainId::from(c)));
+        result.walnut_webapp_url = Some(walnut_shared::transaction_deep_link(
+            chain_id_url.as_deref(),
+            rpc_url_str.as_deref(),
+            tx_hash,
+        ));
         Ok(result)
     } else {
         Err(TransactionSimulationError::TransactionHashNotFound(
@@ -881,6 +899,7 @@ async fn simulate_starknet_transaction_by_hash(
                                 return Ok(TransactionSimulationResult {
                                     l1_transaction_data: None,
                                     l2_transaction_data: Some(l2_transaction_data),
+                                    walnut_webapp_url: None,
                                 });
                             }
                         }
@@ -950,6 +969,7 @@ async fn simulate_starknet_transaction_by_hash(
                         return Ok(TransactionSimulationResult {
                             l1_transaction_data: None,
                             l2_transaction_data: Some(l2_transaction_data),
+                            walnut_webapp_url: None,
                         });
                     }
                 }
@@ -1138,6 +1158,7 @@ async fn process_l1_handler_transaction(
     Ok(TransactionSimulationResult {
         l1_transaction_data: None,
         l2_transaction_data: Some(l2_transaction_data),
+        walnut_webapp_url: None,
     })
 }
 
@@ -1182,6 +1203,7 @@ fn process_l1_transaction_data(
     Ok(TransactionSimulationResult {
         l1_transaction_data: Some(l1_transaction_data),
         l2_transaction_data: None,
+        walnut_webapp_url: None,
     })
 }
 
