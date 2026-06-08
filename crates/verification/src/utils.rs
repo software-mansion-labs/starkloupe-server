@@ -1,6 +1,6 @@
 use anyhow::Result;
 #[cfg(target_os = "linux")]
-use libc::{rlimit, setrlimit, RLIMIT_AS, RLIMIT_CPU};
+use libc::{rlimit, setrlimit, RLIMIT_CPU};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -102,8 +102,7 @@ fn set_limit_linux(cpu_limit: u64) -> std::io::Result<()> {
     // Set RLIMIT_CPU to limit CPU time (seconds) the process can use
     let cpu_result = unsafe { setrlimit(RLIMIT_CPU, &cpu_limit_struct) };
     if cpu_result != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(std::io::Error::other(
             "Linux setrlimit (RLIMIT_CPU) failed".to_string(),
         ));
     }

@@ -1,8 +1,10 @@
 name: CI
 
-# Runs format, clippy and check on every pull request.
+# Runs format, clippy and check on every pull request and on merges to main.
 on:
   pull_request:
+  push:
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
