@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::auth::AdminAuth;
+use crate::auth::admin_token::AdminAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
