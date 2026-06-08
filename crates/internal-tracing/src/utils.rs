@@ -92,7 +92,7 @@ pub fn make_casm_to_sierra_map(debug_info: &CairoProgramDebugInfo) -> HashMap<us
     let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
     for (i, sierra_info) in debug_info.sierra_statement_info.iter().enumerate() {
         let key = sierra_info.instruction_idx;
-        map.entry(key).or_insert_with(Vec::new).push(i);
+        map.entry(key).or_default().push(i);
     }
     map
 }
@@ -176,7 +176,7 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
             .statements
             .iter()
             .enumerate()
-            .map(|(index, statement)| format!("{} // {}", statement.to_string(), index))
+            .map(|(index, statement)| format!("{} // {}", statement, index))
             .collect(),
         funcs: sierra_program
             .funcs
@@ -187,7 +187,7 @@ pub fn format_sierra_program(sierra_program: Program) -> SierraFormattedProgram 
 }
 
 pub fn is_panic_result(return_type: Option<&str>) -> bool {
-    return_type.map_or(false, |result_type| result_type.contains("PanicResult"))
+    return_type.is_some_and(|result_type| result_type.contains("PanicResult"))
 }
 
 pub fn get_raw_function_name(fn_name: &str) -> Option<String> {
@@ -441,7 +441,7 @@ pub fn get_system_call_at_trace_step_(
                                     });
                                 if let Some(event_selector) = event_selector {
                                     let (event_name, event_members) =
-                                        find_event_by_selector(&events, event_selector);
+                                        find_event_by_selector(events, event_selector);
                                     let conrete_type_id =
                                         type_declaration_map.keys().find_map(|concrete_id| {
                                             if let Some(name) = concrete_id.debug_name.as_ref() {
@@ -464,7 +464,7 @@ pub fn get_system_call_at_trace_step_(
 
                                         if let Some(decoded_event) = decode_event_datas(
                                             &conrete_type_id,
-                                            &type_declaration_map,
+                                            type_declaration_map,
                                             &values,
                                             &mut 0,
                                         ) {

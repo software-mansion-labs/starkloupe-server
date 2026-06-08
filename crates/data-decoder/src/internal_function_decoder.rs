@@ -1,3 +1,6 @@
+// These decoder functions share the same wide set of decoding inputs.
+#![allow(clippy::too_many_arguments)]
+
 use crate::utils::{is_allocation_safe, skip_builtin_type_declaration};
 use crate::{create_compact_enum, create_decoded_value_by_type, DecodedValue, DecodedValueType};
 use cairo_lang_sierra::ids::ConcreteTypeId;
@@ -110,7 +113,7 @@ fn decode_enum(
     if let Some(value) = values.get(*data_index) {
         let variant_selector = value.to_usize()?;
         let variant_index = if total_variants > 2 {
-            total_variants.saturating_sub((variant_selector + 1) / 2)
+            total_variants.saturating_sub(variant_selector.div_ceil(2))
         } else {
             variant_selector
         };

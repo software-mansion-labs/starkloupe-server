@@ -6,6 +6,12 @@ use walnut_shared::utils::simplify_type_name;
 /// Maximum depth for type expansion to prevent stack overflow with deeply nested types
 const MAX_EXPANSION_DEPTH: usize = 5;
 
+// Struct members and enum variants of a type, whichever applies.
+type CompleteTypeInfo = (
+    Option<Cow<'static, [StructMember]>>,
+    Option<Cow<'static, [EnumVariant]>>,
+);
+
 /// Type decoder for ABI entrypoints that recursively expands all nested types
 pub struct TypeDecoder {
     struct_map: HashMap<String, Struct>,
@@ -185,10 +191,7 @@ impl TypeDecoder {
         type_name: &str,
         visited: &mut HashSet<String>,
         depth: usize,
-    ) -> (
-        Option<Cow<'static, [StructMember]>>,
-        Option<Cow<'static, [EnumVariant]>>,
-    ) {
+    ) -> CompleteTypeInfo {
         if self.is_primitive_type(type_name) {
             return (None, None);
         }
@@ -731,7 +734,7 @@ mod tests {
     fn test_circular_reference_struct_expansion() {
         // Create a circular reference: StructA -> StructB -> StructA
         let mut struct_map = HashMap::new();
-        let mut enum_map = HashMap::new();
+        let enum_map = HashMap::new();
 
         // StructA contains StructB
         struct_map.insert(
@@ -782,7 +785,7 @@ mod tests {
     /// Test circular reference detection in enum expansion
     #[test]
     fn test_circular_reference_enum_expansion() {
-        let mut struct_map = HashMap::new();
+        let struct_map = HashMap::new();
         let mut enum_map = HashMap::new();
 
         // EnumA contains EnumB
@@ -919,7 +922,7 @@ mod tests {
     #[test]
     fn test_visited_set_shared_across_function() {
         let mut struct_map = HashMap::new();
-        let mut enum_map = HashMap::new();
+        let enum_map = HashMap::new();
 
         // Create a struct that references itself
         struct_map.insert(

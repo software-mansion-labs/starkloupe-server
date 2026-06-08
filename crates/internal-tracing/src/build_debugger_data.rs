@@ -1,3 +1,6 @@
+// These builders share the same wide set of trace inputs.
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     call_trace::{get_internal_call_trace, get_simple_internal_call_trace},
     event_calls_map::EventCallsMap,
@@ -99,7 +102,7 @@ pub fn build_simple_contract_call_debugger_data_adapter(
 fn build_simple_contract_call_debugger_data(
     vm_memory: &[Option<Felt>],
     vm_trace: &Vec<RelocatedTraceEntry>,
-    full_class_data: &impl ClassDataProvider,
+    _full_class_data: &impl ClassDataProvider,
     function_calls_map: &mut FunctionCallsMap,
     event_calls_map: &mut EventCallsMap,
     next_call_id: &mut u32,

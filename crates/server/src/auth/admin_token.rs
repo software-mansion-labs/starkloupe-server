@@ -1,3 +1,6 @@
+// Admin-token auth extractor; not wired up to any route yet (used by M1).
+#![allow(dead_code)]
+
 use axum::{
     async_trait,
     extract::FromRequestParts,
@@ -73,6 +76,8 @@ mod tests {
     #[test]
     fn admin_auth_accepts_correct_value() {
         std::env::set_var(ENV_VAR, "secret-correct-token");
-        assert!(verify_admin_token(&headers_with(&[("x-admin-token", "secret-correct-token")])).is_ok());
+        assert!(
+            verify_admin_token(&headers_with(&[("x-admin-token", "secret-correct-token")])).is_ok()
+        );
     }
 }

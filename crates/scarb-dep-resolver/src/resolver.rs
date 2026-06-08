@@ -16,7 +16,7 @@ use crate::registry::fetch_versions;
 ///   2. For each batch, fetch all versions from scarbs.xyz **in parallel**.
 ///   3. For each package in the batch:
 ///      a. Keep only versions that satisfy the semver constraint AND have a
-///         `starknet`/`core` dep requirement that allows `starknet_version`.
+///      `starknet`/`core` dep requirement that allows `starknet_version`.
 ///      b. Pick the highest remaining version.
 ///      c. Record `name = "=chosen"` in the result map.
 ///      d. Queue the chosen version's normal (non-dev, non-builtin) deps as the next batch.

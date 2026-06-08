@@ -11,7 +11,6 @@ use starknet_api::core::ChainId;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{error, instrument};
 use url::Url;
-use toml;
 use utoipa::ToSchema;
 use uuid::Uuid;
 use verification::verification::{verify_by_class_hash, verify_by_contract_address};
@@ -266,13 +265,6 @@ pub async fn verify_handler(
                     (StatusCode::BAD_REQUEST, e.to_string()).into_response()
                 }
             }
-        },
-        _ => {
-            (
-            StatusCode::BAD_REQUEST,
-            "The required parameter is missing - please provide a valid class hash or contract address",
-        )
-            .into_response()
         }
     }
 }
@@ -305,7 +297,6 @@ pub struct VerificationPayloadWithRpc {
     ),
     tag = "Contract class verification"
 )]
-
 #[instrument(name = "verify_with_rpc", skip(state, payload), fields(
     has_rpc_url = payload.rpc_url.is_some(),
     class_hash = ?payload.class_hash,
@@ -346,7 +337,7 @@ pub async fn verify_handler_with_rpc(
             Err(e) => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    format!("Failed to convert class hash: {}", e.to_string()),
+                    format!("Failed to convert class hash: {}", e),
                 )
                     .into_response();
             }
@@ -393,29 +384,23 @@ pub async fn verify_handler_with_rpc(
         }
     } else {
         // Check for dojo version in Scarb.toml before parsing cairo_version
-        let dojo_version: Option<String> = payload.source_code
+        let dojo_version: Option<String> = payload
+            .source_code
             .get("Scarb.toml")
-            .and_then(|content| {
-                content.parse::<toml::Value>().ok()
-            })
+            .and_then(|content| content.parse::<toml::Value>().ok())
             .and_then(|toml| {
                 toml.get("dependencies")
                     .and_then(|d| d.get("dojo"))
-                    .and_then(|dojo_value| {
-                        match dojo_value {
-                            toml::Value::Table(dojo_table) => {
-                                dojo_table.get("tag")
-                                    .and_then(toml::Value::as_str)
-                                    .map(|s| s.to_string())
-                            },
-                            toml::Value::String(version) => {
-                                Some(version.clone())
-                            },
-                            _ => None,
-                        }
+                    .and_then(|dojo_value| match dojo_value {
+                        toml::Value::Table(dojo_table) => dojo_table
+                            .get("tag")
+                            .and_then(toml::Value::as_str)
+                            .map(|s| s.to_string()),
+                        toml::Value::String(version) => Some(version.clone()),
+                        _ => None,
                     })
             });
-        
+
         let cairo_version = if let Some(version_str) = payload.cairo_version.as_deref() {
             match parse_version_string_to_tuple(version_str) {
                 Ok(version) => Some(version),
@@ -428,11 +413,7 @@ pub async fn verify_handler_with_rpc(
                                 "Dojo versions 1.7.0 and 1.7.1 are not supported. Please upgrade your project to the latest available Dojo version. Detected dojo version: {}",
                                 dojo_ver
                             );
-                            error!(
-                                tags.verification_status = "failed",
-                                "{}",
-                                error_message
-                            );
+                            error!(tags.verification_status = "failed", "{}", error_message);
                             return (StatusCode::BAD_REQUEST, error_message).into_response();
                         }
                     }

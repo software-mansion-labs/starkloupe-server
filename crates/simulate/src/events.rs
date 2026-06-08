@@ -28,9 +28,9 @@ pub struct EmittedEvent {
 impl EmittedEvent {
     pub fn create_emitted_events_list(
         contract_calls_map: &mut ContractCallsMap,
-        event_abis: &Vec<Event>,
-        struct_abis: &Vec<Struct>,
-        enum_abis: &Vec<Enum>,
+        event_abis: &[Event],
+        struct_abis: &[Struct],
+        enum_abis: &[Enum],
         cheatnet_state_detected_events: &[CheatnetEvent],
         strkgate_emitted_event: Option<EmittedEvent>,
     ) -> Vec<EmittedEvent> {

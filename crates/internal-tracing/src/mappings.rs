@@ -193,7 +193,7 @@ impl Mappings {
         self.class
             .casm_to_sierra_map
             .get(casm_index)
-            .map_or(None, |sierra_indexes| sierra_indexes.first().cloned())
+            .and_then(|sierra_indexes| sierra_indexes.first().cloned())
     }
 
     pub fn get_cairo_locations_at_sierra_indexes(
@@ -203,7 +203,7 @@ impl Mappings {
     ) -> Vec<CodeLocation> {
         let mut locations_set = HashSet::new();
         for sierra_index in sierra_indexes {
-            if let Some(cairo_info) = sierra_statements_to_cairo_info.get(&sierra_index) {
+            if let Some(cairo_info) = sierra_statements_to_cairo_info.get(sierra_index) {
                 locations_set.extend(cairo_info.cairo_locations.clone());
             }
         }
@@ -504,18 +504,14 @@ pub fn get_cell_ref_value(
             ApChange::Known(ap_change_value) => {
                 let ap: i32 = trace_entry.ap as i32;
                 let addr = ap + cell_ref.offset as i32 + *ap_change_value as i32;
-                memory[addr as usize]
-                    .clone()
-                    .ok_or(GetCellRefValueError::MemoryAddressNotFound)
+                memory[addr as usize].ok_or(GetCellRefValueError::MemoryAddressNotFound)
             }
             ApChange::Unknown => Err(GetCellRefValueError::UnknownApChange),
         },
         Register::FP => {
             let fp: i32 = trace_entry.fp as i32;
             let addr = fp + cell_ref.offset as i32;
-            memory[addr as usize]
-                .clone()
-                .ok_or(GetCellRefValueError::MemoryAddressNotFound)
+            memory[addr as usize].ok_or(GetCellRefValueError::MemoryAddressNotFound)
         }
     }
 }

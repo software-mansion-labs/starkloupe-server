@@ -287,10 +287,7 @@ pub async fn insert_class_hash_profiles(
 /// class_hash_profiles has status='voyager' — i.e. the class was originally
 /// fetched from Voyager and persisted by us, not verified through the regular
 /// Walnut flow.
-async fn class_has_voyager_provenance(
-    db_pool: &Pool<Postgres>,
-    class_hash: &str,
-) -> Result<bool> {
+async fn class_has_voyager_provenance(db_pool: &Pool<Postgres>, class_hash: &str) -> Result<bool> {
     let row = sqlx::query!(
         r#"
         SELECT 1 AS hit

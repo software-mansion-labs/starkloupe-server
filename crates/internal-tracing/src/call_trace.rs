@@ -1,3 +1,6 @@
+// These trace builders share the same wide set of trace inputs.
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     event_call::EventCall,
     event_calls_map::EventCallsMap,
@@ -326,11 +329,11 @@ impl<'a> CallTraceBuilder<'a> {
     fn handle_function_entry(
         &mut self,
         trace_state: &mut TraceState,
-        i: usize,
+        _i: usize,
         trace_entry: &RelocatedTraceEntry,
         first_sierra_index: Option<usize>,
-        arguments: &Vec<InternalFnCallIO>,
-        arguments_decoded: &Vec<DecodedValue>,
+        arguments: &[InternalFnCallIO],
+        arguments_decoded: &[DecodedValue],
     ) -> Result<()> {
         let function = first_sierra_index
             .and_then(|si| self.mappings.get_sierra_function_at_sierra_index(&si));
@@ -423,8 +426,8 @@ impl<'a> CallTraceBuilder<'a> {
         trace_state: &mut TraceState,
         fn_name: &str,
         fp: usize,
-        arguments: &Vec<InternalFnCallIO>,
-        arguments_decoded: &Vec<DecodedValue>,
+        arguments: &[InternalFnCallIO],
+        arguments_decoded: &[DecodedValue],
     ) -> Result<()> {
         if fn_name.starts_with("core::") {
             // For core functions, we need to create a hidden function call to maintain parent tracking
@@ -448,8 +451,8 @@ impl<'a> CallTraceBuilder<'a> {
                 fn_name: Some(fn_name.to_string()),
                 fp,
                 is_deepest_panic_result: false,
-                arguments: arguments.clone(),
-                arguments_decoded: Some(arguments_decoded.clone()),
+                arguments: arguments.to_vec(),
+                arguments_decoded: Some(arguments_decoded.to_vec()),
                 results: Vec::new(),
                 results_decoded: None,
                 code_location,
@@ -490,8 +493,8 @@ impl<'a> CallTraceBuilder<'a> {
             fn_name: Some(fn_name.to_string()),
             fp,
             is_deepest_panic_result: false,
-            arguments: arguments.clone(),
-            arguments_decoded: Some(arguments_decoded.clone()),
+            arguments: arguments.to_vec(),
+            arguments_decoded: Some(arguments_decoded.to_vec()),
             results: Vec::new(),
             results_decoded: None,
             code_location,
@@ -517,10 +520,10 @@ impl<'a> CallTraceBuilder<'a> {
     fn handle_function_exit(
         &mut self,
         trace_state: &mut TraceState,
-        i: usize,
+        _i: usize,
         trace_entry: &RelocatedTraceEntry,
-        results: &Vec<InternalFnCallIO>,
-        results_decoded: &Vec<DecodedValue>,
+        results: &[InternalFnCallIO],
+        results_decoded: &[DecodedValue],
     ) -> Result<()> {
         let parent_call_id = self
             .function_calls_map
@@ -596,7 +599,7 @@ impl<'a> CallTraceBuilder<'a> {
         trace_state: &mut TraceState,
         trace_entry: &RelocatedTraceEntry,
         sierra_indexes: &Option<Vec<usize>>,
-        cairo_locations: &[CodeLocation],
+        _cairo_locations: &[CodeLocation],
         arguments: &[InternalFnCallIO],
         arguments_decoded: &[DecodedValue],
         results: &[InternalFnCallIO],
