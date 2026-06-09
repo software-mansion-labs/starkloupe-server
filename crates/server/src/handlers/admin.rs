@@ -3,19 +3,35 @@ use crate::auth::admin_token::AdminAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    Json,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Format a `TIMESTAMPTZ` value as an RFC 3339 string for JSON responses.
-fn to_rfc3339(ts: time::OffsetDateTime) -> Result<String, StatusCode> {
-    ts.format(&Rfc3339).map_err(|e| {
-        tracing::error!("timestamp format failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })
+fn db_error_status(e: sqlx::Error, context: &str) -> StatusCode {
+    match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
+        sqlx::Error::Database(db) if db.is_foreign_key_violation() => StatusCode::NOT_FOUND,
+        sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
+        _ => {
+            tracing::error!("{context} failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+pub fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/admin/tenant", post(create_tenant))
+        .route("/v1/admin/tenant/:tenant_id", get(list_members))
+        .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
+        .route(
+            "/v1/admin/tenant/:tenant_id/member/:member_id/remove",
+            post(remove_member),
+        )
 }
 
 #[derive(Deserialize)]
@@ -27,7 +43,8 @@ pub struct CreateTenantBody {
 pub struct TenantResponse {
     pub id: Uuid,
     pub name: String,
-    pub created_at: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Deserialize)]
@@ -41,7 +58,8 @@ pub struct MemberResponse {
     pub id: Uuid,
     pub tenant_id: Uuid,
     pub github_email: String,
-    pub added_at: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub added_at: OffsetDateTime,
 }
 
 #[derive(Deserialize)]
@@ -54,23 +72,16 @@ pub async fn create_tenant(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateTenantBody>,
 ) -> Result<(StatusCode, Json<TenantResponse>), StatusCode> {
-    let row = sqlx::query!(
-        "INSERT INTO tenants (name) VALUES ($1) RETURNING id, name, created_at",
-        body.name
-    )
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("create_tenant failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let tenant = db::admin::create_tenant(&state.db_pool, &body.name)
+        .await
+        .map_err(|e| db_error_status(e, "create_tenant"))?;
 
     Ok((
         StatusCode::CREATED,
         Json(TenantResponse {
-            id: row.id,
-            name: row.name,
-            created_at: to_rfc3339(row.created_at)?,
+            id: tenant.id,
+            name: tenant.name,
+            created_at: tenant.created_at,
         }),
     ))
 }
@@ -81,31 +92,22 @@ pub async fn add_member(
     Path(tenant_id): Path<Uuid>,
     Json(body): Json<AddMemberBody>,
 ) -> Result<(StatusCode, Json<MemberResponse>), StatusCode> {
-    let row = sqlx::query!(
-        "INSERT INTO tenant_members (tenant_id, github_email, added_by_email) \
-         VALUES ($1, $2, $3) \
-         RETURNING id, tenant_id, github_email, added_at",
+    let member = db::admin::add_member(
+        &state.db_pool,
         tenant_id,
-        body.github_email,
-        body.added_by_email
+        &body.github_email,
+        &body.added_by_email,
     )
-    .fetch_one(&state.db_pool)
     .await
-    .map_err(|e| match &e {
-        sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
-        _ => {
-            tracing::error!("add_member insert failed: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    })?;
+    .map_err(|e| db_error_status(e, "add_member"))?;
 
     Ok((
         StatusCode::CREATED,
         Json(MemberResponse {
-            id: row.id,
-            tenant_id: row.tenant_id,
-            github_email: row.github_email,
-            added_at: to_rfc3339(row.added_at)?,
+            id: member.id,
+            tenant_id: member.tenant_id,
+            github_email: member.github_email,
+            added_at: member.added_at,
         }),
     ))
 }
@@ -116,22 +118,12 @@ pub async fn remove_member(
     Path((tenant_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RemoveMemberBody>,
 ) -> Result<StatusCode, StatusCode> {
-    let result = sqlx::query!(
-        "UPDATE tenant_members \
-         SET removed_at = now(), removed_by_email = $1 \
-         WHERE id = $2 AND tenant_id = $3 AND removed_at IS NULL",
-        body.removed_by_email,
-        member_id,
-        tenant_id
-    )
-    .execute(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("remove_member failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let rows_affected =
+        db::admin::remove_member(&state.db_pool, tenant_id, member_id, &body.removed_by_email)
+            .await
+            .map_err(|e| db_error_status(e, "remove_member"))?;
 
-    if result.rows_affected() == 0 {
+    if rows_affected == 0 {
         Err(StatusCode::NOT_FOUND)
     } else {
         Ok(StatusCode::NO_CONTENT)
@@ -143,30 +135,17 @@ pub async fn list_members(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<Uuid>,
 ) -> Result<Json<Vec<MemberResponse>>, StatusCode> {
-    let rows = sqlx::query!(
-        "SELECT id, tenant_id, github_email, added_at FROM tenant_members \
-         WHERE tenant_id = $1 AND removed_at IS NULL \
-         ORDER BY added_at",
-        tenant_id
-    )
-    .fetch_all(&state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("list_members failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let members = rows
+    let members = db::admin::list_members(&state.db_pool, tenant_id)
+        .await
+        .map_err(|e| db_error_status(e, "list_members"))?
         .into_iter()
-        .map(|r| {
-            Ok(MemberResponse {
-                id: r.id,
-                tenant_id: r.tenant_id,
-                github_email: r.github_email,
-                added_at: to_rfc3339(r.added_at)?,
-            })
+        .map(|m| MemberResponse {
+            id: m.id,
+            tenant_id: m.tenant_id,
+            github_email: m.github_email,
+            added_at: m.added_at,
         })
-        .collect::<Result<Vec<_>, StatusCode>>()?;
+        .collect();
 
     Ok(Json(members))
 }
@@ -177,13 +156,13 @@ mod tests {
     use axum::{
         body::{Body, HttpBody},
         http::Request,
-        routing::{delete, get, post},
         Router,
     };
     use serde_json::{json, Value};
     use sqlx::PgPool;
     use std::future::poll_fn;
     use std::pin::Pin;
+    use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
     use tower::ServiceExt;
 
@@ -216,15 +195,7 @@ mod tests {
     }
 
     fn build_app(state: Arc<AppState>) -> Router {
-        Router::new()
-            .route("/v1/admin/tenant", post(create_tenant))
-            .route("/v1/admin/tenant/:tenant_id", get(list_members))
-            .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
-            .route(
-                "/v1/admin/tenant/:tenant_id/member/:member_id",
-                delete(remove_member),
-            )
-            .with_state(state)
+        routes().with_state(state)
     }
 
     async fn request(
@@ -325,8 +296,11 @@ mod tests {
 
         let (status, _) = request(
             &app,
-            "DELETE",
-            &format!("/v1/admin/tenant/{tenant_id}/member/{}", member_ids[0]),
+            "POST",
+            &format!(
+                "/v1/admin/tenant/{tenant_id}/member/{}/remove",
+                member_ids[0]
+            ),
             Some(TOKEN),
             Some(json!({ "removed_by_email": "admin@walnut.dev" })),
         )
@@ -335,8 +309,11 @@ mod tests {
 
         let (status, _) = request(
             &app,
-            "DELETE",
-            &format!("/v1/admin/tenant/{tenant_id}/member/{}", member_ids[0]),
+            "POST",
+            &format!(
+                "/v1/admin/tenant/{tenant_id}/member/{}/remove",
+                member_ids[0]
+            ),
             Some(TOKEN),
             Some(json!({ "removed_by_email": "admin@walnut.dev" })),
         )
