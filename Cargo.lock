@@ -10669,6 +10669,7 @@ dependencies = [
  "starknet_api",
  "thiserror 1.0.64",
  "url",
+ "urlencoding",
 ]
 
 [[package]]

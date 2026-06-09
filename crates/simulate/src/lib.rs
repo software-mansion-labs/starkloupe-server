@@ -252,6 +252,8 @@ pub struct L2TransactionData {
 pub struct TransactionSimulationResult {
     pub l1_transaction_data: Option<L1TransactionData>,
     pub l2_transaction_data: Option<L2TransactionData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walnut_webapp_url: Option<String>,
 }
 
 #[derive(Error, Debug)]
