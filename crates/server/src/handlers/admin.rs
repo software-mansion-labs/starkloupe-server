@@ -3,35 +3,54 @@ use crate::auth::admin_token::AdminAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
-    Json, Router,
+    response::{IntoResponse, Response},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-fn db_error_status(e: sqlx::Error, context: &str) -> StatusCode {
-    match &e {
-        sqlx::Error::Database(db) if db.is_unique_violation() => StatusCode::CONFLICT,
-        sqlx::Error::Database(db) if db.is_foreign_key_violation() => StatusCode::NOT_FOUND,
-        sqlx::Error::Database(db) if db.is_check_violation() => StatusCode::BAD_REQUEST,
-        _ => {
-            tracing::error!("{context} failed: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
+pub enum AdminError {
+    Validation(&'static str),
+    Conflict,
+    NotFound,
+    Internal,
+}
+
+impl From<sqlx::Error> for AdminError {
+    fn from(e: sqlx::Error) -> Self {
+        match &e {
+            sqlx::Error::Database(db) if db.is_unique_violation() => AdminError::Conflict,
+            sqlx::Error::Database(db) if db.is_foreign_key_violation() => AdminError::NotFound,
+            sqlx::Error::Database(db) if db.is_check_violation() => {
+                AdminError::Validation("constraint violation")
+            }
+            _ => {
+                tracing::error!("admin db error: {e}");
+                AdminError::Internal
+            }
         }
     }
 }
 
-pub fn routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/v1/admin/tenant", post(create_tenant))
-        .route("/v1/admin/tenant/:tenant_id", get(list_members))
-        .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
-        .route(
-            "/v1/admin/tenant/:tenant_id/member/:member_id/remove",
-            post(remove_member),
-        )
+impl IntoResponse for AdminError {
+    fn into_response(self) -> Response {
+        match self {
+            AdminError::Validation(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+            AdminError::Conflict => StatusCode::CONFLICT.into_response(),
+            AdminError::NotFound => StatusCode::NOT_FOUND.into_response(),
+            AdminError::Internal => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
+}
+
+fn non_empty(value: &str, message: &'static str) -> Result<(), AdminError> {
+    if value.trim().is_empty() {
+        Err(AdminError::Validation(message))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -71,10 +90,10 @@ pub async fn create_tenant(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateTenantBody>,
-) -> Result<(StatusCode, Json<TenantResponse>), StatusCode> {
-    let tenant = db::admin::create_tenant(&state.db_pool, &body.name)
-        .await
-        .map_err(|e| db_error_status(e, "create_tenant"))?;
+) -> Result<(StatusCode, Json<TenantResponse>), AdminError> {
+    non_empty(&body.name, "name must not be empty")?;
+
+    let tenant = db::admin::create_tenant(&state.db_pool, &body.name).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -91,15 +110,17 @@ pub async fn add_member(
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<Uuid>,
     Json(body): Json<AddMemberBody>,
-) -> Result<(StatusCode, Json<MemberResponse>), StatusCode> {
+) -> Result<(StatusCode, Json<MemberResponse>), AdminError> {
+    non_empty(&body.github_email, "github_email must not be empty")?;
+    non_empty(&body.added_by_email, "added_by_email must not be empty")?;
+
     let member = db::admin::add_member(
         &state.db_pool,
         tenant_id,
         &body.github_email,
         &body.added_by_email,
     )
-    .await
-    .map_err(|e| db_error_status(e, "add_member"))?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -117,14 +138,15 @@ pub async fn remove_member(
     State(state): State<Arc<AppState>>,
     Path((tenant_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RemoveMemberBody>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, AdminError> {
+    non_empty(&body.removed_by_email, "removed_by_email must not be empty")?;
+
     let rows_affected =
         db::admin::remove_member(&state.db_pool, tenant_id, member_id, &body.removed_by_email)
-            .await
-            .map_err(|e| db_error_status(e, "remove_member"))?;
+            .await?;
 
     if rows_affected == 0 {
-        Err(StatusCode::NOT_FOUND)
+        Err(AdminError::NotFound)
     } else {
         Ok(StatusCode::NO_CONTENT)
     }
@@ -134,10 +156,9 @@ pub async fn list_members(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
     Path(tenant_id): Path<Uuid>,
-) -> Result<Json<Vec<MemberResponse>>, StatusCode> {
-    let members = db::admin::list_members(&state.db_pool, tenant_id)
-        .await
-        .map_err(|e| db_error_status(e, "list_members"))?
+) -> Result<Response, AdminError> {
+    let members: Vec<MemberResponse> = db::admin::list_members(&state.db_pool, tenant_id)
+        .await?
         .into_iter()
         .map(|m| MemberResponse {
             id: m.id,
@@ -147,7 +168,11 @@ pub async fn list_members(
         })
         .collect();
 
-    Ok(Json(members))
+    if members.is_empty() {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(Json(members).into_response())
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +181,7 @@ mod tests {
     use axum::{
         body::{Body, HttpBody},
         http::Request,
+        routing::{get, post},
         Router,
     };
     use serde_json::{json, Value};
@@ -195,7 +221,15 @@ mod tests {
     }
 
     fn build_app(state: Arc<AppState>) -> Router {
-        routes().with_state(state)
+        Router::new()
+            .route("/v1/admin/tenant", post(create_tenant))
+            .route("/v1/admin/tenant/:tenant_id", get(list_members))
+            .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
+            .route(
+                "/v1/admin/tenant/:tenant_id/member/:member_id/remove",
+                post(remove_member),
+            )
+            .with_state(state)
     }
 
     async fn request(
@@ -254,6 +288,16 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _) = request(
+            &app,
+            "POST",
+            "/v1/admin/tenant",
+            Some(TOKEN),
+            Some(json!({ "name": "" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, body) = request(
             &app,
@@ -330,5 +374,27 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_array().unwrap().len(), 2);
+
+        for id in [&member_ids[1], &member_ids[2]] {
+            let (status, _) = request(
+                &app,
+                "POST",
+                &format!("/v1/admin/tenant/{tenant_id}/member/{id}/remove"),
+                Some(TOKEN),
+                Some(json!({ "removed_by_email": "admin@walnut.dev" })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+
+        let (status, _) = request(
+            &app,
+            "GET",
+            &format!("/v1/admin/tenant/{tenant_id}"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
     }
 }
