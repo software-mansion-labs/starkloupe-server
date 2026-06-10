@@ -57,7 +57,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
-use utoipa::ToSchema;
 use utils::parse_chain_id_and_rpc_url_debug;
 use utils::parse_optional_tx_hash;
 use utils::parse_transaction_type;
@@ -65,6 +64,7 @@ use utils::{
     eth_address_to_felt, eth_u256_to_felt, parse_block_number, parse_calldata,
     parse_chain_id_and_rpc_url, parse_contract_address, parse_nonce, parse_transaction_version,
 };
+use utoipa::ToSchema;
 use walnut_shared::Parameter;
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
