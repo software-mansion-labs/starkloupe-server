@@ -57,6 +57,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
+use utoipa::ToSchema;
 use utils::parse_chain_id_and_rpc_url_debug;
 use utils::parse_optional_tx_hash;
 use utils::parse_transaction_type;
@@ -66,7 +67,7 @@ use utils::{
 };
 use walnut_shared::Parameter;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SimulationRawArgs {
     pub chain_id: Option<String>,
     pub rpc_url: Option<String>,
@@ -75,6 +76,7 @@ pub struct SimulationRawArgs {
     pub sender_address: String,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
+    #[schema(value_type = Option<Vec<String>>)]
     pub transaction_signature: Option<Vec<Felt>>,
 }
 
@@ -212,7 +214,7 @@ pub struct FlameChartNode {
     pub children: Vec<FlameChartNode>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, ToSchema)]
 pub struct L1TransactionData {
     pub chain_id: String,
     pub block_number: Option<u64>,
@@ -224,14 +226,19 @@ pub struct L1TransactionData {
     pub l1_tx_hash: Option<String>,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, ToSchema)]
 pub struct L2TransactionData {
+    // Complex internal types are exposed as opaque JSON objects in the API spec.
+    #[schema(value_type = Object)]
     pub simulation_result: SimulationInfo,
     pub chain_id: String,
+    // Serializes as either a block number (u64) or a tag/hash string.
     #[serde(serialize_with = "serialize_block_number")]
+    #[schema(value_type = Object)]
     pub block_number: BlockId,
     pub block_timestamp: u64,
     pub nonce: Option<u64>,
+    #[schema(value_type = String)]
     pub sender_address: ContractAddress,
     pub calldata: Vec<String>,
     pub transaction_version: usize,
@@ -240,15 +247,18 @@ pub struct L2TransactionData {
     pub total_transactions_in_block: Option<usize>,
     pub l1_tx_hash: Option<String>,
     pub l2_tx_hash: Option<String>,
+    #[schema(value_type = Object)]
     pub flamechart: Option<FlameChartNode>,
+    #[schema(value_type = Object)]
     pub l1_data_flamechart: Option<FlameChartNode>,
     pub actual_fee: Option<String>,
+    #[schema(value_type = Object)]
     pub execution_resources: Option<ExecutionResources>,
     /// Indicates if the original request was for "Latest" block
     pub latest_block: bool,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, ToSchema)]
 pub struct TransactionSimulationResult {
     pub l1_transaction_data: Option<L1TransactionData>,
     pub l2_transaction_data: Option<L2TransactionData>,

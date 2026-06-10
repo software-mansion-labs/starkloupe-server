@@ -8535,6 +8535,7 @@ dependencies = [
  "tracing",
  "universal-sierra-compiler-api",
  "url",
+ "utoipa",
  "verification",
  "walnut-shared",
 ]
