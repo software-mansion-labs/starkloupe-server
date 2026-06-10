@@ -195,6 +195,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "/",
                     axum::routing::get(|| async { axum::response::Json(ApiDoc::openapi()) }),
                 )
+                .route(
+                    "/openapi.json",
+                    get(|| async { axum::response::Json(ApiDoc::openapi()) }),
+                )
                 .layer(tower_http::trace::TraceLayer::new_for_http())
                 .layer(sentry_tower::NewSentryLayer::<axum::http::Request<_>>::new_from_top())
                 .layer(prometheus_layer)

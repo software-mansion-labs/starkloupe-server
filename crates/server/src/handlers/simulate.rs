@@ -23,9 +23,10 @@ use simulate::{
 };
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument};
+use utoipa::ToSchema;
 use walnut_shared::{chain_id_to_readable_string, extract_chain_id, get_rpc_urls, ENetwork};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 // Variant names are part of the JSON wire format; keep the `With` prefix.
 #[allow(clippy::enum_variant_names)]
 pub enum SimulationPayload {
@@ -34,7 +35,7 @@ pub enum SimulationPayload {
     WithTxHash(SimulationTxHashArgs),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SimulationDecodedArgs {
     pub chain_id: Option<String>,
     pub rpc_url: Option<String>,
@@ -46,15 +47,17 @@ pub struct SimulationDecodedArgs {
     pub transaction_signature: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[schema(as = SimulationContractCall)]
 pub struct ContractCall {
     pub contract_address: String,
     pub function_selector: String,
     pub function_name: Option<String>,
+    #[schema(value_type = Vec<Object>)]
     pub parameters: Vec<DecodedValue>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SimulationTxHashArgs {
     pub rpc_url: String,
     pub tx_hash: String,
@@ -65,7 +68,7 @@ pub struct QueryParams {
     skip_tracking: Option<String>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, ToSchema)]
 pub struct SimulationErrorResponse {
     pub error: String,
     pub simulation_args: SimulationPayload,
@@ -319,6 +322,19 @@ async fn handle_tx_hash_simulation(
 // Public handler endpoints
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/v1/simulate-transaction",
+    request_body = SimulationPayload,
+    params(
+        ("skip_tracking" = Option<String>, Query, description = "Set to 'true' to skip tracking notifications")
+    ),
+    responses(
+        (status = 200, description = "Simulation result", body = TransactionSimulationResult),
+        (status = 400, description = "Invalid simulation arguments", body = SimulationErrorResponse)
+    ),
+    tag = "Transaction simulation"
+)]
 #[debug_handler]
 #[instrument(name = "simulate_transaction", skip_all)]
 pub async fn simulate_transaction(
@@ -355,6 +371,20 @@ pub async fn simulate_transaction(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/{chain_id}/simulate-transaction/{tx_hash}",
+    params(
+        ("chain_id" = String, Path, description = "Chain identifier, e.g. SN_MAIN or SN_SEPOLIA"),
+        ("tx_hash" = String, Path, description = "Transaction hash to re-simulate"),
+        ("skip_tracking" = Option<String>, Query, description = "Set to 'true' to skip tracking notifications")
+    ),
+    responses(
+        (status = 200, description = "Simulation result", body = TransactionSimulationResult),
+        (status = 400, description = "Invalid chain_id or transaction hash", body = String)
+    ),
+    tag = "Transaction simulation"
+)]
 #[instrument(name = "simulate_by_hash_handler", skip(state), fields(chain_id = %chain_id, tx_hash = %tx_hash))]
 pub async fn simulate_transaction_by_hash_handler(
     State(state): State<Arc<AppState>>,

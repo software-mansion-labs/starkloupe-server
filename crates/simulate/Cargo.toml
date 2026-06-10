@@ -38,3 +38,4 @@ flate2.workspace = true
 verification.workspace = true
 starknet-types-core.workspace = true
 cairo-lang-sierra-to-casm.workspace = true
+utoipa.workspace = true
