@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tenant_members (tenant_id, github_email, added_by_email) VALUES ($1, $2, $3) RETURNING id, tenant_id, github_email, added_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "github_email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "added_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "70ddf10d538c5ac39f024ff142e76cf5948ea1bbd0b382ce58495261c270bcb3"
+}
