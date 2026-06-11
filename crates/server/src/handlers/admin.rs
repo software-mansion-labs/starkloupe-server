@@ -45,7 +45,7 @@ impl IntoResponse for AdminError {
     }
 }
 
-fn non_empty(value: &str, message: &'static str) -> Result<(), AdminError> {
+fn validate_required(value: &str, message: &'static str) -> Result<(), AdminError> {
     if value.trim().is_empty() {
         Err(AdminError::Validation(message))
     } else {
@@ -91,7 +91,7 @@ pub async fn create_tenant(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateTenantBody>,
 ) -> Result<(StatusCode, Json<TenantResponse>), AdminError> {
-    non_empty(&body.name, "name must not be empty")?;
+    validate_required(&body.name, "name must not be empty")?;
 
     let tenant = db::admin::create_tenant(&state.db_pool, &body.name).await?;
 
@@ -111,8 +111,8 @@ pub async fn add_member(
     Path(tenant_id): Path<Uuid>,
     Json(body): Json<AddMemberBody>,
 ) -> Result<(StatusCode, Json<MemberResponse>), AdminError> {
-    non_empty(&body.github_email, "github_email must not be empty")?;
-    non_empty(&body.added_by_email, "added_by_email must not be empty")?;
+    validate_required(&body.github_email, "github_email must not be empty")?;
+    validate_required(&body.added_by_email, "added_by_email must not be empty")?;
 
     let member = db::admin::add_member(
         &state.db_pool,
@@ -139,7 +139,7 @@ pub async fn remove_member(
     Path((tenant_id, member_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RemoveMemberBody>,
 ) -> Result<StatusCode, AdminError> {
-    non_empty(&body.removed_by_email, "removed_by_email must not be empty")?;
+    validate_required(&body.removed_by_email, "removed_by_email must not be empty")?;
 
     let rows_affected =
         db::admin::remove_member(&state.db_pool, tenant_id, member_id, &body.removed_by_email)
