@@ -220,7 +220,7 @@ pub async fn get_tenant(
         .await?
         .ok_or(AdminError::NotFound)?;
 
-    let members = db::admin::list_members(&state.db_pool, tenant_id)
+    let members = db::admin::list_tenant_members(&state.db_pool, tenant_id)
         .await?
         .into_iter()
         .map(|m| MemberResponse {

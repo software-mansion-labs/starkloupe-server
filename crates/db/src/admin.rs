@@ -87,7 +87,7 @@ pub async fn remove_member(
     Ok(result.rows_affected())
 }
 
-pub async fn list_members(
+pub async fn list_tenant_members(
     pool: &Pool<Postgres>,
     tenant_id: Uuid,
 ) -> Result<Vec<TenantMember>, sqlx::Error> {
