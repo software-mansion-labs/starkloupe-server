@@ -12,11 +12,14 @@ mod services;
 use app_state::AppState;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::Client;
-use axum::{routing::get, routing::post, Router};
+use axum::{routing::delete, routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
-    admin::{add_member, create_tenant, list_members, remove_member},
+    admin::{
+        add_member, create_api_key, create_tenant, get_tenant, list_api_keys, remove_member,
+        revoke_api_key,
+    },
     calldata_decoder::decode_calldata_handler,
     classes::{get_class_handler, get_contracts_by_class_hash_handler},
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
@@ -191,12 +194,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .route("/v1/decode-calldata", post(decode_calldata_handler))
                 // .route("/v1/cache/stats", get(cache_stats_handler)) // Commented out for now
                 .route("/v1/admin/tenant", post(create_tenant))
-                .route("/v1/admin/tenant/:tenant_id", get(list_members))
+                .route("/v1/admin/tenant/:tenant_id", get(get_tenant))
                 .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
                 .route(
                     "/v1/admin/tenant/:tenant_id/member/:member_id/remove",
                     post(remove_member),
                 )
+                .route("/v1/admin/api-key", post(create_api_key).get(list_api_keys))
+                .route("/v1/admin/api-key/:id", delete(revoke_api_key))
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))
                 .route_service(
