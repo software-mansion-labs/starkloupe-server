@@ -1,8 +1,10 @@
 use blockifier::execution::entry_point::CallEntryPoint;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
-use cheatnet::state::CallTrace;
+use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::{
+    CallResult, CallSuccess,
+};
+use cheatnet::trace_data::CallTrace;
 use data_decoder::{calldata_decoder::decode_calldata, DecodedValue};
 use internal_tracing::ContractCallDebuggerData;
 use serde::Serialize;
@@ -96,11 +98,11 @@ impl ContractCall {
                 .map(|class_hash| class_hash.0.to_fixed_hex_string()),
             sierra_version: None,
             cairo_version: None,
-            is_failed: matches!(call_trace_ref.result, CallResult::Failure(_)),
+            is_failed: call_trace_ref.result.is_err(),
             is_deepest_panic_result: false,
 
             sierra_gas: call_trace_ref.gas_consumed,
-            vm_resources: call_trace_ref.used_execution_resources.clone(),
+            vm_resources: call_trace_ref.used_execution_resources.vm_resources.clone(),
 
             result_types: None,
             decoded_result: None,
@@ -140,10 +142,15 @@ impl ContractCall {
     ///
     /// Note: `result_types` should already be set before calling this function.
     pub fn decode_call_result(&mut self, struct_abis: &[Struct], enum_abis: &[Enum]) {
-        if let CallResult::Success { ret_data } = &self.result {
+        if let Ok(CallSuccess { ret_data }) = &self.result {
             if let Some(call_result_types) = &self.result_types {
-                let decoded_result =
-                    decode_calldata(ret_data, call_result_types, &[], struct_abis, enum_abis);
+                let decoded_result = decode_calldata(
+                    ret_data.as_slice(),
+                    call_result_types,
+                    &[],
+                    struct_abis,
+                    enum_abis,
+                );
                 self.decoded_result = decoded_result;
             }
         }

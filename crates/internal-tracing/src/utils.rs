@@ -17,6 +17,7 @@ use cairo_lang_sierra_to_casm::{
     compiler::{CairoProgram, CairoProgramDebugInfo, SierraToCasmConfig},
     metadata::{calc_metadata, MetadataComputationConfig},
 };
+use cairo_lang_sierra_type_size::ProgramRegistryInfo;
 use cairo_lang_starknet_classes::abi::{Event, EventField};
 use cairo_lang_starknet_classes::{abi::EventKind, compiler_version::VersionId};
 use cairo_lang_starknet_classes::{
@@ -64,7 +65,14 @@ pub fn compile_sierra_contract_class(
     let metadata_computation_config = MetadataComputationConfig {
         function_set_costs: entrypoint_ids
             .into_iter()
-            .map(|id| (id, [(CostTokenType::Const, ENTRY_POINT_COST)].into()))
+            .map(|id| {
+                (
+                    id,
+                    [(CostTokenType::Const, ENTRY_POINT_COST)]
+                        .into_iter()
+                        .collect(),
+                )
+            })
             .collect(),
         linear_gas_solver: no_eq_solver,
         linear_ap_change_solver: no_eq_solver,
@@ -72,11 +80,15 @@ pub fn compile_sierra_contract_class(
         compute_runtime_costs: false,
     };
 
-    let metadata = calc_metadata(&program, metadata_computation_config)
+    let program_info = ProgramRegistryInfo::new(&program)
+        .map_err(|e| anyhow::anyhow!("Failed to build program registry info: {:?}", e))?;
+
+    let metadata = calc_metadata(&program, &program_info, metadata_computation_config)
         .map_err(|e| anyhow::anyhow!("Failed to calculate metadata: {:?}", e))?;
 
     let compiled_program = cairo_lang_sierra_to_casm::compiler::compile(
         &program,
+        &program_info,
         &metadata,
         SierraToCasmConfig {
             gas_usage_check: true,

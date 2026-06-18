@@ -70,10 +70,11 @@ pub async fn fetch_before_storage_changes(
                         contract_address_felt,
                         Felt::from_hex(address).unwrap(),
                         BlockId::Number(block_number),
+                        None,
                     )
                     .await
                     .ok();
-                *before = before_from_provider.map(|before| before.to_hex_string());
+                *before = before_from_provider.map(|before| before.value().to_hex_string());
             }
         }
         let mut filtered_contract_storage_changes = HashMap::new();

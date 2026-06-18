@@ -72,15 +72,23 @@ impl ClassMappings {
         casm_program: CairoProgram,
         compiler_version: VersionId,
     ) -> Result<Self> {
-        let sierra_program = contract_class.extract_sierra_program().map_err(|e| {
-            warn!("Failed to extract sierra program: {:?}", e);
-            e
-        })?;
+        let sierra_program = contract_class
+            .extract_sierra_program(true)
+            .map_err(|e| {
+                warn!("Failed to extract sierra program: {:?}", e);
+                e
+            })?
+            .program;
 
         let type_names = contract_class
             .sierra_program_debug_info
             .as_ref()
-            .map(|di| di.type_names.clone())
+            .map(|di| {
+                di.type_names
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let events: HashSet<Event> = contract_class
