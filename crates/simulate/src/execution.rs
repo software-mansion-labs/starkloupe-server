@@ -20,7 +20,7 @@ use blockifier::execution::entry_point::EntryPointExecutionContext;
 use blockifier::execution::entry_point::SierraGasRevertTracker;
 use blockifier::execution::errors::EntryPointExecutionError;
 use blockifier::fee::fee_checks::PostExecutionReport;
-use blockifier::fee::fee_utils::get_vm_resources_cost;
+use blockifier::fee::fee_utils::get_extended_vm_resources_cost;
 use blockifier::fee::receipt::TransactionReceipt;
 use blockifier::fee::resources::ComputationResources;
 use blockifier::fee::resources::StarknetResources;
@@ -35,7 +35,6 @@ use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::executio
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
 use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallResult;
 use cheatnet::state::CheatnetState;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::calldata;
@@ -395,9 +394,9 @@ fn extract_gas_vectors(
         .state
         .to_gas_vector(use_kzg_da, &constants.allocation_cost);
 
-    let computation_vm = get_vm_resources_cost(
+    let computation_vm = get_extended_vm_resources_cost(
         constants,
-        &computation.tx_vm_resources,
+        &computation.tx_extended_vm_resources,
         computation.n_reverted_steps,
         gas_mode,
     );
@@ -458,6 +457,7 @@ fn calculate_transaction_resources(
         state_resources,
         None,
         execution_summary.clone(),
+        false,
     );
 
     let addition_os_resources = versioned_constants
@@ -467,10 +467,10 @@ fn calculate_transaction_resources(
             use_kzg_da,
         )
         .filter_unused_builtins();
-    let total_vm_resources = &charged_resources.vm_resources + &addition_os_resources;
+    let total_vm_resources = &charged_resources.extended_vm_resources + &addition_os_resources;
 
     let computation_resources = ComputationResources {
-        tx_vm_resources: total_vm_resources,
+        tx_extended_vm_resources: total_vm_resources,
         // TODO: add os_vm_resources
         os_vm_resources: Default::default(),
         n_reverted_steps: 0,
@@ -560,15 +560,15 @@ pub fn get_execution_result(
     }
     if let Some(deepest_contract_call_id) = deepest_contract_call_id {
         if let Some(call) = contract_calls_map.get(&deepest_contract_call_id) {
-            if let CallResult::Failure(failure) = &call.result {
+            if let Err(failure) = &call.result {
                 match failure {
-                    CallFailure::Panic { panic_data } => {
-                        let reason = felts_to_string(panic_data);
+                    CallFailure::Recoverable { panic_data } => {
+                        let reason = felts_to_string(panic_data.as_slice());
                         Ok(ExecutionResult::Reverted {
                             reason: reason.trim().to_string(),
                         })
                     }
-                    CallFailure::Error { msg } => {
+                    CallFailure::Unrecoverable { msg } => {
                         let reason = msg.to_string().trim().to_string();
                         Ok(ExecutionResult::Reverted { reason })
                     }

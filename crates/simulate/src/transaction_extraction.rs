@@ -8,13 +8,13 @@ use blockifier::transaction::objects::{
 use num_traits::ToPrimitive;
 use starknet_api::block::BlockNumber;
 use starknet_api::block::BlockTimestamp;
-use starknet_api::block::{BlockInfo, GasPriceVector, GasPrices, NonzeroGasPrice};
+use starknet_api::block::{BlockInfo, GasPriceVector, GasPrices, NonzeroGasPrice, StarknetVersion};
 use starknet_api::contract_address;
 use starknet_api::core::{ChainId, ContractAddress, EntryPointSelector, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::fields::{
-    Calldata, Fee, PaymasterData, TransactionSignature, ValidResourceBounds,
+    Calldata, Fee, PaymasterData, ProofFacts, TransactionSignature, ValidResourceBounds,
 };
 use starknet_api::transaction::TransactionVersion;
 use starknet_rust::core::types::{
@@ -230,7 +230,7 @@ async fn fetch_block_with_txs(
     block_number: u64,
 ) -> Result<BlockWithTxs, TransactionSimulationError> {
     let block_id = BlockId::Number(block_number);
-    let block_with_txs = provider_client.get_block_with_txs(block_id).await;
+    let block_with_txs = provider_client.get_block_with_txs(block_id, None).await;
 
     match block_with_txs {
         Ok(MaybePreConfirmedBlockWithTxs::Block(block_txs)) => Ok(block_txs),
@@ -297,6 +297,9 @@ pub async fn extract_block_txs_info(
 
     let block_info = BlockInfo {
         block_number: BlockNumber(block_txs.block_number),
+        // We always run with the latest versioned constants (see extract_transaction_contex),
+        // so keep the block's starknet version consistent with that.
+        starknet_version: StarknetVersion::LATEST,
         sequencer_address: ContractAddress::try_from(block_txs.sequencer_address)
             .unwrap_or_default(),
         block_timestamp: BlockTimestamp(block_txs.timestamp),
@@ -374,6 +377,7 @@ pub fn extract_transaction_contex(
             strk_fee_token_address: contract_address!(STRK_FEE_TOKEN_ADDRESS),
             eth_fee_token_address: contract_address!(ETH_FEE_TOKEN_ADDRESS),
         },
+        is_l3: false,
     };
 
     let transaction_info = match (transaction_version, transaction_type.as_ref()) {
@@ -390,7 +394,7 @@ pub fn extract_transaction_contex(
         block_context: Arc::new(BlockContext::new(
             block_info.clone(),
             chain_info,
-            VersionedConstants::latest_constants().clone(),
+            VersionedConstants::get_versioned_constants(None),
             BouncerConfig::default(),
         )),
         tx_info: transaction_info,
@@ -429,6 +433,7 @@ fn create_current_info(args: &SimulationArgs) -> TransactionInfo {
         fee_data_availability_mode: DataAvailabilityMode::L1,
         paymaster_data: args.paymaster_data.clone().unwrap_or_default(),
         account_deployment_data: Default::default(),
+        proof_facts: ProofFacts::default(),
     })
 }
 

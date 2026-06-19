@@ -92,38 +92,38 @@ ethers = "2.0.14"
 tiny-keccak = "2.0.2"
 
 #starknet
-starknet-rust = "0.18.0"
-starknet_api = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.14.0" } #depend on foundry
-starknet-types-core = { version = "0.2.0", features = [
+starknet-rust = "0.19.0"
+starknet_api = "0.18.0-rc.1" # depend on foundry
+starknet-types-core = { version = "0.2.4", features = [
   "hash",
   "prime-bigint",
   "serde",
 ] }
 starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }
 
-blockifier = { git = "https://github.com/software-mansion-labs/sequencer.git", branch = "main-v0.14.0", default-features = false, features = [
+blockifier = { version = "0.18.0-rc.1", default-features = false, features = [
   "testing",
   "tracing",
 ] } # depend on foundry
-cairo-annotations = { version = "0.6.1", features = ["cairo-lang"] }
-cairo-vm = "2.5.0"
+cairo-annotations = { version = "0.8.0", features = ["cairo-lang"] }
+cairo-vm = "=3.2.0"
 
 # Cairo compiler
-cairo-lang-casm = "2.12.3"
-cairo-lang-runner = "2.12.3"
-cairo-lang-utils = "2.12.3"
-cairo-lang-starknet = "2.12.3"
-cairo-lang-sierra = "2.12.3"
-cairo-lang-sierra-type-size = "2.12.3"
-cairo-lang-starknet-classes = "2.12.3"
-cairo-lang-sierra-to-casm = "2.12.3"
+cairo-lang-casm = "=2.17.0"
+cairo-lang-runner = "=2.17.0"
+cairo-lang-utils = "=2.17.0"
+cairo-lang-starknet = "=2.17.0"
+cairo-lang-sierra = "=2.17.0"
+cairo-lang-sierra-type-size = "=2.17.0"
+cairo-lang-starknet-classes = "=2.17.0"
+cairo-lang-sierra-to-casm = "=2.17.0"
 
-# Starknet Foundry 
-cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "1e3d8762bc09fa7d50a48d38000cc73bf942f63b" }
-runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "1e3d8762bc09fa7d50a48d38000cc73bf942f63b" }
-scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "1e3d8762bc09fa7d50a48d38000cc73bf942f63b" }
-conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "1e3d8762bc09fa7d50a48d38000cc73bf942f63b" }
-universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "1e3d8762bc09fa7d50a48d38000cc73bf942f63b" }
+# Starknet Foundry
+cheatnet = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089" }
+runtime = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089" }
+scarb-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089" }
+conversions = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089" }
+universal-sierra-compiler-api = { git = "https://github.com/walnuthq/starknet-foundry", rev = "9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089" }
 
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }

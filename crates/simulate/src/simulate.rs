@@ -796,7 +796,7 @@ async fn simulate_starknet_transaction_by_hash(
     let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
     // Fetch transaction
     let transaction = provider_client
-        .get_transaction_by_hash(transaction_hash)
+        .get_transaction_by_hash(transaction_hash, None)
         .await;
     if let Ok(transaction) = transaction {
         // Check if it's a DEPLOY or DEPLOY_ACCOUNT transaction (not supported)

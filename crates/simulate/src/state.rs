@@ -18,7 +18,7 @@ use runtime::starknet::context::SerializableGasPrices;
 use sqlx::Pool;
 use sqlx::Postgres;
 use starknet_api::block::BlockInfo;
-use starknet_api::block::{BlockNumber, BlockTimestamp};
+use starknet_api::block::{BlockNumber, BlockTimestamp, StarknetVersion};
 use starknet_api::contract_class::{EntryPointType, SierraVersion};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::deprecated_contract_class::{
@@ -29,7 +29,7 @@ use starknet_rust::core::types::{
     BlockId, BlockTag, ConfirmedBlockId, ContractClass as ContractClassStarknet,
     ContractStorageDiffItem, DeclaredClassItem, DeployedContractItem, EntryPointsByType, Felt,
     FlattenedSierraClass, MaybePreConfirmedBlockWithTxHashes, SierraEntryPoint, StarknetError,
-    TransactionTrace,
+    TraceBlockTransactionsResult, TransactionTrace,
 };
 use starknet_rust::providers::{
     jsonrpc::{HttpTransport, JsonRpcClient},
@@ -39,7 +39,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 use tracing::error;
-use universal_sierra_compiler_api::{compile_sierra, SierraType};
+use universal_sierra_compiler_api::compile_contract_sierra;
 use verification::s3::fetch_verified_class_hash_with_contract_class_data;
 use walnut_shared::create_rpc_client_from_url;
 
@@ -251,6 +251,7 @@ impl ForkStateReader {
                         _ => ConfirmedBlockId::Latest, // Pre-confirmed not supported, use Latest
                     },
                 },
+                None,
             ))
         })
         .map_err(|err| {
@@ -259,7 +260,14 @@ impl ForkStateReader {
             ))
         })?;
 
-        for (index, result) in results.into_iter().enumerate() {
+        // trace_block_transactions now returns an enum that supports both the
+        // 0.10.0 and 0.10.1 payload shapes; pull out the traces either way.
+        let traces = match results {
+            TraceBlockTransactionsResult::Traces(traces) => traces,
+            TraceBlockTransactionsResult::TracesWithInitialReads { traces, .. } => traces,
+        };
+
+        for (index, result) in traces.into_iter().enumerate() {
             if index == transaction_index {
                 break;
             }
@@ -413,18 +421,18 @@ impl ForkStateReader {
             "abi": contract_class.abi
         });
 
-        let casm_contract_class_raw =
-            compile_sierra::<String>(&sierra_contract_class, &SierraType::Contract)
-                .map_err(|err| StateError::StateReadError(err.to_string()))?;
+        let casm_contract_class = compile_contract_sierra(&sierra_contract_class)
+            .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
         let compiled_contract_class = ContractClassBlockifier::V1(
-            ContractClassV1::try_from_json_string(&casm_contract_class_raw, sierra_program_version)
-                .map_err(|e| {
+            ContractClassV1::try_from((casm_contract_class, sierra_program_version)).map_err(
+                |e| {
                     StateError::StateReadError(format!(
                         "Unable to create ContractClassV1 from CasmContractClass: {}",
                         e
                     ))
-                })?,
+                },
+            )?,
         );
 
         in_memory_fork_cache.cache_compiled_contract_class(class_hash, compiled_contract_class);
@@ -483,23 +491,19 @@ impl ForkStateReader {
                     "entry_points_by_type": flattened_class.entry_points_by_type
                 });
 
-                let casm_contract_class_raw =
-                    compile_sierra::<String>(&sierra_contract_class, &SierraType::Contract)
-                        .map_err(|err| StateError::StateReadError(err.to_string()))?;
+                let casm_contract_class = compile_contract_sierra(&sierra_contract_class)
+                    .map_err(|err| StateError::StateReadError(err.to_string()))?;
 
                 let sierra_program_version =
                     SierraVersion::extract_from_program(&flattened_class.sierra_program)?;
                 ContractClassBlockifier::V1(
-                    ContractClassV1::try_from_json_string(
-                        &casm_contract_class_raw,
-                        sierra_program_version,
-                    )
-                    .map_err(|e| {
-                        StateError::StateReadError(format!(
-                            "Unable to create ContractClassV1 from CasmContractClass: {}",
-                            e
-                        ))
-                    })?,
+                    ContractClassV1::try_from((casm_contract_class, sierra_program_version))
+                        .map_err(|e| {
+                            StateError::StateReadError(format!(
+                                "Unable to create ContractClassV1 from CasmContractClass: {}",
+                                e
+                            ))
+                        })?,
                 )
             }
             ContractClassStarknet::Legacy(legacy_class) => {
@@ -581,6 +585,7 @@ impl BlockInfoReader for ForkStateReader {
             Ok(MaybePreConfirmedBlockWithTxHashes::Block(block)) => {
                 let block_info = BlockInfo {
                     block_number: BlockNumber(block.block_number),
+                    starknet_version: StarknetVersion::LATEST,
                     sequencer_address: ContractAddress::try_from(block.sequencer_address)
                         .unwrap_or_default(),
                     block_timestamp: BlockTimestamp(block.timestamp),
@@ -624,9 +629,11 @@ impl StateReader for ForkStateReader {
                 Felt::from_(contract_address),
                 Felt::from_(*key.0.key()),
                 self.adjusted_block_id(),
+                None,
             ))
         }) {
             Ok(value) => {
+                let value = value.value();
                 self.in_memory_fork_cache
                     .borrow_mut()
                     .cache_storage_at(contract_address, key, value);

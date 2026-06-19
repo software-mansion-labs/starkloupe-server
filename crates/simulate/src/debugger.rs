@@ -77,7 +77,7 @@ async fn simulate_to_get_debug_info(
         let transaction_str = transaction_hash.to_hex_string();
         let transaction_felt = Felt::from_hex(&transaction_str)?;
         if let Ok(transaction) = provider_client
-            .get_transaction_by_hash(transaction_felt)
+            .get_transaction_by_hash(transaction_felt, None)
             .await
         {
             if let Some(signature) = extract_transaction_signature(transaction) {
