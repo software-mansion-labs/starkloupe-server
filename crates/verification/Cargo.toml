@@ -1,7 +1,10 @@
 [package]
 name = "verification"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Contract class verification pipeline for Scarb and Dojo projects."
 
 [dependencies]
 axum.workspace = true

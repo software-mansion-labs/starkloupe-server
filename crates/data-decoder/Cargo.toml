@@ -1,7 +1,10 @@
 [package]
 name = "data-decoder"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decodes Starknet calldata, events and return values using contract ABIs."
 
 [dependencies]
 starknet_api.workspace = true

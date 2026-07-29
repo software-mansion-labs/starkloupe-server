@@ -1,7 +1,10 @@
 [package]
 name = "scarb-dep-resolver"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Resolves the Scarb dependency graph for contract verification builds."
 
 [dependencies]
 anyhow.workspace = true

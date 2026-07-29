@@ -7,17 +7,24 @@ use reqwest::StatusCode;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tracing::error;
 
 pub async fn get_verification_data(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let auth_header = headers.get("Authorization");
-    // some simple security protection
-    if auth_header.is_none()
-        || auth_header.unwrap().to_str().unwrap_or("") != "a3250f90-f974-498f-a2b0-371fa6b0db35"
-    {
+    // Simple shared-token check. Without DASHBOARD_API_TOKEN set the endpoint
+    // stays closed rather than open.
+    let expected = match std::env::var("DASHBOARD_API_TOKEN") {
+        Ok(token) if !token.is_empty() => token,
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let provided = headers
+        .get("Authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !bool::from(provided.as_bytes().ct_eq(expected.as_bytes())) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let total_failed_count = query_count(&state.db_pool, "failed").await.unwrap_or(0);

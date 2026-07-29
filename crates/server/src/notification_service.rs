@@ -3,13 +3,16 @@ use simulate::SimulationArgs;
 use starknet_api::core::ChainId;
 use tracing::{debug, error};
 use urlencoding::encode;
-use walnut_shared::chain_id_to_url_format;
+use walnut_shared::{chain_id_to_url_format, walnut_app_url};
 
 pub async fn send_notification_tx_id(
     tx_id: &str,
     chain_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let message = format!("New transaction [{chain_id}]: https://app.walnut.dev/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true");
+    let message = format!(
+        "New transaction [{chain_id}]: {}/transactions?chainId={chain_id}&txHash={tx_id}&skip_tracking=true",
+        walnut_app_url()
+    );
 
     let _ = send_telegram_notification(&message).await;
     let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
@@ -22,7 +25,12 @@ pub async fn send_notification_custom_rpc(
     tx_id: &str,
     rpc_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let message = format!("New transaction [custom RPC]: https://app.walnut.dev/transactions?rpcUrl={}&txHash={}&skip_tracking=true", encode(rpc_url), tx_id);
+    let message = format!(
+        "New transaction [custom RPC]: {}/transactions?rpcUrl={}&txHash={}&skip_tracking=true",
+        walnut_app_url(),
+        encode(rpc_url),
+        tx_id
+    );
     let chain_id = "custom_rpc";
 
     let _ = send_telegram_notification(&message).await;
@@ -74,7 +82,8 @@ pub async fn send_notification_calldata(
     query_params.push("skip_tracking=true".to_string());
 
     let url = format!(
-        "https://app.walnut.dev/simulations?{}",
+        "{}/simulations?{}",
+        walnut_app_url(),
         query_params.join("&")
     );
 

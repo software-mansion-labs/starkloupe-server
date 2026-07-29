@@ -7,6 +7,10 @@ tmp
 
 binaries/
 
+# universal-sierra-compiler binary, skinut preko scripts/install-usc.sh
+universal-sierra-compiler
+universal-sierra-compiler-tmp/
+
 local/docker-volumes
 
 flamegraph.svg

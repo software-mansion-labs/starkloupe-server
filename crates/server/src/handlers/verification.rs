@@ -23,7 +23,7 @@ use verification::{
 };
 use walnut_shared::{
     chain_id_to_readable_string, create_rpc_client, create_rpc_client_from_url, extract_chain_id,
-    felt_str_to_fixed, parse_version_string_to_tuple, ENetwork,
+    felt_str_to_fixed, parse_version_string_to_tuple, walnut_app_url, ENetwork,
 };
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
@@ -219,7 +219,8 @@ pub async fn verify_handler(
             {
                 Ok(verification_status_id) => {
                     let response_message = format!(
-                "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                "Contract verification has started. You can check the verification status at the following link: {}/verification/status/{}",
+                walnut_app_url(),
                 verification_status_id
             );
                     (StatusCode::OK, response_message).into_response()
@@ -250,7 +251,8 @@ pub async fn verify_handler(
             {
                 Ok(verification_status_id) => {
                     let response_message = format!(
-                "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                "Contract verification has started. You can check the verification status at the following link: {}/verification/status/{}",
+                walnut_app_url(),
                 verification_status_id
             );
                     (StatusCode::OK, response_message).into_response()
@@ -368,7 +370,8 @@ pub async fn verify_handler_with_rpc(
         {
             Ok(verification_status_id) => {
                 let response_message = format!(
-                    "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                    "Contract verification has started. You can check the verification status at the following link: {}/verification/status/{}",
+                    walnut_app_url(),
                     verification_status_id
                 );
                 (StatusCode::OK, response_message).into_response()
@@ -451,7 +454,8 @@ pub async fn verify_handler_with_rpc(
         {
             Ok(verification_status_id) => {
                 let response_message = format!(
-                    "Contract verification has started. You can check the verification status at the following link: https://app.walnut.dev/verification/status/{}",
+                    "Contract verification has started. You can check the verification status at the following link: {}/verification/status/{}",
+                    walnut_app_url(),
                     verification_status_id
                 );
                 (StatusCode::OK, response_message).into_response()

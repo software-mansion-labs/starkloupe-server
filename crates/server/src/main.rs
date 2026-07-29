@@ -59,16 +59,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     // Refuse to start without the admin token configured.
     std::env::var("WALNUT_ADMIN_TOKEN").expect("WALNUT_ADMIN_TOKEN env var must be set");
+    // Refuse to start without the RPC endpoints configured.
+    walnut_shared::check_required_env();
     // SENTRY CONFIGURATION
     // _guard must be defined on top level so Sentry will catch errors
     // Also Tokio must be initialized manually (not with attribute)
     let mut _guard;
-    // Start Sentry only in RELEASE build
+    // Start Sentry only in RELEASE build, and only if a DSN is configured.
     if !cfg!(debug_assertions) {
-        _guard = sentry::init(("https://ae2d01aafee9ea77f4090092df5a6a42@o4507958254436352.ingest.us.sentry.io/4507961681838080", sentry::ClientOptions {
-            release: sentry::release_name!(),
-            ..sentry::ClientOptions::default()
-        }));
+        if let Ok(dsn) = std::env::var("SENTRY_DSN") {
+            _guard = sentry::init((
+                dsn,
+                sentry::ClientOptions {
+                    release: sentry::release_name!(),
+                    ..sentry::ClientOptions::default()
+                },
+            ));
+        }
     }
 
     tracing_subscriber::registry()

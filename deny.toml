@@ -1,0 +1,111 @@
+# cargo-deny config. CI runs `cargo deny check licenses` so a dependency with a
+# license we can't ship under fails the build instead of being noticed later.
+
+[graph]
+# Only the targets we actually build for. Without this the graph pulls in
+# Windows and wasm crates we never compile.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[licenses]
+# Permissive licenses we can ship inside an Apache-2.0 project.
+# MPL-2.0 is here on purpose: its copyleft is per-file, so linking is fine as
+# long as we don't modify those crates' sources.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "CC0-1.0",
+    "0BSD",
+    "Unlicense",
+    "WTFPL",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+# Crates from the walnuthq/starknet-foundry fork don't set `license` in their
+# Cargo.toml, so cargo-deny reads them as unlicensed. The repository itself is
+# MIT (Software Mansion), which is what actually applies.
+[[licenses.clarify]]
+crate = "cheatnet"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "runtime"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "scarb-api"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "conversions"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cairo-serde-macros"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "data-transformer"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "foundry-ui"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "shared"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "universal-sierra-compiler-api"
+expression = "MIT"
+license-files = []
+
+# ring ships its own license file instead of an SPDX id. It is the usual
+# ISC/MIT/OpenSSL mix and is permissive.
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = []
+
+[[licenses.exceptions]]
+crate = "ring"
+allow = ["OpenSSL"]
+
+[licenses.private]
+# Our own crates are Apache-2.0 and none of them are published.
+ignore = true
+
+[advisories]
+# `cargo deny check advisories` is not wired into CI yet. Left configured so it
+# can be turned on without another round of setup.
+yanked = "warn"
+ignore = []
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "allow"

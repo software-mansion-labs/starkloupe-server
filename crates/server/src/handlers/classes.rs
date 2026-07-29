@@ -19,7 +19,7 @@ use verification::{
     db::{build_class_sources, fetch_verified_class},
     s3::{fetch_verified_class_hash_with_source_code_data, fetch_verified_class_with_data},
 };
-use walnut_shared::{get_voyager_api_url, VOYAGER_API_KEY};
+use walnut_shared::{get_voyager_api_url, voyager_api_key};
 
 #[derive(Deserialize, Debug, Serialize, ToSchema)]
 pub struct GetClassResponseWithSourceCode {
@@ -388,13 +388,14 @@ async fn get_contracts_from_voyager(
     class_hash: &str,
 ) -> Result<Vec<ContractInfo>, Box<dyn std::error::Error>> {
     let voyager_url = get_voyager_api_url(chain_id).ok_or("Unsupported chain for Voyager API")?;
+    let api_key = voyager_api_key().ok_or("VOYAGER_API_KEY is not set")?;
 
     let url = format!("{}classes/{}/contracts", voyager_url, class_hash);
 
     let client = Client::new();
     let response = client
         .get(&url)
-        .header("x-api-key", VOYAGER_API_KEY)
+        .header("x-api-key", api_key)
         .header("accept", "application/json")
         .send()
         .await?;
