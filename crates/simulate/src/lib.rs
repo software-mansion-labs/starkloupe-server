@@ -56,7 +56,6 @@ use starknet_types_core::felt::FromStrError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::error;
 use utils::parse_chain_id_and_rpc_url_debug;
 use utils::parse_optional_tx_hash;
 use utils::parse_transaction_type;

@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use walnut_shared::VOYAGER_API_KEY;
+use walnut_shared::voyager_api_key;
 
 /// Configuration for Voyager API client
 #[derive(Clone, Debug)]
@@ -40,13 +40,12 @@ impl VoyagerConfig {
         }
     }
 
-    /// Create config with voyager API key (always enabled)
+    /// Config built from `VOYAGER_API_KEY`. Without the key Voyager lookups are
+    /// turned off rather than failing.
     pub fn get_voyager_config() -> Self {
-        Self {
-            api_key: VOYAGER_API_KEY.to_string(),
-            base_url: "https://api.voyager.online/beta".to_string(),
-            enabled: true,
-            timeout_secs: 30,
+        match voyager_api_key() {
+            Some(api_key) => Self::new(api_key),
+            None => Self::disabled(),
         }
     }
 }

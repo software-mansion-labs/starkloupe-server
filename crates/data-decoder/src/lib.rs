@@ -340,50 +340,13 @@ impl DecodedValueType {
 
     /// Try to parse string as unsigned integer (u8, u16, u32, u64, u128, usize)
     fn try_parse_unsigned_integer(s: &str) -> Result<BigUint, serde_json::Error> {
-        // // Try parsing as different unsigned integer types
-        // if let Ok(parsed) = s.parse::<u8>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<u16>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<u32>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<u64>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<u128>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<usize>() {
-        //     return Ok(BigUint::from(parsed));
-        // }
-
-        // Try parsing as BigUint directly for very large numbers
+        // Parse as BigUint directly so very large numbers still fit.
         s.parse::<BigUint>().map_err(serde::de::Error::custom)
     }
 
     /// Try to parse string as signed integer (i8, i16, i32, i64, i128)
     fn try_parse_signed_integer(s: &str) -> Result<BigInt, serde_json::Error> {
-        // // Try parsing as different signed integer types
-        // if let Ok(parsed) = s.parse::<i8>() {
-        //     return Ok(BigInt::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<i16>() {
-        //     return Ok(BigInt::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<i32>() {
-        //     return Ok(BigInt::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<i64>() {
-        //     return Ok(BigInt::from(parsed));
-        // }
-        // if let Ok(parsed) = s.parse::<i128>() {
-        //     return Ok(BigInt::from(parsed));
-        // }
-
-        // Try parsing as BigInt directly for very large numbers
+        // Parse as BigInt directly so very large numbers still fit.
         s.parse::<BigInt>().map_err(serde::de::Error::custom)
     }
 }

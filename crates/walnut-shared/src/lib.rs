@@ -27,6 +27,7 @@ use starknet_selector_decoder::get_selector;
 use starknet_types_core::felt::CAIRO_PRIME_BIGINT;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Parameter {
@@ -41,13 +42,35 @@ pub const STRK_FEE_TOKEN_ADDRESS: &str =
     "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 pub const ETH_FEE_TOKEN_ADDRESS: &str =
     "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7";
-// RPC URL constants
-pub const STARKNET_MAINNET_RPC_URL: &str = "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_10/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
-pub const STARKNET_SEPOLIA_RPC_URL: &str = "https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_10/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
-pub const ETHEREUM_MAINNET_RPC_URL: &str =
-    "https://eth-mainnet.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
-pub const ETHEREUM_SEPOLIA_RPC_URL: &str =
-    "https://eth-sepolia.g.alchemy.com/v2/F2hlQcDXGdcnbgnGOSfAVSeBJ9iJsofp";
+// RPC URLs come from the environment. They carry a paid provider API key, so
+// they must never be written into the source. `check_required_env` at startup
+// makes a missing one fail right away instead of on the first request.
+pub static STARKNET_MAINNET_RPC_URL: LazyLock<String> =
+    LazyLock::new(|| required_env("STARKNET_MAINNET_RPC_URL"));
+pub static STARKNET_SEPOLIA_RPC_URL: LazyLock<String> =
+    LazyLock::new(|| required_env("STARKNET_SEPOLIA_RPC_URL"));
+pub static ETHEREUM_MAINNET_RPC_URL: LazyLock<String> =
+    LazyLock::new(|| required_env("ETHEREUM_MAINNET_RPC_URL"));
+pub static ETHEREUM_SEPOLIA_RPC_URL: LazyLock<String> =
+    LazyLock::new(|| required_env("ETHEREUM_SEPOLIA_RPC_URL"));
+
+fn required_env(name: &str) -> String {
+    let value = std::env::var(name)
+        .unwrap_or_else(|_| panic!("{name} env var must be set (see .env.example)"));
+    if value.is_empty() {
+        panic!("{name} env var must not be empty (see .env.example)");
+    }
+    value
+}
+
+/// Reads every required env var so the process stops at startup if one is
+/// missing. Call this from `main` before serving requests.
+pub fn check_required_env() {
+    LazyLock::force(&STARKNET_MAINNET_RPC_URL);
+    LazyLock::force(&STARKNET_SEPOLIA_RPC_URL);
+    LazyLock::force(&ETHEREUM_MAINNET_RPC_URL);
+    LazyLock::force(&ETHEREUM_SEPOLIA_RPC_URL);
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ENetwork {
@@ -108,8 +131,8 @@ pub fn create_rpc_client_from_url(rpc_url: Url) -> JsonRpcClient<HttpTransport> 
 
 pub fn rpc_url(chain_id: &ChainId) -> Url {
     match chain_id {
-        ChainId::Mainnet => Url::parse(STARKNET_MAINNET_RPC_URL).unwrap(),
-        ChainId::Sepolia => Url::parse(STARKNET_SEPOLIA_RPC_URL).unwrap(),
+        ChainId::Mainnet => Url::parse(&STARKNET_MAINNET_RPC_URL).unwrap(),
+        ChainId::Sepolia => Url::parse(&STARKNET_SEPOLIA_RPC_URL).unwrap(),
         _ => panic!("Invalid chain id"),
     }
 }
@@ -129,19 +152,19 @@ pub fn eth_rpc_url(chain_id: &ChainId) -> String {
 pub fn get_rpc_urls(chain_id: &EChainId) -> (Option<Url>, Option<String>) {
     match chain_id {
         EChainId::StarknetMainnet => (
-            Url::parse(STARKNET_MAINNET_RPC_URL).ok(),
+            Url::parse(&STARKNET_MAINNET_RPC_URL).ok(),
             Some(ETHEREUM_MAINNET_RPC_URL.to_string()),
         ),
         EChainId::StarknetSepolia => (
-            Url::parse(STARKNET_SEPOLIA_RPC_URL).ok(),
+            Url::parse(&STARKNET_SEPOLIA_RPC_URL).ok(),
             Some(ETHEREUM_SEPOLIA_RPC_URL.to_string()),
         ),
         EChainId::EthereumMainnet => (
-            Url::parse(STARKNET_MAINNET_RPC_URL).ok(),
+            Url::parse(&STARKNET_MAINNET_RPC_URL).ok(),
             Some(ETHEREUM_MAINNET_RPC_URL.to_string()),
         ),
         EChainId::EthereumSepolia => (
-            Url::parse(STARKNET_SEPOLIA_RPC_URL).ok(),
+            Url::parse(&STARKNET_SEPOLIA_RPC_URL).ok(),
             Some(ETHEREUM_SEPOLIA_RPC_URL.to_string()),
         ),
     }
@@ -230,7 +253,13 @@ pub fn get_voyager_api_url(chain_id: &ChainId) -> Option<&str> {
     }
 }
 
-pub const VOYAGER_API_KEY: &str = "v9ZMc0fRQ5aopjT3d80KT80aITRed0lx2pD6xxXs"; //"Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB";
+/// The Voyager API key, if one is configured. Voyager lookups are optional —
+/// without a key the server just skips them instead of failing to start.
+pub fn voyager_api_key() -> Option<String> {
+    std::env::var("VOYAGER_API_KEY")
+        .ok()
+        .filter(|key| !key.is_empty())
+}
 
 /// Fetches the human-readable name (alias) Voyager has registered for a
 /// deployed contract. Tries `contractAlias` first, falls back to `classAlias`.
@@ -239,13 +268,10 @@ pub async fn fetch_voyager_contract_alias(
     voyager_api_url: &str,
     contract_address: &str,
 ) -> Option<String> {
+    let api_key = voyager_api_key()?;
     let client = reqwest::Client::new();
     let url = format!("{}contracts/{}", voyager_api_url, contract_address);
-    let call_result = client
-        .get(&url)
-        .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")
-        .send()
-        .await;
+    let call_result = client.get(&url).header("x-api-key", api_key).send().await;
     match call_result {
         Ok(response) => {
             if response.status().is_success() {
@@ -301,7 +327,24 @@ pub fn chain_id_to_url_format(chain_id: &ChainId) -> String {
     }
 }
 
-const WALNUT_APP_URL: &str = "https://app.walnut.dev";
+/// Base URL of the web app the deep links point to. Override it with
+/// `WALNUT_APP_BASE_URL` when you run your own frontend; the default is the
+/// hosted Walnut app. A trailing slash is dropped so the links don't end up
+/// with a double one.
+static WALNUT_APP_URL: LazyLock<String> = LazyLock::new(|| {
+    let url = std::env::var("WALNUT_APP_BASE_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| DEFAULT_WALNUT_APP_URL.to_string());
+    url.trim_end_matches('/').to_string()
+});
+
+const DEFAULT_WALNUT_APP_URL: &str = "https://app.walnut.dev";
+
+/// Base URL of the web app, without a trailing slash.
+pub fn walnut_app_url() -> &'static str {
+    &WALNUT_APP_URL
+}
 
 pub fn simulation_deep_link(
     sender_address: &str,
@@ -325,7 +368,7 @@ pub fn simulation_deep_link(
     if !matches!(chain_id, ChainId::Mainnet | ChainId::Sepolia) {
         params.push(format!("rpcUrl={}", urlencoding::encode(rpc_url)));
     }
-    format!("{WALNUT_APP_URL}/simulations?{}", params.join("&"))
+    format!("{}/simulations?{}", walnut_app_url(), params.join("&"))
 }
 
 pub fn transaction_deep_link(
@@ -334,10 +377,16 @@ pub fn transaction_deep_link(
     tx_hash: &str,
 ) -> String {
     match chain_id_url {
-        Some(chain) => format!("{WALNUT_APP_URL}/transactions?chainId={chain}&txHash={tx_hash}"),
+        Some(chain) => format!(
+            "{}/transactions?chainId={chain}&txHash={tx_hash}",
+            walnut_app_url()
+        ),
         None => {
             let rpc = urlencoding::encode(rpc_url.unwrap_or(""));
-            format!("{WALNUT_APP_URL}/transactions?rpcUrl={rpc}&txHash={tx_hash}")
+            format!(
+                "{}/transactions?rpcUrl={rpc}&txHash={tx_hash}",
+                walnut_app_url()
+            )
         }
     }
 }
@@ -560,13 +609,10 @@ pub async fn fetch_tx_block_number_from_voyager(
     let voyager_api_url = get_voyager_api_url(chain_id)
         .map(|url| url.to_string())
         .ok_or_else(|| anyhow::anyhow!("Invalid chain id"))?;
+    let api_key = voyager_api_key().ok_or_else(|| anyhow::anyhow!("VOYAGER_API_KEY is not set"))?;
     let client = reqwest::Client::new();
     let url = format!("{}txns/{}", voyager_api_url, tx_hash);
-    let call_result = client
-        .get(&url)
-        .header("x-api-key", "Ji6ugSKp8L64EvevISdfb9CgY0sUBEhz6P4uPYOB")
-        .send()
-        .await;
+    let call_result = client.get(&url).header("x-api-key", api_key).send().await;
     match call_result {
         Ok(response) => {
             if response.status().is_success() {

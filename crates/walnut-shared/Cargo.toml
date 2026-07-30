@@ -1,7 +1,10 @@
 [package]
 name = "walnut-shared"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared types, ABI helpers and RPC utilities for the walnut-server workspace."
 
 [dependencies]
 url.workspace = true

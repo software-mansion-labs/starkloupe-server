@@ -1,6 +1,7 @@
 name: CI
 
-# Runs format, clippy and check on every pull request and on merges to main.
+# Runs format, clippy, check, a secret scan and a dependency license audit on
+# every pull request and on merges to main.
 on:
   pull_request:
   push:
@@ -43,3 +44,41 @@ jobs:
 
       - name: Check
         run: cargo check --workspace --all-targets
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scans the checked-out tree, not the commit history. History is scanned
+      # separately when we rotate keys; here we only need to stop a new secret
+      # from being added.
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Scan for secrets
+        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose
+
+  licenses:
+    name: dependency licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      # Fails if a dependency carries a license we can't ship under Apache-2.0.
+      # The allow list lives in deny.toml.
+      - name: Check licenses
+        run: cargo deny check licenses

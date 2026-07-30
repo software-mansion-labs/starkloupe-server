@@ -1,5 +1,123 @@
 # Changelog
 
+### [0.0.151] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.151)
+
+- Add Apache-2.0 LICENSE and NOTICE, cargo-deny config and gitleaks scanning in CI
+- Remove the unused batch-sim and team-onboarding crates and the old deploy scripts
+
+### [0.0.150] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.150)
+
+- Upgrade dependencies
+
+### [0.0.149] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.149)
+
+- Admin endpoints for shared API key lifecycle
+
+### [0.0.148] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.148)
+
+- Admin endpoints for tenant and member management
+
+### [0.0.147] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.147)
+
+- Extend OpenAPI spec with Simulation endpoints
+
+### [0.0.146] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.146)
+
+- Add deep link to the simulation response
+
+### [0.0.145] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.145)
+
+- Upgrade Rust, clean up clippy warnings across all crates and add format/clippy CI check
+- Remove RLIMIT_AS
+
+### [0.0.144] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.144)
+
+- Add support for multiple sources on classes
+
+### [0.0.143] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.143)
+
+- Add X-API-KEY extractor with LRU cache and /health-check-api-key endpoint
+
+### [0.0.142] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.142)
+
+- Add token generation helper and X-Admin-Token extractor
+
+### [0.0.141] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.141)
+
+- Add tenants, tenant_members and api_keys schema and models
+
+### [0.0.140] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.140)
+
+- Update README and .env.example
+
+### [0.0.139] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.139)
+
+- Return class name on contract/class page
+
+### [0.0.138] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.138)
+
+- Save Voyager class to S3 and DB, with retry for transient failures
+- Add background retry for timed-out Voyager compilations
+
+### [0.0.137] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.137)
+
+- Fix verification for scarb 2.16.1
+
+### [0.0.136] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.136)
+
+- Add ABI cache and step index for the debugger from the call trace
+- Logging instrument
+
+### [0.0.135] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.135)
+
+- Initial step for debugging
+
+### [0.0.134] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.134)
+
+- Add Grafana and Sheets integration
+
+### [0.0.133] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.133)
+
+- Optimize mappings and pin scarb.xyz versions
+- Reduce logging level
+
+### [0.0.132] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.132)
+
+- Pin scarb versions from the cache registry and update the Linux scarb cache path
+
+### [0.0.131] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.131)
+
+- Add execution resources to simulation
+- Show L2 flamegraph when L2 gas is available
+
+### [0.0.130] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.130)
+
+- Split Voyager compilation into two phases
+- Add function_calls to the trace for Voyager class
+- Use inline hash for building the debugger trace
+
+### [0.0.129] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.129)
+
+- Add timeout for scarb build and build in parallel
+- Reduce logs
+
+### [0.0.128] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.128)
+
+- Initial Voyager support
+- Improve building workspace projects
+
+### [0.0.127] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.127)
+
+- Add type to the decoded calldata response
+
+### [0.0.126] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.126)
+
+- Check if the transfer contract is strk_fee_token_addr
+
+### [0.0.125] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.125)
+
+- Migrate from starknet-rs to starknet-rust
+
 ### [0.0.124] (https://github.com/walnuthq/walnut-server/releases/tag/0.0.124)
 
 - Normalize class hash by padding leading zeros to 66 characters

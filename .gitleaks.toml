@@ -1,0 +1,22 @@
+# gitleaks config. CI scans the checked-out tree so a key can't be added back
+# in a pull request.
+
+[extend]
+# Start from the built-in rule set and only add exclusions below.
+useDefault = true
+
+[allowlist]
+description = "Paths that are build output or local-only, never committed"
+paths = [
+    # Build output. Compiled dependencies embed test keys and certificates.
+    '''^target/''',
+    # Downloaded Scarb / USC binaries.
+    '''^binaries/''',
+    '''^universal-sierra-compiler$''',
+    # Scratch directories for verification jobs. These hold user contract
+    # sources and must never be committed either.
+    '''^tmp/''',
+    # Local environment file. Gitignored, but developers run gitleaks on their
+    # working tree and it holds real values by design.
+    '''^\.env$''',
+]
