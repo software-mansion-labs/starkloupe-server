@@ -28,11 +28,9 @@ services:
       - TELEGRAM_BOT_API_KEY=
       - TELEGRAM_WALNUT_NOTIFICATIONS_CHAT_ID=
       - UNIVERSAL_SIERRA_COMPILER=./universal-sierra-compiler
-      - AWS_ACCESS_KEY_ID=
-      - AWS_SECRET_ACCESS_KEY=
-      - S3_ENDPOINT=
-      - S3_REGION=
-      - BINARIES_S3_BUCKET_NAME=
+      - GOOGLE_APPLICATION_CREDENTIALS=
+      - GCS_CLASSES_BUCKET_NAME=
+      - BINARIES_GCS_BUCKET_NAME=
       - BINARIES_SAVE_DIRECTORY_PATH=/opt/app/binaries
       - SCARB_GITHUB_REPO_NAME=software-mansion/scarb
       - SCARB_LATEST_VERSION_FILE_NAME=/opt/app/binaries/scarb_latest_version.txt

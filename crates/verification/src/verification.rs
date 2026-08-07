@@ -3,6 +3,7 @@ use crate::db::{
     insert_verification_status, update_verification_request, update_verification_status,
     update_verification_statuses,
 };
+use crate::gcs::upload_class_to_gcs;
 use crate::helpers::{
     fetch_class_from_blockchain, initialize_status_map, process_new_cairo_version_verification,
     process_old_cairo_version_verification,
@@ -10,7 +11,6 @@ use crate::helpers::{
     update_status_from_verified_contract_classes_with_inline_class_hash,
 };
 use crate::manifest::Manifest;
-use crate::s3::upload_class_to_s3;
 use crate::scarb::{is_cairo_version_supported, is_new_cairo_version_supported};
 use crate::utils::{create_files_from_map, create_temp_directory, remove_walnut_debug_from_scarb};
 use crate::{ClassVerificationData, EVerificationStatus};
@@ -31,7 +31,7 @@ use walnut_shared::tuple_to_version_string;
 
 pub async fn verify_by_class_hash(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     provider_client: JsonRpcClient<HttpTransport>,
     class_hash: String,
     class_name: String,
@@ -40,7 +40,7 @@ pub async fn verify_by_class_hash(
 ) -> Result<Uuid> {
     initiate_verification(
         db_pool,
-        s3_client,
+        gcs_client,
         provider_client,
         vec![class_hash],
         vec![class_name],
@@ -52,7 +52,7 @@ pub async fn verify_by_class_hash(
 
 pub async fn verify_by_contract_address(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     provider_client: JsonRpcClient<HttpTransport>,
     contract_address: String,
     class_name: String,
@@ -70,7 +70,7 @@ pub async fn verify_by_contract_address(
 
     initiate_verification(
         db_pool,
-        s3_client,
+        gcs_client,
         provider_client,
         vec![class_hash],
         vec![class_name],
@@ -82,7 +82,7 @@ pub async fn verify_by_contract_address(
 
 pub async fn initiate_verification(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     provider_client: JsonRpcClient<HttpTransport>,
     class_hashes: Vec<String>,
     class_names: Vec<String>,
@@ -222,13 +222,13 @@ pub async fn initiate_verification(
     }
 
     let db_pool_clone = db_pool.clone();
-    let s3_client_clone = s3_client.clone();
+    let gcs_client_clone = gcs_client.clone();
     let chain_id_clone = chain_id.clone();
 
     tokio::spawn(async move {
         match verify_by_class_hashes(
             &db_pool_clone,
-            &s3_client_clone,
+            &gcs_client_clone,
             provider_client,
             pending_classes,
             verification_status_id,
@@ -312,7 +312,7 @@ pub async fn initiate_verification(
 
 pub async fn verify_by_class_hashes(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     provider_client: JsonRpcClient<HttpTransport>,
     classes: Vec<(String, String)>,
     verification_id: Uuid,
@@ -365,7 +365,7 @@ pub async fn verify_by_class_hashes(
                     cairo_debug_info,
                 )) = class_result
                 {
-                    //We are uploading to s3 the related inline class hash and original class hash if it exist, as this one we need to get the
+                    //We are uploading to GCS the related inline class hash and original class hash if it exist, as this one we need to get the
                     //inline denug information
                     remove_walnut_debug_from_scarb(&mut source_code);
 
@@ -379,8 +379,8 @@ pub async fn verify_by_class_hashes(
 
                     // 2. Upload and insert for inline_strategy_class_hash
                     if let Some(_inline_class_hash) = inline_strategy_class_hash {
-                        upload_class_to_s3(
-                            s3_client,
+                        upload_class_to_gcs(
+                            gcs_client,
                             class_hash,
                             contract_class,
                             cairo_debug_info,
@@ -404,8 +404,8 @@ pub async fn verify_by_class_hashes(
                         class_status_map
                             .insert(class_hash.clone(), (EVerificationStatus::Success, None));
 
-                        upload_class_to_s3(
-                            s3_client,
+                        upload_class_to_gcs(
+                            gcs_client,
                             class_hash,
                             contract_class,
                             cairo_debug_info,

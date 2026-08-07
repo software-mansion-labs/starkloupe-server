@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 use verification::{
     db::fetch_verified_classes_with_inlining_classes,
-    s3::key_for_class_hash,
+    gcs::key_for_class_hash,
     scarb::{default_build_timeout, is_build_timeout_error},
     voyager::{
         cleanup_tmp_dir, compile_voyager_phase1, compile_voyager_phase2, compile_voyager_source,
@@ -32,26 +32,29 @@ fn timeout_suffix(is_timeout: bool) -> &'static str {
     }
 }
 
+fn classes_bucket() -> String {
+    let bucket_name = std::env::var("GCS_CLASSES_BUCKET_NAME")
+        .expect("GCS_CLASSES_BUCKET_NAME environment variable must be set");
+    format!("projects/_/buckets/{bucket_name}")
+}
+
 async fn fetch_and_parse_file(
-    client: &aws_sdk_s3::Client,
+    client: &google_cloud_storage::client::Storage,
     bucket_name: &str,
     key: String,
 ) -> Result<VerifiedClassData> {
-    let resp = client
-        .get_object()
-        .bucket(bucket_name)
-        .key(key)
-        .send()
-        .await?;
-
-    let body = resp.body.collect().await?;
-    let parsed: VerifiedClassData = serde_json::from_slice(&body.into_bytes())?;
+    let mut resp = client.read_object(bucket_name, key).send().await?;
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.next().await.transpose()? {
+        body.extend_from_slice(&chunk);
+    }
+    let parsed: VerifiedClassData = serde_json::from_slice(&body)?;
     Ok(parsed)
 }
 
 pub async fn fetch_classes_data(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     classes: &[String],
 ) -> HashMap<String, DataWithContractClass> {
     let mut classes_debugger_data: HashMap<String, DataWithContractClass> = HashMap::new();
@@ -65,16 +68,12 @@ pub async fn fetch_classes_data(
             }
         };
 
+    let bucket = classes_bucket();
     let fetches = verified_classes.keys().map(|key| {
         let key = key.clone();
+        let bucket = bucket.clone();
         async move {
-            match fetch_and_parse_file(
-                s3_client,
-                "walnutserver-east-1-classes-verification",
-                key_for_class_hash(&key),
-            )
-            .await
-            {
+            match fetch_and_parse_file(gcs_client, &bucket, key_for_class_hash(&key)).await {
                 Ok(parsed) => (key, Some(parsed)),
                 Err(err) => {
                     warn!("Failed to fetch or parse for key {}: {:?}", key, err);
@@ -109,13 +108,13 @@ pub async fn fetch_classes_data(
 ///
 /// # Arguments
 /// * `db_pool` - Database connection pool
-/// * `s3_client` - S3 client for fetching verified class data
+/// * `gcs_client` - GCS client for fetching verified class data
 /// * `classes` - List of class hashes to fetch
 /// * `external_cache` - Optional cache for externally compiled classes
 /// * `voyager_client` - Optional Voyager API client for fetching unverified classes
 pub async fn fetch_classes_debugger_data_with_external(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     classes: &[String],
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
@@ -133,20 +132,13 @@ pub async fn fetch_classes_debugger_data_with_external(
             }
         };
 
+    let bucket = classes_bucket();
     let fetches = verified_classes
         .iter()
         .map(|(key, value)| {
             let fetch = match value {
-                Some(value) => fetch_and_parse_file(
-                    s3_client,
-                    "walnutserver-east-1-classes-verification",
-                    key_for_class_hash(value),
-                ),
-                None => fetch_and_parse_file(
-                    s3_client,
-                    "walnutserver-east-1-classes-verification",
-                    key_for_class_hash(key),
-                ),
+                Some(value) => fetch_and_parse_file(gcs_client, &bucket, key_for_class_hash(value)),
+                None => fetch_and_parse_file(gcs_client, &bucket, key_for_class_hash(key)),
             };
             let key = key.clone();
             fetch.map(|res| match res {
@@ -371,10 +363,10 @@ pub async fn fetch_classes_debugger_data_with_external(
                     let source_for_retry = source_response.clone();
                     match compile_voyager_source(source_response, default_build_timeout()).await {
                         Ok(compiled) => {
-                            // Persist to S3 + DB so future requests skip the Voyager
+                            // Persist to GCS + DB so future requests skip the Voyager
                             // refetch + recompile after restart or cache TTL.
                             persist_compiled_voyager_class(
-                                s3_client, db_pool, &compiled, "voyager",
+                                gcs_client, db_pool, &compiled, "voyager",
                             )
                             .await;
 
@@ -456,7 +448,7 @@ pub async fn fetch_classes_debugger_data_with_external(
 /// Returns a set of class hashes that are verified on Voyager.
 pub async fn check_voyager_verified_classes(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     voyager_client: Option<&VoyagerClient>,
     class_hashes: &[String],
     already_verified: &HashSet<String>,
@@ -512,7 +504,7 @@ pub async fn check_voyager_verified_classes(
     let cache_opt = external_cache.cloned();
     let retry_opt = background_retry.cloned();
     let db_pool_outer = db_pool.clone();
-    let s3_client_outer = s3_client.clone();
+    let gcs_client_outer = gcs_client.clone();
 
     let found_hashes: Vec<String> = stream::iter(classes_to_check)
         .map(move |class_hash| {
@@ -527,7 +519,7 @@ pub async fn check_voyager_verified_classes(
             let cache_opt = cache_opt.clone();
             let retry_opt = retry_opt.clone();
             let db_pool_iter = db_pool_outer.clone();
-            let s3_client_iter = s3_client_outer.clone();
+            let gcs_client_iter = gcs_client_outer.clone();
             async move {
                 if let Ok(Some(source_response)) = result {
                     if let Some(cache) = cache_opt {
@@ -601,7 +593,7 @@ pub async fn check_voyager_verified_classes(
                                     };
 
                                     persist_compiled_voyager_class(
-                                        &s3_client_iter,
+                                        &gcs_client_iter,
                                         &db_pool_iter,
                                         &compiled,
                                         "voyager-phase1+inline",
@@ -677,7 +669,7 @@ pub async fn check_voyager_verified_classes(
                                     match compile_voyager_phase2(phase1, build_timeout).await {
                                         Ok(compiled) => {
                                             persist_compiled_voyager_class(
-                                                &s3_client_iter,
+                                                &gcs_client_iter,
                                                 &db_pool_iter,
                                                 &compiled,
                                                 "voyager-phase2",

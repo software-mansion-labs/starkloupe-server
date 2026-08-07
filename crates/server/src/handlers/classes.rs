@@ -17,7 +17,7 @@ use tracing::{error, warn};
 use utoipa::ToSchema;
 use verification::{
     db::{build_class_sources, fetch_verified_class},
-    s3::{fetch_verified_class_hash_with_source_code_data, fetch_verified_class_with_data},
+    gcs::{fetch_verified_class_hash_with_source_code_data, fetch_verified_class_with_data},
 };
 use walnut_shared::{get_voyager_api_url, voyager_api_key};
 
@@ -46,7 +46,7 @@ pub async fn get_class_handler_with_chain_id(
 ) -> Response {
     // Try to fetch from local (Walnut) first
     if let Ok((_verified_class_row, verified_class_data)) =
-        fetch_verified_class_with_data(&state.db_pool, &state.s3_client, &class_hash).await
+        fetch_verified_class_with_data(&state.db_pool, &state.gcs_client, &class_hash).await
     {
         return (
             StatusCode::OK,
@@ -155,7 +155,7 @@ pub async fn get_class_handler(
                 // Try local (Walnut) first
                 match fetch_verified_class_hash_with_source_code_data(
                     &state.db_pool,
-                    &state.s3_client,
+                    &state.gcs_client,
                     &class_hash_fixed,
                 )
                 .await

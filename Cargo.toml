@@ -69,9 +69,8 @@ time = { version = "0.3.36", features = ["serde", "serde-well-known", "formattin
 futures = { version = "0.3.30", features = ["async-await"] }
 itertools = "0.12.1"
 toml = "0.8.14"
-aws-sdk-s3 = { version = "1.38.0", features = ["rt-tokio"] }
-aws-config = { version = "1.5.3", features = ["behavior-version-latest"] }
-aws-smithy-types = "1.2.0"
+google-cloud-storage = "1.17.0"
+google-cloud-auth = "1.15.0"
 hex = "0.4.3"
 indexmap = "2.3.0"
 walkdir = "2.5.0"

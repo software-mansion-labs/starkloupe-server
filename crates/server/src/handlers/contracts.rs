@@ -21,7 +21,7 @@ use url::Url;
 use utoipa::ToSchema;
 use verification::{
     db::{build_class_sources, fetch_verified_class},
-    s3::fetch_verified_class_hash_with_source_code_data,
+    gcs::fetch_verified_class_hash_with_source_code_data,
 };
 use walnut_shared::abi::{get_enums, get_functions, get_structs, Function, Item};
 use walnut_shared::utils::simplify_type_name;
@@ -324,7 +324,7 @@ pub async fn get_contract_handler(
                 // Try local (Walnut) first
                 match fetch_verified_class_hash_with_source_code_data(
                     &state.db_pool,
-                    &state.s3_client,
+                    &state.gcs_client,
                     &class_hash,
                 )
                 .await

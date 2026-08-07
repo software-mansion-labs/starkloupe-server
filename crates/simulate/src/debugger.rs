@@ -35,7 +35,7 @@ use walnut_shared::create_rpc_client_from_url;
 
 async fn simulate_to_get_debug_info(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     args: SimulationArgs,
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
@@ -63,7 +63,7 @@ async fn simulate_to_get_debug_info(
             total_txs_in_block,
             false,
             db_pool,
-            s3_client,
+            gcs_client,
             external_cache.cloned(),
         )
         .map_err(|e| {
@@ -98,7 +98,7 @@ async fn simulate_to_get_debug_info(
 
     let classes_debugger_data = fetch_classes_debugger_data_with_external(
         db_pool,
-        s3_client,
+        gcs_client,
         &class_hashes,
         external_cache,
         voyager_client,
@@ -193,7 +193,7 @@ fn run_simulation_to_get_debug_info(
 
 pub async fn debug_by_calldata(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     args: SimulationArgs,
     external_cache: Option<&ExternalClassCache>,
     voyager_client: Option<&VoyagerClient>,
@@ -201,7 +201,7 @@ pub async fn debug_by_calldata(
 ) -> Result<DebuggerInfo, TransactionSimulationError> {
     let debugger_info = simulate_to_get_debug_info(
         db_pool,
-        s3_client,
+        gcs_client,
         args,
         external_cache,
         voyager_client,

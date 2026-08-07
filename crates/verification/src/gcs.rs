@@ -2,8 +2,6 @@ use crate::db::{fetch_verified_class, fetch_verified_class_with_inlining_class};
 use crate::SierraToCairoDebugInfo;
 use crate::{VerifiedClassData, VerifiedClassRow};
 use anyhow::Result;
-use aws_sdk_s3::primitives::ByteStream;
-use aws_smithy_types::body::SdkBody;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 use sqlx::{Pool, Postgres};
 use std::collections::{HashMap, HashSet};
@@ -13,20 +11,26 @@ pub fn key_for_class_hash(class_hash: &str) -> String {
     format!("class-{}.json", class_hash)
 }
 
+fn classes_bucket() -> String {
+    let bucket_name = std::env::var("GCS_CLASSES_BUCKET_NAME")
+        .expect("GCS_CLASSES_BUCKET_NAME environment variable must be set");
+    format!("projects/_/buckets/{bucket_name}")
+}
+
 pub async fn fetch_verified_class_hash_with_contract_class_data(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     class_hash: &str,
 ) -> Result<(String, Option<ContractClass>)> {
     let verified_class = fetch_verified_class_with_inlining_class(db_pool, class_hash).await?;
 
     let primary_class_hash = &verified_class.0;
-    let bucket_name = "walnutserver-east-1-classes-verification";
+    let bucket = classes_bucket();
 
     // First try to fetch class data with inline_class_hash, if we have it
     if let Some(inline_class_hash) = &verified_class.1 {
         let key = key_for_class_hash(inline_class_hash);
-        if let Ok(verified_class_data) = fetch_and_parse_file(s3_client, bucket_name, key).await {
+        if let Ok(verified_class_data) = fetch_and_parse_file(gcs_client, &bucket, key).await {
             return Ok((
                 primary_class_hash.clone(),
                 Some(verified_class_data.contract_class),
@@ -34,9 +38,9 @@ pub async fn fetch_verified_class_hash_with_contract_class_data(
         }
     }
 
-    // If inline_class_hash does not exist, or there is no class data on s3, try with primary_class_hash
+    // If inline_class_hash does not exist, or there is no class data on GCS, try with primary_class_hash
     let key = key_for_class_hash(primary_class_hash);
-    let contract_class_data = fetch_and_parse_file(s3_client, bucket_name, key)
+    let contract_class_data = fetch_and_parse_file(gcs_client, &bucket, key)
         .await
         .ok()
         .map(|d| d.contract_class);
@@ -46,25 +50,25 @@ pub async fn fetch_verified_class_hash_with_contract_class_data(
 
 pub async fn fetch_verified_class_hash_with_source_code_data(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     class_hash: &str,
 ) -> Result<Option<HashMap<String, String>>> {
     let verified_class = fetch_verified_class_with_inlining_class(db_pool, class_hash).await?;
 
     let primary_class_hash = &verified_class.0;
-    let bucket_name = "walnutserver-east-1-classes-verification";
+    let bucket = classes_bucket();
 
     // First try to fetch class data with inline_class_hash, if we have it
     if let Some(inline_class_hash) = &verified_class.1 {
         let key = key_for_class_hash(inline_class_hash);
-        if let Ok(verified_class_data) = fetch_and_parse_file(s3_client, bucket_name, key).await {
+        if let Ok(verified_class_data) = fetch_and_parse_file(gcs_client, &bucket, key).await {
             return Ok(Some(verified_class_data.source_code));
         }
     }
 
-    // If inline_class_hash does not exist, or there is no class data on s3, try with primary_class_hash
+    // If inline_class_hash does not exist, or there is no class data on GCS, try with primary_class_hash
     let key = key_for_class_hash(primary_class_hash);
-    let source_code_data = fetch_and_parse_file(s3_client, bucket_name, key)
+    let source_code_data = fetch_and_parse_file(gcs_client, &bucket, key)
         .await
         .ok()
         .map(|d| d.source_code);
@@ -74,20 +78,18 @@ pub async fn fetch_verified_class_hash_with_source_code_data(
 
 pub async fn fetch_verified_class_with_data(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     class_hash: &String,
 ) -> Result<(VerifiedClassRow, VerifiedClassData)> {
     let verified_class = fetch_verified_class(db_pool, class_hash).await?;
 
-    let resp = s3_client
-        .get_object()
-        .bucket("walnutserver-east-1-classes-verification")
-        .key(key_for_class_hash(class_hash))
-        .send()
-        .await?;
-
-    let body = resp.body.collect().await?;
-    let mut parsed: VerifiedClassData = serde_json::from_slice(&body.into_bytes())?;
+    let parsed = read_object(
+        gcs_client,
+        &classes_bucket(),
+        key_for_class_hash(class_hash),
+    )
+    .await?;
+    let mut parsed: VerifiedClassData = serde_json::from_slice(&parsed)?;
 
     // Filter out unused files
     if let Some(cairo_debug_info) = &parsed.cairo_debug_info {
@@ -107,31 +109,37 @@ pub async fn fetch_verified_class_with_data(
     Ok((verified_class, parsed))
 }
 
+async fn read_object(
+    client: &google_cloud_storage::client::Storage,
+    bucket: &str,
+    key: String,
+) -> Result<Vec<u8>> {
+    let mut resp = client.read_object(bucket, key).send().await?;
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.next().await.transpose()? {
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 async fn fetch_and_parse_file(
-    client: &aws_sdk_s3::Client,
-    bucket_name: &str,
+    client: &google_cloud_storage::client::Storage,
+    bucket: &str,
     key: String,
 ) -> Result<VerifiedClassData> {
-    let resp = client
-        .get_object()
-        .bucket(bucket_name)
-        .key(key)
-        .send()
-        .await?;
-
-    let body = resp.body.collect().await?;
-    let parsed: VerifiedClassData = serde_json::from_slice(&body.into_bytes())?;
+    let body = read_object(client, bucket, key).await?;
+    let parsed: VerifiedClassData = serde_json::from_slice(&body)?;
     Ok(parsed)
 }
 
 /// Fetches the source code for a single class.
 pub async fn fetch_class_source_code(
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     class_hash: &String,
 ) -> Result<HashMap<String, String>> {
     let verified_class_data = match fetch_and_parse_file(
-        s3_client,
-        "walnutserver-east-1-classes-verification",
+        gcs_client,
+        &classes_bucket(),
         key_for_class_hash(class_hash),
     )
     .await
@@ -150,8 +158,8 @@ pub async fn fetch_class_source_code(
     Ok(verified_class_data.source_code)
 }
 
-pub async fn upload_class_to_s3(
-    s3_client: &aws_sdk_s3::Client,
+pub async fn upload_class_to_gcs(
+    gcs_client: &google_cloud_storage::client::Storage,
     class_hash: &str,
     contract_class: &ContractClass,
     cairo_debug_info: &Option<SierraToCairoDebugInfo>,
@@ -164,12 +172,9 @@ pub async fn upload_class_to_s3(
     };
 
     let json_data = serde_json::to_string(&verified_class_data)?;
-    s3_client
-        .put_object()
-        .bucket("walnutserver-east-1-classes-verification")
-        .key(format!("class-{}.json", class_hash))
-        .body(ByteStream::new(SdkBody::from(json_data)))
-        .send()
+    gcs_client
+        .write_object(classes_bucket(), key_for_class_hash(class_hash), json_data)
+        .send_unbuffered()
         .await?;
 
     Ok(())

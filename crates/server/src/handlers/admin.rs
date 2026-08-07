@@ -342,23 +342,22 @@ mod tests {
     const TOKEN: &str = "secret-correct-token";
 
     async fn test_state(pool: PgPool) -> Arc<AppState> {
-        let s3_client = aws_sdk_s3::Client::new(
-            &aws_config::from_env()
-                .region(aws_sdk_s3::config::Region::new("us-east-1"))
-                .load()
-                .await,
-        );
+        let gcs_client = google_cloud_storage::client::Storage::builder()
+            .with_credentials(google_cloud_auth::credentials::anonymous::Builder::new().build())
+            .build()
+            .await
+            .expect("creating a test GCS client should not fail");
         let external_class_cache =
             internal_tracing::external_class_cache::ExternalClassCache::from_env();
         let background_retry = internal_tracing::background_retry::BackgroundRetryService::new(
             pool.clone(),
-            s3_client.clone(),
+            gcs_client.clone(),
             external_class_cache.clone(),
         );
 
         Arc::new(AppState {
             db_pool: pool,
-            s3_client,
+            gcs_client,
             simulation_cache: crate::services::SimulationCache::new(10, 10),
             external_class_cache,
             voyager_client: None,
