@@ -2,7 +2,6 @@ extern crate dotenv;
 mod abi_fetcher;
 mod app_state;
 mod appsmith_api;
-mod auth;
 mod binaries_manager_service;
 mod calldata_encoder;
 mod handlers;
@@ -10,14 +9,10 @@ mod notification_service;
 mod services;
 
 use app_state::AppState;
-use axum::{routing::delete, routing::get, routing::post, Router};
+use axum::{routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
 use handlers::{
-    admin::{
-        add_member, create_api_key, create_tenant, get_tenant, list_api_keys, remove_member,
-        revoke_api_key,
-    },
     calldata_decoder::decode_calldata_handler,
     classes::{get_class_handler, get_contracts_by_class_hash_handler},
     contracts::{get_contract_entrypoints_handler, get_contract_handler},
@@ -33,7 +28,6 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 use utoipa::OpenApi;
 
 use crate::appsmith_api::get_verification_data;
-use crate::auth::ApiKeyAuth;
 use crate::binaries_manager_service::{
     download_scarb_and_sozo_binaries_from_gcs, start_github_dojo_binaries_downloader_scheduler,
     start_github_scarb_binaries_downloader_scheduler,
@@ -143,11 +137,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache.clone(),
             );
 
-            let api_key_cache = moka::future::Cache::builder()
-                .max_capacity(10_000)
-                .time_to_live(Duration::from_secs(15 * 60))
-                .build();
-
             let shared_state = Arc::new(AppState {
                 db_pool,
                 gcs_client,
@@ -155,7 +144,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 external_class_cache,
                 voyager_client,
                 background_retry,
-                api_key_cache,
             });
 
             let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
@@ -163,7 +151,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app = Router::new()
                 .route("/dashboard/data", get(get_verification_data))
                 .route("/health", get(health_check))
-                .route("/health-check-api-key", get(health_check_api_key))
                 .route("/v1/simulate-transaction", post(simulate_transaction))
                 .route(
                     "/v1/:chain_id/simulate-transaction/:tx_hash",
@@ -193,15 +180,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .route("/v1/debug-transaction", post(debug_transaction))
                 .route("/v1/decode-calldata", post(decode_calldata_handler))
                 // .route("/v1/cache/stats", get(cache_stats_handler)) // Commented out for now
-                .route("/v1/admin/tenant", post(create_tenant))
-                .route("/v1/admin/tenant/:tenant_id", get(get_tenant))
-                .route("/v1/admin/tenant/:tenant_id/member", post(add_member))
-                .route(
-                    "/v1/admin/tenant/:tenant_id/member/:member_id/remove",
-                    post(remove_member),
-                )
-                .route("/v1/admin/api-key", post(create_api_key).get(list_api_keys))
-                .route("/v1/admin/api-key/:id", delete(revoke_api_key))
                 .with_state(shared_state)
                 .route("/metrics", get(|| async move { metric_handle.render() }))
                 .route_service(
@@ -226,10 +204,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         })
-}
-
-async fn health_check_api_key(_auth: ApiKeyAuth) -> StatusCode {
-    StatusCode::OK
 }
 
 // If DB is down SQLX query is hanging, this is why 3 secs timeout

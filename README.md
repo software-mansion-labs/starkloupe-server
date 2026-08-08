@@ -40,9 +40,9 @@ echo "UNIVERSAL_SIERRA_COMPILER=./universal-sierra-compiler" >> .env
 If the binary is already on your `PATH` under its default name, the env var can be skipped.
 
 Then fill in the four RPC URLs in `.env` (`STARKNET_MAINNET_RPC_URL`,
-`STARKNET_SEPOLIA_RPC_URL`, `ETHEREUM_MAINNET_RPC_URL`, `ETHEREUM_SEPOLIA_RPC_URL`)
-and set `WALNUT_ADMIN_TOKEN`. The server refuses to start without them. Everything
-else in `.env.example` is optional — see the comments there.
+`STARKNET_SEPOLIA_RPC_URL`, `ETHEREUM_MAINNET_RPC_URL`, `ETHEREUM_SEPOLIA_RPC_URL`).
+The server refuses to start without them. Everything else in `.env.example`
+is optional — see the comments there.
 
 3. Build and run the server
 ```

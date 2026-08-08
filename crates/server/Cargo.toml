@@ -55,10 +55,7 @@ toml.workspace = true
 internal-tracing.workspace = true
 moka = { version = "0.12", features = ["future"] }
 sha2 = "0.10"
-rand = "0.8"
-base64 = "0.22"
 subtle = "2.5"
-async-trait = "0.1"
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

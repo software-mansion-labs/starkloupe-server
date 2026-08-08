@@ -8745,10 +8745,8 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "axum 0.6.20",
  "axum-prometheus",
- "base64 0.22.1",
  "blockifier",
  "cairo-lang-starknet-classes",
  "cairo-vm",
@@ -8768,7 +8766,6 @@ dependencies = [
  "moka",
  "num-bigint",
  "num-traits",
- "rand 0.8.5",
  "reqwest 0.11.27",
  "scarb-api",
  "sentry 0.34.0",
