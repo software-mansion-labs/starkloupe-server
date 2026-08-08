@@ -185,6 +185,7 @@ pub async fn check_periodically_updates(
 ) -> Result<(), Box<dyn Error>> {
     let binaries_dir_path_string =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or_else(|_| ".".to_string());
+    tokio_fs::create_dir_all(&binaries_dir_path_string).await?;
     let mut latest_installed_tag = Version::parse(latest_unsupported_tag).unwrap();
 
     // Check if the version file exists
@@ -295,6 +296,11 @@ pub async fn check_periodically_updates(
                     );
 
                     // Move the binary to the destination directory (e.g. binaries/<tool_name>)
+                    if let Some(destination_dir) =
+                        Path::new(&extracted_binary_destination_path).parent()
+                    {
+                        tokio_fs::create_dir_all(destination_dir).await?;
+                    }
                     tokio_fs::rename(&extracted_binary_path, &extracted_binary_destination_path)
                         .await?;
                     // Remove the extracted tar.gz folder
@@ -330,6 +336,11 @@ pub async fn check_periodically_updates(
                     );
 
                     // Move the binary to the destination directory (e.g. binaries/<tool_name>)
+                    if let Some(destination_dir) =
+                        Path::new(&extracted_binary_destination_path).parent()
+                    {
+                        tokio_fs::create_dir_all(destination_dir).await?;
+                    }
                     tokio_fs::rename(&extracted_binary_path, &extracted_binary_destination_path)
                         .await?;
                     // Remove the extracted tar.gz folder
