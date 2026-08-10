@@ -4,6 +4,7 @@ name: CI
 # every pull request and on merges to main.
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
