@@ -57,7 +57,7 @@ pub async fn debug_transaction(
                 // Run debug simulation
                 match debug_by_calldata(
                     db_pool,
-                    &state.s3_client,
+                    &state.gcs_client,
                     debug_args,
                     Some(&state.external_class_cache),
                     state.voyager_client.as_ref(),

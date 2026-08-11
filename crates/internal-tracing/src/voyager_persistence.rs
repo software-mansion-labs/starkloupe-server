@@ -6,11 +6,11 @@ use uuid::Uuid;
 use verification::db::{
     insert_class_hash_profiles, insert_contract_class, insert_verification_request,
 };
-use verification::s3::upload_class_to_s3;
+use verification::gcs::upload_class_to_gcs;
 use verification::voyager::CompiledExternalClass;
 use walnut_shared::tuple_to_version_string;
 
-/// Persist a Voyager-compiled class to S3 + DB so future requests can skip
+/// Persist a Voyager-compiled class to GCS + DB so future requests can skip
 /// re-fetching from Voyager and re-compiling. Mirrors what the Walnut
 /// verification flow writes for a "real" verification, but tags the synthetic
 /// `verification_requests` row with status `"voyager"` so it's distinguishable.
@@ -21,15 +21,15 @@ use walnut_shared::tuple_to_version_string;
 /// Errors are logged, not propagated — partial persistence is acceptable since
 /// the next request will re-attempt whatever piece is missing.
 pub async fn persist_compiled_voyager_class(
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     db_pool: &Pool<Postgres>,
     compiled: &CompiledExternalClass,
     source: &'static str,
 ) {
-    // 1. Inline class (S3 + contract_classes) and, if available, original class
+    // 1. Inline class (GCS + contract_classes) and, if available, original class
     //    in parallel. Original is the non-inline build matching on-chain CASM.
     let inline_persist = persist_class(
-        s3_client,
+        gcs_client,
         db_pool,
         &compiled.inline_class_hash,
         &compiled.contract_class,
@@ -40,7 +40,7 @@ pub async fn persist_compiled_voyager_class(
     match &compiled.original_contract_class {
         Some(original) => {
             let original_persist = persist_class(
-                s3_client,
+                gcs_client,
                 db_pool,
                 &compiled.original_class_hash,
                 original,
@@ -114,16 +114,16 @@ pub async fn persist_compiled_voyager_class(
     }
 
     debug!(
-        "{}: persisted {} (inline={}) to DB+S3",
+        "{}: persisted {} (inline={}) to DB+GCS",
         source, compiled.original_class_hash, compiled.inline_class_hash
     );
 }
 
-/// Upload the class to S3 and insert the DB row in parallel. Errors on either
+/// Upload the class to GCS and insert the DB row in parallel. Errors on either
 /// side are logged, not propagated — partial persistence is acceptable since
 /// the next request will re-attempt the missing piece.
 async fn persist_class(
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     db_pool: &Pool<Postgres>,
     class_hash: &str,
     contract_class: &ContractClass,
@@ -131,13 +131,13 @@ async fn persist_class(
     is_cairo_debug_info: bool,
     source: &'static str,
 ) {
-    debug!("{}: uploading class {} to S3", source, class_hash);
-    let s3_fut = upload_class_to_s3(s3_client, class_hash, contract_class, &None, source_code);
+    debug!("{}: uploading class {} to GCS", source, class_hash);
+    let gcs_fut = upload_class_to_gcs(gcs_client, class_hash, contract_class, &None, source_code);
     let db_fut = insert_contract_class(db_pool, class_hash, true, is_cairo_debug_info, true, None);
-    let (s3_res, db_res) = tokio::join!(s3_fut, db_fut);
-    if let Err(e) = s3_res {
+    let (gcs_res, db_res) = tokio::join!(gcs_fut, db_fut);
+    if let Err(e) = gcs_res {
         warn!(
-            "{}: failed to upload class {} to S3: {:?}",
+            "{}: failed to upload class {} to GCS: {:?}",
             source, class_hash, e
         );
     }

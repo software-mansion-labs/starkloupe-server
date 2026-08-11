@@ -208,7 +208,7 @@ pub async fn verify_handler(
             let class_hash_fixed_clone = class_hash_fixed.clone();
             match verify_by_class_hash(
                 &state.db_pool,
-                &state.s3_client,
+                &state.gcs_client,
                 provider_client,
                 class_hash_fixed,
                 payload.contract_name,
@@ -240,7 +240,7 @@ pub async fn verify_handler(
             let contract_address_clone = contract_address.clone();
             match verify_by_contract_address(
                 &state.db_pool,
-                &state.s3_client,
+                &state.gcs_client,
                 provider_client,
                 contract_address,
                 payload.contract_name,
@@ -359,7 +359,7 @@ pub async fn verify_handler_with_rpc(
 
         match initiate_verification(
             &state.db_pool,
-            &state.s3_client,
+            &state.gcs_client,
             provider_client,
             class_hashes,
             class_names,
@@ -446,7 +446,7 @@ pub async fn verify_handler_with_rpc(
 
         match initiate_minimal_verification(
             &state.db_pool,
-            &state.s3_client,
+            &state.gcs_client,
             payload.source_code,
             manifest,
         )

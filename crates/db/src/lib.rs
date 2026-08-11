@@ -1,6 +1,6 @@
 pub mod admin;
 
-use chrono::{Datelike, NaiveDateTime, Timelike};
+use chrono::{DateTime, Datelike, Timelike};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::types::{
     time::{Date, PrimitiveDateTime, Time},
@@ -93,7 +93,7 @@ impl<'de> Deserialize<'de> for SerializableDateTime {
         D: Deserializer<'de>,
     {
         let timestamp = i64::deserialize(deserializer)?;
-        let naive_datetime = NaiveDateTime::from_timestamp_opt(timestamp, 0)
+        let naive_datetime = DateTime::from_timestamp(timestamp, 0)
             .ok_or_else(|| serde::de::Error::custom("invalid timestamp"))?;
 
         let year = naive_datetime.year();

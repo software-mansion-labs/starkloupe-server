@@ -10,8 +10,6 @@ mod notification_service;
 mod services;
 
 use app_state::AppState;
-use aws_sdk_s3::config::Region;
-use aws_sdk_s3::Client;
 use axum::{routing::delete, routing::get, routing::post, Router};
 use axum_prometheus::PrometheusMetricLayer;
 use dotenv::dotenv;
@@ -37,7 +35,7 @@ use utoipa::OpenApi;
 use crate::appsmith_api::get_verification_data;
 use crate::auth::ApiKeyAuth;
 use crate::binaries_manager_service::{
-    download_scarb_and_sozo_binaries_from_s3, start_github_dojo_binaries_downloader_scheduler,
+    download_scarb_and_sozo_binaries_from_gcs, start_github_dojo_binaries_downloader_scheduler,
     start_github_scarb_binaries_downloader_scheduler,
 };
 use crate::handlers::{
@@ -97,20 +95,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .connect(&db_addr)
                 .await?;
 
-            // Configure the region and endpoint
-            let region = Region::new(std::env::var("S3_REGION").unwrap_or("".to_string()));
-            let shared_config = aws_config::from_env()
-                .region(region)
-                .endpoint_url(std::env::var("S3_ENDPOINT").unwrap_or("".to_string()))
-                .load()
-                .await;
-
-            // Create the S3 client
-            let s3_client = Client::new(&shared_config);
+            // Create the GCS client. Authenticates via Application Default Credentials
+            // (GOOGLE_APPLICATION_CREDENTIALS, workload identity, or the GCE/GKE metadata server).
+            let gcs_client = google_cloud_storage::client::Storage::builder()
+                .build()
+                .await?;
             sqlx::migrate!().run(&db_pool).await?;
 
             // Download scarb and sozo binaries
-            download_scarb_and_sozo_binaries_from_s3(&s3_client).await?;
+            download_scarb_and_sozo_binaries_from_gcs(&gcs_client).await?;
             start_github_scarb_binaries_downloader_scheduler().await;
             start_github_dojo_binaries_downloader_scheduler().await;
 
@@ -146,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Initialize background retry service for timed-out Voyager compilations
             let background_retry = internal_tracing::background_retry::BackgroundRetryService::new(
                 db_pool.clone(),
-                s3_client.clone(),
+                gcs_client.clone(),
                 external_class_cache.clone(),
             );
 
@@ -157,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let shared_state = Arc::new(AppState {
                 db_pool,
-                s3_client,
+                gcs_client,
                 simulation_cache,
                 external_class_cache,
                 voyager_client,

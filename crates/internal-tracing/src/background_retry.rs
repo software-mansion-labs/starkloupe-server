@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use verification::voyager::{compile_voyager_source, VoyagerSourceResponse};
 
 /// Manages background retry compilations for contracts that timed out during
-/// inline Voyager compilation. On success, persists results to DB + S3 so
+/// inline Voyager compilation. On success, persists results to DB + GCS so
 /// future transactions find verified code without re-compiling.
 #[derive(Clone)]
 pub struct BackgroundRetryService {
@@ -18,14 +18,14 @@ pub struct BackgroundRetryService {
     /// Class hashes currently being retried (prevents duplicate retries).
     active_retries: Arc<RwLock<HashSet<String>>>,
     db_pool: Pool<Postgres>,
-    s3_client: aws_sdk_s3::Client,
+    gcs_client: google_cloud_storage::client::Storage,
     external_cache: ExternalClassCache,
 }
 
 impl BackgroundRetryService {
     pub fn new(
         db_pool: Pool<Postgres>,
-        s3_client: aws_sdk_s3::Client,
+        gcs_client: google_cloud_storage::client::Storage,
         external_cache: ExternalClassCache,
     ) -> Self {
         let max_compilations: usize = std::env::var("MAX_BACKGROUND_COMPILATIONS")
@@ -42,7 +42,7 @@ impl BackgroundRetryService {
             semaphore: Arc::new(Semaphore::new(max_compilations)),
             active_retries: Arc::new(RwLock::new(HashSet::new())),
             db_pool,
-            s3_client,
+            gcs_client,
             external_cache,
         }
     }
@@ -92,7 +92,7 @@ impl BackgroundRetryService {
                     );
 
                     persist_compiled_voyager_class(
-                        &svc.s3_client,
+                        &svc.gcs_client,
                         &svc.db_pool,
                         &compiled,
                         "background-retry",
@@ -122,7 +122,7 @@ impl BackgroundRetryService {
                     svc.external_cache.clear_failed(&class_hash).await;
 
                     info!(
-                        "Background retry: persisted {} to DB+S3 successfully",
+                        "Background retry: persisted {} to DB+GCS successfully",
                         class_hash
                     );
                 }

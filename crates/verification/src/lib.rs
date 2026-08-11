@@ -1,9 +1,9 @@
 pub mod artifacts;
 pub mod db;
+pub mod gcs;
 pub mod helpers;
 pub mod manifest;
 pub mod minimal_verification;
-pub mod s3;
 pub mod scarb;
 pub mod scarb_and_dojo_download_scheduler;
 pub mod utils;

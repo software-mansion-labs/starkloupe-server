@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use tracing::error;
 use universal_sierra_compiler_api::compile_contract_sierra;
-use verification::s3::fetch_verified_class_hash_with_contract_class_data;
+use verification::gcs::fetch_verified_class_hash_with_contract_class_data;
 use walnut_shared::create_rpc_client_from_url;
 
 #[derive(Debug, Default)]
@@ -180,7 +180,7 @@ pub struct ForkStateReader {
     only_non_inlined_class: bool,
     pub in_memory_fork_cache: RefCell<InMemoryForkCache>, // Wrap in RefCell
     db_pool: Pool<Postgres>,
-    s3_client: aws_sdk_s3::Client,
+    gcs_client: google_cloud_storage::client::Storage,
     external_cache: Option<ExternalClassCache>,
 }
 
@@ -192,7 +192,7 @@ impl ForkStateReader {
         tx_number_in_block: usize,
         only_non_inlined_class: bool,
         db_pool: &Pool<Postgres>,
-        s3_client: &aws_sdk_s3::Client,
+        gcs_client: &google_cloud_storage::client::Storage,
         external_cache: Option<ExternalClassCache>,
     ) -> anyhow::Result<Self> {
         let block_id = BlockId::Number(block_number);
@@ -205,7 +205,7 @@ impl ForkStateReader {
             only_non_inlined_class,
             in_memory_fork_cache: RefCell::new(InMemoryForkCache::default()), // Wrap in RefCell
             db_pool: db_pool.clone(),
-            s3_client: s3_client.clone(),
+            gcs_client: gcs_client.clone(),
             external_cache,
         };
 
@@ -756,7 +756,7 @@ impl StateReader for ForkStateReader {
             tokio::runtime::Handle::current().block_on(
                 fetch_verified_class_hash_with_contract_class_data(
                     &self.db_pool,
-                    &self.s3_client,
+                    &self.gcs_client,
                     &class_hash.to_fixed_hex_string(),
                 ),
             )

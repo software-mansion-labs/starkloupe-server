@@ -115,7 +115,7 @@ const VOYAGER_PHASE_1_TIMEOUT: Duration = Duration::from_secs(45);
 ))]
 pub async fn simulate(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     execution_result: Option<ExecutionResult>,
     args: SimulationArgs,
     voyager_client: Option<&VoyagerClient>,
@@ -145,7 +145,7 @@ pub async fn simulate(
             total_txs_in_block,
             true,
             db_pool,
-            s3_client,
+            gcs_client,
             None,
         )
         .map_err(|e| {
@@ -168,7 +168,7 @@ pub async fn simulate(
 
     debug!("Fetching classes data");
     let class_hashes = contract_calls_map.collect_all_class_hashes();
-    let mut classes_data = fetch_classes_data(db_pool, s3_client, &class_hashes).await;
+    let mut classes_data = fetch_classes_data(db_pool, gcs_client, &class_hashes).await;
 
     debug!(
         "Walnut DB classes_data: {} entries, class_hashes: {:?}",
@@ -181,7 +181,7 @@ pub async fn simulate(
     let already_verified: HashSet<String> = classes_data.keys().cloned().collect();
     let voyager_verified = check_voyager_verified_classes(
         db_pool,
-        s3_client,
+        gcs_client,
         voyager_client,
         &class_hashes,
         &already_verified,
@@ -621,7 +621,7 @@ fn run_simulation(
 ))]
 pub async fn simulate_by_calldata(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     args: SimulationArgs,
     voyager_client: Option<&VoyagerClient>,
     external_cache: Option<&ExternalClassCache>,
@@ -678,7 +678,7 @@ pub async fn simulate_by_calldata(
         execution_resources,
     ) = simulate(
         db_pool,
-        s3_client,
+        gcs_client,
         None,
         args,
         voyager_client,
@@ -720,7 +720,7 @@ pub async fn simulate_by_calldata(
 ))]
 pub async fn simulate_transaction_by_hash(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     starknet_rpc_url: Option<Url>,
     ethereum_rpc_url: Option<String>,
     tx_hash: &str,
@@ -736,7 +736,7 @@ pub async fn simulate_transaction_by_hash(
             ETransactionHashType::Starknet(starknet_hash) => {
                 simulate_starknet_transaction_by_hash(
                     db_pool,
-                    s3_client,
+                    gcs_client,
                     starknet_rpc_url,
                     ethereum_rpc_url,
                     starknet_hash,
@@ -750,7 +750,7 @@ pub async fn simulate_transaction_by_hash(
             ETransactionHashType::Ethereum(ethereum_hash) => {
                 simulate_ethereum_transaction_by_hash(
                     db_pool,
-                    s3_client,
+                    gcs_client,
                     starknet_rpc_url,
                     ethereum_rpc_url,
                     ethereum_hash,
@@ -783,7 +783,7 @@ pub async fn simulate_transaction_by_hash(
 ))]
 async fn simulate_starknet_transaction_by_hash(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     starknet_rpc_url: Option<Url>,
     _ethereum_rpc_url: Option<String>,
     transaction_hash: Felt,
@@ -925,7 +925,7 @@ async fn simulate_starknet_transaction_by_hash(
                             _,
                         ) = simulate(
                             db_pool,
-                            s3_client,
+                            gcs_client,
                             tx_execution_result,
                             SimulationArgs {
                                 rpc_url: starknet_rpc_url.clone(),
@@ -999,7 +999,7 @@ async fn simulate_starknet_transaction_by_hash(
 ))]
 pub async fn simulate_ethereum_transaction_by_hash(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     starknet_rpc_url: Option<Url>,
     ethereum_rpc_url: Option<String>,
     transaction_hash: H256,
@@ -1044,7 +1044,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
     if let Some(l1_l2_event) = l1_l2_events.first() {
         return process_l1_handler_transaction(
             db_pool,
-            s3_client,
+            gcs_client,
             &starknet_rpc_url,
             chain_id,
             transaction_hash,
@@ -1066,7 +1066,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
 
 async fn process_l1_handler_transaction(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     starknet_rpc_url: &Url,
     chain_id: EChainId,
     transaction_hash: H256,
@@ -1106,7 +1106,7 @@ async fn process_l1_handler_transaction(
         _,
     ) = simulate(
         db_pool,
-        s3_client,
+        gcs_client,
         None,
         SimulationArgs {
             rpc_url: starknet_rpc_url.clone(),

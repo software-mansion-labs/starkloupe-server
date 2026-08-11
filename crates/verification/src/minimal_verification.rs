@@ -2,8 +2,8 @@ use crate::db::{
     fetch_verified_classes, insert_class_hash_profiles, insert_contract_class,
     insert_verification_request, insert_verification_status, update_verification_request,
 };
+use crate::gcs::upload_class_to_gcs;
 use crate::manifest::Manifest;
-use crate::s3::upload_class_to_s3;
 use crate::scarb::{build_with_scarb_for_profile, default_build_timeout};
 use crate::utils::{
     create_files_from_map, create_temp_directory, move_failed_verification_to_failed_tmp,
@@ -22,7 +22,7 @@ use walnut_shared::tuple_to_version_string;
 
 pub async fn initiate_minimal_verification(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     source_code: HashMap<String, String>,
     manifest: Manifest,
 ) -> Result<Uuid> {
@@ -49,12 +49,12 @@ pub async fn initiate_minimal_verification(
     }
 
     let db_pool_clone = db_pool.clone();
-    let s3_client_clone = s3_client.clone();
+    let gcs_client_clone = gcs_client.clone();
 
     tokio::spawn(async move {
         match verify(
             &db_pool_clone,
-            &s3_client_clone,
+            &gcs_client_clone,
             verification_request_id,
             source_code,
             manifest,
@@ -141,7 +141,7 @@ pub async fn initiate_minimal_verification(
 
 async fn verify(
     db_pool: &Pool<Postgres>,
-    s3_client: &aws_sdk_s3::Client,
+    gcs_client: &google_cloud_storage::client::Storage,
     verification_id: Uuid,
     mut source_code: HashMap<String, String>,
     manifest: Manifest,
@@ -271,11 +271,12 @@ async fn verify(
         }
         return Err(error);
     }
-    // Database and S3 operations are now performed after all class_hash values are collected.
+    // Database and GCS operations are now performed after all class_hash values are collected.
     for class_hash in classes_to_verify_map.keys() {
         if let Some((contract_class, _inline_class_hash)) = classes_to_verify_map.get(class_hash) {
             remove_walnut_debug_from_scarb(&mut source_code);
-            upload_class_to_s3(s3_client, class_hash, contract_class, &None, &source_code).await?;
+            upload_class_to_gcs(gcs_client, class_hash, contract_class, &None, &source_code)
+                .await?;
             insert_contract_class(db_pool, class_hash, true, true, true, None).await?;
         };
     }

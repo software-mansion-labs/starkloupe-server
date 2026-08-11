@@ -1,6 +1,6 @@
-use aws_sdk_s3::Client;
 use chrono::Utc;
 use clokwerk::{AsyncScheduler, TimeUnits};
+use google_cloud_storage::client::Storage;
 use std::env::consts::ARCH;
 use std::fs;
 use std::fs::File;
@@ -14,11 +14,11 @@ use verification::scarb_and_dojo_download_scheduler::{
     check_periodically_scarb_updates, check_periodically_sozo_updates,
 };
 
-pub async fn download_scarb_and_sozo_binaries_from_s3(
-    s3_client: &Client,
+pub async fn download_scarb_and_sozo_binaries_from_gcs(
+    gcs_client: &Storage,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let architecture = ARCH;
-    let s3_folder = match architecture {
+    let gcs_folder = match architecture {
         "x86_64" => "x86_64",
         "aarch64" | "arm" => "arm64",
         _ => {
@@ -28,47 +28,55 @@ pub async fn download_scarb_and_sozo_binaries_from_s3(
             )))
         }
     };
-    download_binary(s3_client, format!("sozo/{s3_folder}/sozo_v1.0.1").as_str()).await?;
-    download_binary(s3_client, format!("sozo/{s3_folder}/sozo_v1.0.12").as_str()).await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v_2_6_3").as_str(),
+        gcs_client,
+        format!("sozo/{gcs_folder}/sozo_v1.0.1").as_str(),
     )
     .await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v_2_6_4").as_str(),
+        gcs_client,
+        format!("sozo/{gcs_folder}/sozo_v1.0.12").as_str(),
     )
     .await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v_2_7_0").as_str(),
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v_2_6_3").as_str(),
     )
     .await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v2.8.2").as_str(),
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v_2_6_4").as_str(),
     )
     .await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v2.8.4").as_str(),
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v_2_7_0").as_str(),
     )
     .await?;
     download_binary(
-        s3_client,
-        format!("scarb/{s3_folder}/scarb_cairo_v2.8.5").as_str(),
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v2.8.2").as_str(),
+    )
+    .await?;
+    download_binary(
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v2.8.4").as_str(),
+    )
+    .await?;
+    download_binary(
+        gcs_client,
+        format!("scarb/{gcs_folder}/scarb_cairo_v2.8.5").as_str(),
     )
     .await?;
     Ok(())
 }
 
-// downloads the binary from the S3 bucket and saves it to the local directory, gives the executable permissions
+// downloads the binary from the GCS bucket and saves it to the local directory, gives the executable permissions
 async fn download_binary(
-    s3_client: &Client,
+    gcs_client: &Storage,
     object_key: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bucket_name = std::env::var("BINARIES_S3_BUCKET_NAME").unwrap_or("./binaries".to_string());
+    let bucket_name = std::env::var("BINARIES_GCS_BUCKET_NAME").unwrap_or("./binaries".to_string());
     let binaries_save_directory_path =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
     let local_file_path = format!(
@@ -87,25 +95,19 @@ async fn download_binary(
     }
     info!("Downloading object: {}/{}", bucket_name, object_key);
 
-    // Fetch the object from the S3 bucket
-    let resp = match s3_client
-        .get_object()
-        .bucket(bucket_name)
-        .key(object_key)
-        .send()
-        .await
-    {
+    // Fetch the object from the GCS bucket
+    let bucket = format!("projects/_/buckets/{bucket_name}");
+    let mut resp = match gcs_client.read_object(bucket, object_key).send().await {
         Ok(resp) => resp,
         Err(err) => {
-            // If the object simply isn't in the bucket (404 NoSuchKey), don't crash the
+            // If the object simply isn't in the bucket (404), don't crash the
             // server — just log it and skip this binary. Other errors (auth, network,
-            // wrong region/endpoint) still bubble up, since those mean S3 is misconfigured.
-            if err
-                .as_service_error()
-                .map(|e| e.is_no_such_key())
-                .unwrap_or(false)
-            {
-                warn!("Binary not found in S3 (skipping download): {}", object_key);
+            // misconfigured bucket) still bubble up, since those mean GCS is misconfigured.
+            if err.http_status_code() == Some(404) {
+                warn!(
+                    "Binary not found in GCS (skipping download): {}",
+                    object_key
+                );
                 return Ok(());
             }
             return Err(err.into());
@@ -119,8 +121,11 @@ async fn download_binary(
         .unwrap_or_else(|_| panic!("Failed to create file: {}", local_file_path));
 
     // Stream the object content to the file
-    let data = resp.body.collect().await?;
-    file.write_all(&data.into_bytes())
+    let mut data = Vec::new();
+    while let Some(chunk) = resp.next().await.transpose()? {
+        data.extend_from_slice(&chunk);
+    }
+    file.write_all(&data)
         .expect("Failed to write object data to file");
 
     let metadata = fs::metadata(&local_file_path)?;

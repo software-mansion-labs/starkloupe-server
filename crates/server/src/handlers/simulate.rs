@@ -156,7 +156,7 @@ async fn run_simulation_with_cache(
     // Run simulation
     match simulate_by_calldata(
         db_pool,
-        &state.s3_client,
+        &state.gcs_client,
         simulation_args,
         state.voyager_client.as_ref(),
         Some(&state.external_class_cache),
@@ -287,7 +287,7 @@ async fn handle_tx_hash_simulation(
 
     match simulate_transaction_by_hash(
         db_pool,
-        &state.s3_client,
+        &state.gcs_client,
         Some(starknet_rpc_url),
         None,
         &args.tx_hash,
@@ -427,7 +427,7 @@ pub async fn simulate_transaction_by_hash_handler(
 
                 match simulate_transaction_by_hash(
                     db_pool,
-                    &state.s3_client,
+                    &state.gcs_client,
                     starknet_rpc_url,
                     ethereum_rpc_url,
                     &tx_hash,
