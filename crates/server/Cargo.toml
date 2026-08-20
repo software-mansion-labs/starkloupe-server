@@ -38,6 +38,7 @@ cairo-vm.workspace = true
 scarb-api.workspace = true
 cairo-lang-starknet-classes.workspace = true
 anyhow.workspace = true
+lazy-regex.workspace = true
 walnut-shared.workspace = true
 data-decoder.workspace = true
 verification.workspace = true

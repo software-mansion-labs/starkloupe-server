@@ -8871,6 +8871,7 @@ dependencies = [
  "futures",
  "internal-tracing",
  "jsonwebtoken 9.2.0",
+ "lazy-regex",
  "moka",
  "num-bigint",
  "num-traits",
