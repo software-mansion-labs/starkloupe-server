@@ -16,7 +16,6 @@ pub async fn send_notification_tx_id(
 
     let _ = send_telegram_notification(&message).await;
     let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }
@@ -35,7 +34,6 @@ pub async fn send_notification_custom_rpc(
 
     let _ = send_telegram_notification(&message).await;
     let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }
@@ -92,9 +90,6 @@ pub async fn send_notification_calldata(
 
     let _ = send_telegram_notification(&message).await;
     let _ = send_grafana_annotation(&calldata, &message, &chain_id_str, "simulation").await;
-    let _ =
-        send_google_sheets_notification(&calldata_string, &message, &chain_id_str, "simulation")
-            .await;
 
     Ok(())
 }
@@ -204,48 +199,6 @@ async fn send_grafana_annotation(
         }
         _ => {
             debug!("Grafana annotation added successfully");
-        }
-    }
-    Ok(())
-}
-
-async fn send_google_sheets_notification(
-    tx_id: &str,
-    message: &str,
-    chain_id: &str,
-    notification_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let webhook_url = std::env::var("GOOGLE_SHEETS_WEBHOOK_URL")?;
-
-    if webhook_url.is_empty() {
-        error!("Google Sheets webhook URL is not set, skipping.");
-        return Ok(());
-    }
-
-    let timestamp = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
-
-    let payload = serde_json::json!({
-        "tx_id": tx_id,
-        "chain_id": chain_id,
-        "type": notification_type,
-        "timestamp": timestamp,
-        "link": message
-    });
-
-    let client = Client::new();
-    let res = client.post(&webhook_url).json(&payload).send().await;
-
-    match res {
-        Ok(res) if !res.status().is_success() => {
-            let status = res.status();
-            let err = res.text().await.unwrap_or_default();
-            error!("Google Sheets error. Status: {status}. Error: {err}");
-        }
-        Err(e) => error!("Google Sheets request failed: {e}"),
-        _ => {
-            debug!("Google Sheets row added successfully");
         }
     }
     Ok(())
