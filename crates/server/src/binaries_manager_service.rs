@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::spawn;
 use tracing::{error, info, warn};
 use verification::scarb_and_dojo_download_scheduler::{
-    check_periodically_scarb_updates, check_periodically_sozo_updates,
+    check_periodically_scarb_updates, check_periodically_sozo_updates, BucketPublisher, Tool,
 };
 
 /// The folder the bucket keys this machine's binaries under.
@@ -49,6 +49,32 @@ fn local_path_for(
         "{}/{}/{}",
         binaries_save_directory_path, tool, name
     ))
+}
+
+/// The sidecar the bucket carries beside each tool's objects: which release
+/// built every object in the folder, and which Cairo version each Scarb release
+/// ships. It rides the same keys as the binaries, so it is downloaded like one
+/// and lands beside them.
+///
+/// That second map is what the hourly release check runs on, and it is not a
+/// convenience. A Scarb release does not say which Cairo version it carries, and
+/// the only thing that knows is the binary inside it — so a release missing from
+/// the map has to be downloaded, unpacked and run before the check can even
+/// decide whether it was needed. The map is every answer anyone has already paid
+/// for (see crates/verification/src/scarb_and_dojo_download_scheduler.rs).
+///
+/// Unlike a binary it changes — every backfill, and every check that installs
+/// something, adds to it — which is why it is the one object fetched again on
+/// every boot instead of kept from an earlier one. A copy left over from the day
+/// the disk was created would send the check off to re-fetch tens of releases to
+/// learn what the bucket already knows.
+const VERSIONS_SIDECAR_NAME: &str = "versions.json";
+
+fn is_versions_sidecar(object_key: &str) -> bool {
+    object_key
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name == VERSIONS_SIDECAR_NAME)
 }
 
 /// Every object under a prefix, following pagination.
@@ -177,7 +203,7 @@ async fn download_binary(
     };
 
     // Check if the file already exists
-    if Path::new(&local_file_path).exists() {
+    if !is_versions_sidecar(object_key) && Path::new(&local_file_path).exists() {
         info!(
             "File already exists (skipping download): {}",
             local_file_path
@@ -235,22 +261,47 @@ async fn download_binary(
     Ok(true)
 }
 
-pub async fn start_github_scarb_binaries_downloader_scheduler() {
+/// Where a check publishes what it installed, or `None` when this machine has
+/// nowhere to publish to.
+///
+/// A missing bucket name is not an error here: the check still installs what the
+/// machine needs, it just keeps it to itself. Uploading into a bucket called
+/// "./binaries" — the fallback the download path uses — would be worse than not
+/// uploading at all.
+fn bucket_publisher(s3_client: &Client) -> Option<BucketPublisher> {
+    let bucket = match std::env::var("BINARIES_S3_BUCKET_NAME") {
+        Ok(bucket) if !bucket.is_empty() => bucket,
+        _ => {
+            warn!("BINARIES_S3_BUCKET_NAME is not set; new toolchains will not be uploaded");
+            return None;
+        }
+    };
+    let arch_folder = match bucket_arch_folder() {
+        Ok(arch_folder) => arch_folder.to_string(),
+        Err(err) => {
+            warn!("Not uploading new toolchains: {}", err);
+            return None;
+        }
+    };
+    Some(BucketPublisher::new(s3_client.clone(), bucket, arch_folder))
+}
+
+pub async fn start_github_scarb_binaries_downloader_scheduler(s3_client: Client) {
     start_downloader_scheduler(
-        "scarb".to_string(),
+        Tool::Scarb,
         "SCARB_GITHUB_REPO_NAME".to_string(),
-        "SCARB_LATEST_VERSION_FILE_NAME".to_string(),
         "SCARB_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
+        s3_client,
     )
     .await;
 }
 
-pub async fn start_github_dojo_binaries_downloader_scheduler() {
+pub async fn start_github_dojo_binaries_downloader_scheduler(s3_client: Client) {
     start_downloader_scheduler(
-        "sozo".to_string(),
+        Tool::Sozo,
         "DOJO_GITHUB_REPO_NAME".to_string(),
-        "DOJO_LATEST_VERSION_FILE_NAME".to_string(),
         "DOJO_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
+        s3_client,
     )
     .await;
 }
@@ -258,10 +309,10 @@ pub async fn start_github_dojo_binaries_downloader_scheduler() {
 // 1. Runs immidiately after app startup
 // 2. Then runs every X minutes (60 by default)
 pub async fn start_downloader_scheduler(
-    tool_name: String,
+    tool: Tool,
     repo_env_var: String,
-    versioning_file_name_env_var: String,
     interval_env_var: String,
+    s3_client: Client,
 ) {
     let interval: u32 = std::env::var(&interval_env_var)
         .unwrap_or_else(|_| "60".to_string())
@@ -271,27 +322,17 @@ pub async fn start_downloader_scheduler(
     let mut scheduler = AsyncScheduler::with_tz(Utc);
     info!(
         "Starting {} binaries downloader scheduler. Checking every: {} minutes",
-        &tool_name, &interval
+        tool.as_str(),
+        &interval
     );
 
-    run_task(
-        tool_name.as_ref(),
-        repo_env_var.as_ref(),
-        versioning_file_name_env_var.as_ref(),
-    )
-    .await;
+    run_task(tool, repo_env_var.clone(), s3_client.clone()).await;
 
     scheduler.every(interval.minutes()).run(move || {
-        let name = tool_name.clone();
         let repo_env_var = repo_env_var.clone();
-        let versioning_file_name_env_var = versioning_file_name_env_var.clone();
+        let s3_client = s3_client.clone();
         async move {
-            run_task(
-                name.as_ref(),
-                repo_env_var.as_ref(),
-                versioning_file_name_env_var.as_ref(),
-            )
-            .await;
+            run_task(tool, repo_env_var, s3_client).await;
         }
     });
 
@@ -303,10 +344,10 @@ pub async fn start_downloader_scheduler(
     });
 }
 
-async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_var: &str) {
-    info!("Starting {} update check", tool_name);
+async fn run_task(tool: Tool, repo_env_var: String, s3_client: Client) {
+    info!("Starting {} update check", tool.as_str());
 
-    let repo = match std::env::var(repo_env_var) {
+    let repo = match std::env::var(&repo_env_var) {
         Ok(value) => value,
         Err(_) => {
             error!("Environment variable {} is not set", repo_env_var);
@@ -314,39 +355,21 @@ async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_
         }
     };
 
-    let versioning_file_name = match std::env::var(versioning_file_name_env_var) {
-        Ok(value) => value,
-        Err(_) => {
-            error!(
-                "Environment variable {} is not set",
-                versioning_file_name_env_var
-            );
-            return;
-        }
-    };
-
-    let res = match tool_name {
-        "scarb" => {
-            check_periodically_scarb_updates(repo.as_ref(), versioning_file_name.as_ref()).await
-        }
-        "sozo" => {
-            check_periodically_sozo_updates(repo.as_ref(), versioning_file_name.as_ref()).await
-        }
-        _ => {
-            error!("Unknown tool name: {}", &tool_name);
-            return;
-        }
+    let publisher = bucket_publisher(&s3_client);
+    let res = match tool {
+        Tool::Scarb => check_periodically_scarb_updates(repo.as_ref(), publisher.as_ref()).await,
+        Tool::Sozo => check_periodically_sozo_updates(repo.as_ref(), publisher.as_ref()).await,
     };
 
     match res {
-        Ok(_) => info!("Finished {} update check", tool_name),
-        Err(err) => error!("Error in {} update check: {:?}", tool_name, err),
+        Ok(_) => info!("Finished {} update check", tool.as_str()),
+        Err(err) => error!("Error in {} update check: {:?}", tool.as_str(), err),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::local_path_for;
+    use super::{is_versions_sidecar, local_path_for};
 
     #[test]
     fn maps_a_bucket_key_to_the_path_the_verifier_reads() {
@@ -381,6 +404,16 @@ mod tests {
             None
         );
         assert_eq!(local_path_for("", "x86_64", "/binaries"), None);
+    }
+
+    #[test]
+    fn recognises_the_sidecar_that_has_to_be_refetched_every_boot() {
+        assert!(is_versions_sidecar("scarb/x86_64/versions.json"));
+        assert!(is_versions_sidecar("sozo/arm64/versions.json"));
+        assert!(!is_versions_sidecar("scarb/x86_64/scarb_cairo_v2.10.1"));
+        // Whole segment, not a suffix: a toolchain is immutable and re-fetching
+        // one on every boot would be tens of megabytes for nothing.
+        assert!(!is_versions_sidecar("scarb/x86_64/old-versions.json"));
     }
 
     #[test]

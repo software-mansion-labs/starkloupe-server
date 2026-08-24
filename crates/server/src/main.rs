@@ -115,8 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Download scarb and sozo binaries
             download_scarb_and_sozo_binaries_from_s3(&s3_client).await?;
-            start_github_scarb_binaries_downloader_scheduler().await;
-            start_github_dojo_binaries_downloader_scheduler().await;
+            start_github_scarb_binaries_downloader_scheduler(s3_client.clone()).await;
+            start_github_dojo_binaries_downloader_scheduler(s3_client.clone()).await;
 
             // Initialize simulation cache with configurable settings from environment
             let cache_capacity = std::env::var("CACHE_CAPACITY")
