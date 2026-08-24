@@ -5,6 +5,7 @@ mod appsmith_api;
 mod auth;
 mod binaries_manager_service;
 mod calldata_encoder;
+mod cloud_logging;
 mod handlers;
 mod notification_service;
 mod services;
@@ -61,36 +62,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::var("WALNUT_ADMIN_TOKEN").expect("WALNUT_ADMIN_TOKEN env var must be set");
     // Refuse to start without the RPC endpoints configured.
     walnut_shared::check_required_env();
-    // SENTRY CONFIGURATION
-    // _guard must be defined on top level so Sentry will catch errors
-    // Also Tokio must be initialized manually (not with attribute)
-    let mut _guard;
-    // Start Sentry only in RELEASE build, and only if a DSN is configured.
-    if !cfg!(debug_assertions) {
-        if let Ok(dsn) = std::env::var("SENTRY_DSN") {
-            _guard = sentry::init((
-                dsn,
-                sentry::ClientOptions {
-                    release: sentry::release_name!(),
-                    ..sentry::ClientOptions::default()
-                },
-            ));
-        }
+    // Errors and panics go to Cloud Error Reporting, which reads them out of
+    // Cloud Logging rather than over a client of its own - so there is nothing
+    // to initialise beyond the log format and no DSN to configure. See
+    // cloud_logging for what the entries have to look like.
+    //
+    // Two output shapes, picked by build profile. A release build is the one
+    // running on the VM under the COS logging agent, and gets the JSON the agent
+    // parses into `jsonPayload`; a debug build gets the human-readable format,
+    // because reading JSON off a terminal during development is miserable.
+    let registry = tracing_subscriber::registry().with(EnvFilter::new(
+        std::env::var("LOG_LEVEL").unwrap_or("INFO".to_string()),
+    )); // Set the maximum log level to INFO
+
+    if cfg!(debug_assertions) {
+        registry.with(fmt::layer()).init();
+    } else {
+        registry.with(cloud_logging::layer()).init();
     }
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(sentry_tracing::layer()) // Logging to stdout
-        .with(EnvFilter::new(
-            std::env::var("LOG_LEVEL").unwrap_or("INFO".to_string()),
-        )) // Set the maximum log level to INFO
-        .init();
+    // Before the runtime starts, so a panic anywhere after this point is
+    // reported. This is the position sentry::init used to occupy, for the same
+    // reason.
+    cloud_logging::init_panic_hook();
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async {
+            // Needs the runtime (it asks the metadata server), so it cannot sit
+            // with the rest of the logging setup above.
+            cloud_logging::init_from_metadata().await;
+
             let db_addr = std::env::var("DATABASE_URL").unwrap_or("postgres://".to_string());
             let db_pool = PgPoolOptions::new()
                 .max_connections(30)
@@ -220,7 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get(|| async { axum::response::Json(ApiDoc::openapi()) }),
                 )
                 .layer(tower_http::trace::TraceLayer::new_for_http())
-                .layer(sentry_tower::NewSentryLayer::<axum::http::Request<_>>::new_from_top())
+                .layer(axum::middleware::from_fn(cloud_logging::record_request))
                 .layer(prometheus_layer)
                 .route("/_ah/warmup", get(|| async { "OK" }))
                 .layer(CorsLayer::permissive());
