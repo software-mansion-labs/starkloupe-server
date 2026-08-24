@@ -25,8 +25,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgres://postgres:postgres@walnut_postgres:5432/walnutdev
-      - TELEGRAM_BOT_API_KEY=
-      - TELEGRAM_WALNUT_NOTIFICATIONS_CHAT_ID=
+      - SLACK_WEBHOOK_URL=
       - UNIVERSAL_SIERRA_COMPILER=./universal-sierra-compiler
       - AWS_ACCESS_KEY_ID=
       - AWS_SECRET_ACCESS_KEY=
