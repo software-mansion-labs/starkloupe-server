@@ -104,41 +104,31 @@ async fn send_slack_notification(message: &str) -> Result<(), Box<dyn std::error
 
     let client = Client::new();
 
-    // Split the message into chunks of at most 3000 characters
-    let messages = message
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(3000)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<String>>();
+    let payload = serde_json::json!({
+        "text": message,
+    });
 
-    for message in messages.iter() {
-        let payload = serde_json::json!({
-            "text": message,
-        });
+    let res = client.post(&slack_webhook_url).json(&payload).send().await;
 
-        let res = client.post(&slack_webhook_url).json(&payload).send().await;
-
-        match res {
-            Ok(res) => {
-                if !res.status().is_success() {
-                    let status = res.status();
-                    let error_text = res
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    error!(
-                        "Failed to send slack notification. HTTP Status: {}. Message: {}. Error: {}",
-                        status, message, error_text
-                    );
-                }
-            }
-            Err(e) => {
+    match res {
+        Ok(res) => {
+            if !res.status().is_success() {
+                let status = res.status();
+                let error_text = res
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
                 error!(
-                    "Failed to send slack notification. Message: {}. Error: {}",
-                    message, e
+                    "Failed to send slack notification. HTTP Status: {}. Message: {}. Error: {}",
+                    status, message, error_text
                 );
             }
+        }
+        Err(e) => {
+            error!(
+                "Failed to send slack notification. Message: {}. Error: {}",
+                message, e
+            );
         }
     }
     Ok(())
