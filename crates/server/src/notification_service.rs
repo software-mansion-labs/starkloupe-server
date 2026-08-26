@@ -14,9 +14,8 @@ pub async fn send_notification_tx_id(
         walnut_app_url()
     );
 
-    let _ = send_telegram_notification(&message).await;
+    let _ = send_slack_notification(&message).await;
     let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }
@@ -33,9 +32,8 @@ pub async fn send_notification_custom_rpc(
     );
     let chain_id = "custom_rpc";
 
-    let _ = send_telegram_notification(&message).await;
+    let _ = send_slack_notification(&message).await;
     let _ = send_grafana_annotation(tx_id, &message, chain_id, "transaction").await;
-    let _ = send_google_sheets_notification(tx_id, &message, chain_id, "transaction").await;
 
     Ok(())
 }
@@ -90,69 +88,47 @@ pub async fn send_notification_calldata(
     let message = format!("New transaction [simulation]: {}", url);
     let chain_id_str = chain_id_to_url_format(&simulation_args.chain_id);
 
-    let _ = send_telegram_notification(&message).await;
+    let _ = send_slack_notification(&message).await;
     let _ = send_grafana_annotation(&calldata, &message, &chain_id_str, "simulation").await;
-    let _ =
-        send_google_sheets_notification(&calldata_string, &message, &chain_id_str, "simulation")
-            .await;
 
     Ok(())
 }
 
-async fn send_telegram_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let telegram_bot_api_key = std::env::var("TELEGRAM_BOT_API_KEY")?;
-    let telegram_walnut_notifications_chat_id =
-        std::env::var("TELEGRAM_WALNUT_NOTIFICATIONS_CHAT_ID")?;
+async fn send_slack_notification(message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let slack_webhook_url = std::env::var("SLACK_WEBHOOK_URL")?;
 
-    if telegram_bot_api_key.is_empty() || telegram_walnut_notifications_chat_id.is_empty() {
-        error!("Telegram API key or chat ID is not set, skipping notification.");
+    if slack_webhook_url.is_empty() {
+        error!("Slack webhook URL is not set, skipping notification.");
         return Ok(());
     }
-    let telegram_bot_api_url: String =
-        format!("https://api.telegram.org/bot{telegram_bot_api_key}/sendMessage");
 
     let client = Client::new();
 
-    // Split the message into chunks of at most 4096 characters
-    let messages = message
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(4096)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<String>>();
+    let payload = serde_json::json!({
+        "text": message,
+    });
 
-    for message in messages.iter() {
-        let payload = serde_json::json!({
-            "chat_id": telegram_walnut_notifications_chat_id,
-            "text": message,
-        });
+    let res = client.post(&slack_webhook_url).json(&payload).send().await;
 
-        let res = client
-            .post(&telegram_bot_api_url)
-            .json(&payload)
-            .send()
-            .await;
-
-        match res {
-            Ok(res) => {
-                if !res.status().is_success() {
-                    let status = res.status();
-                    let error_text = res
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    error!(
-                        "Failed to send telegram notification. HTTP Status: {}. Message: {}. Error: {}",
-                        status, message, error_text
-                    );
-                }
-            }
-            Err(e) => {
+    match res {
+        Ok(res) => {
+            if !res.status().is_success() {
+                let status = res.status();
+                let error_text = res
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
                 error!(
-                    "Failed to send telegram notification. Message: {}. Error: {}",
-                    message, e
+                    "Failed to send slack notification. HTTP Status: {}. Message: {}. Error: {}",
+                    status, message, error_text
                 );
             }
+        }
+        Err(e) => {
+            error!(
+                "Failed to send slack notification. Message: {}. Error: {}",
+                message, e
+            );
         }
     }
     Ok(())
@@ -204,48 +180,6 @@ async fn send_grafana_annotation(
         }
         _ => {
             debug!("Grafana annotation added successfully");
-        }
-    }
-    Ok(())
-}
-
-async fn send_google_sheets_notification(
-    tx_id: &str,
-    message: &str,
-    chain_id: &str,
-    notification_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let webhook_url = std::env::var("GOOGLE_SHEETS_WEBHOOK_URL")?;
-
-    if webhook_url.is_empty() {
-        error!("Google Sheets webhook URL is not set, skipping.");
-        return Ok(());
-    }
-
-    let timestamp = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
-
-    let payload = serde_json::json!({
-        "tx_id": tx_id,
-        "chain_id": chain_id,
-        "type": notification_type,
-        "timestamp": timestamp,
-        "link": message
-    });
-
-    let client = Client::new();
-    let res = client.post(&webhook_url).json(&payload).send().await;
-
-    match res {
-        Ok(res) if !res.status().is_success() => {
-            let status = res.status();
-            let err = res.text().await.unwrap_or_default();
-            error!("Google Sheets error. Status: {status}. Error: {err}");
-        }
-        Err(e) => error!("Google Sheets request failed: {e}"),
-        _ => {
-            debug!("Google Sheets row added successfully");
         }
     }
     Ok(())

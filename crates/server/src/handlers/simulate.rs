@@ -149,7 +149,7 @@ async fn run_simulation_with_cache(
     // Notification
     if !skip_tracking {
         if let Err(err) = send_notification_calldata(&simulation_args).await {
-            error!("Failed to send Telegram notification. Error: {:?}", err);
+            error!("Failed to send Slack notification. Error: {:?}", err);
         }
     }
 
@@ -274,7 +274,7 @@ async fn handle_tx_hash_simulation(
         if let Err(err) =
             send_notification_custom_rpc(args.tx_hash.as_str(), args.rpc_url.as_str()).await
         {
-            error!("Failed to send Telegram notification. Error: {:?}", err);
+            error!("Failed to send Slack notification. Error: {:?}", err);
         }
     }
 
@@ -394,7 +394,7 @@ pub async fn simulate_transaction_by_hash_handler(
     // Notification is sent before the blocking task (matches original behavior)
     if !should_skip_tracking(&query_params.skip_tracking) {
         if let Err(err) = send_notification_tx_id(tx_hash.as_str(), chain_id.as_str()).await {
-            error!("Failed to send Telegram notification. Error: {:?}", err);
+            error!("Failed to send Slack notification. Error: {:?}", err);
         }
     }
 
