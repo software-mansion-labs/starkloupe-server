@@ -40,7 +40,6 @@ aws-smithy-types.workspace = true
 hex.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
-sentry = "0.24"
 cairo-annotations.workspace = true
 tokio-util.workspace = true
 async-tar.workspace = true
