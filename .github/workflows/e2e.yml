@@ -1,0 +1,74 @@
+name: E2E
+
+# Replays real mainnet transactions through the simulation pipeline. This is the
+# only coverage of the full path — fork state over RPC, blockifier/cheatnet
+# execution, trace collection and serialisation — so it guards the blast radius of
+# a starknet-foundry or blockifier bump.
+#
+# Requires the STARKNET_MAINNET_RPC_URL secret, pointing at a provider that serves
+# JSON-RPC spec 0.10 (older specs omit block header commitments that starknet-rust
+# needs). The job is skipped when the secret is absent so forks are not failed by
+# a credential they cannot have.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SQLX_OFFLINE: "true"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  simulate:
+    name: simulate mainnet transactions
+    runs-on: ubuntu-latest
+    if: ${{ vars.E2E_ENABLED != 'false' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for RPC secret
+        id: guard
+        run: |
+          if [ -z "${{ secrets.STARKNET_MAINNET_RPC_URL }}" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::STARKNET_MAINNET_RPC_URL is not set — skipping the e2e run."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Same system packages the Dockerfile installs to build the workspace.
+      - name: Install system dependencies
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config
+
+      # Channel comes from rust-toolchain.toml; this also caches the build.
+      - name: Install Rust toolchain
+        if: steps.guard.outputs.run == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      # The same compose file developers use locally, so a CI failure reproduces
+      # verbatim with `make e2e-deps`.
+      - name: Start Postgres and MinIO
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          docker compose -f local/e2e-docker-compose.yaml up -d --wait postgres minio
+          docker compose -f local/e2e-docker-compose.yaml run --rm createbuckets
+
+      - name: Run e2e simulation test
+        if: steps.guard.outputs.run == 'true'
+        env:
+          E2E_RPC_URL: ${{ secrets.STARKNET_MAINNET_RPC_URL }}
+          E2E_ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_MAINNET_RPC_URL }}
+        run: ./scripts/e2e-test.sh
+
+      - name: Dump service logs on failure
+        if: failure() && steps.guard.outputs.run == 'true'
+        run: docker compose -f local/e2e-docker-compose.yaml logs --tail=100
