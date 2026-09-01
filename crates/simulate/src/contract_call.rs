@@ -1,10 +1,8 @@
 use blockifier::execution::entry_point::CallEntryPoint;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use cairo_vm::vm::trace::trace_entry::RelocatedTraceEntry;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::{
-    CallResult, CallSuccess,
-};
-use cheatnet::trace_data::CallTrace;
+use cheatnet::runtime_extensions::outer_call_runtime_extension::rpc::CallSuccess;
+use cheatnet::trace_data::{CallTrace, TraceDataCallResult};
 use data_decoder::{calldata_decoder::decode_calldata, DecodedValue};
 use internal_tracing::ContractCallDebuggerData;
 use serde::Serialize;
@@ -24,7 +22,7 @@ pub struct ContractCall {
     pub function_call_id: Option<u32>,
 
     pub entry_point: CallEntryPoint,
-    pub result: CallResult,
+    pub result: TraceDataCallResult,
     pub vm_trace: Option<Vec<RelocatedTraceEntry>>,
     pub vm_memory: Option<Vec<Option<Felt>>>,
 

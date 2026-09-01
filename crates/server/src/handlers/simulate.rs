@@ -1,3 +1,7 @@
+// `TransactionSimulationError` is large by nature; the `simulate` crate makes the
+// same allowance at its crate root.
+#![allow(clippy::result_large_err)]
+
 use crate::app_state::AppState;
 use crate::calldata_encoder;
 use crate::handlers::common::{

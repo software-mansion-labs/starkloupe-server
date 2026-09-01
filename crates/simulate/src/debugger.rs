@@ -13,7 +13,7 @@ use crate::SimulationArgs;
 use crate::TransactionSimulationError;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+use cheatnet::runtime_extensions::outer_call_runtime_extension::execution::entry_point::{
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
 use cheatnet::state::CheatnetState;

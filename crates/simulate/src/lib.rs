@@ -18,7 +18,9 @@ pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
-use blockifier::execution::errors::{EntryPointExecutionError, PreExecutionError};
+use blockifier::execution::errors::{
+    AnnotatedEntryPointExecutionError, EntryPointExecutionError, PreExecutionError,
+};
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
@@ -333,6 +335,12 @@ impl From<EntryPointExecutionError> for TransactionSimulationError {
     }
 }
 
+impl From<AnnotatedEntryPointExecutionError> for TransactionSimulationError {
+    fn from(err: AnnotatedEntryPointExecutionError) -> Self {
+        TransactionSimulationError::EntryPointExecutionError(err.into_unannotated())
+    }
+}
+
 // Helper function to convert EntryPointExecutionError with block number context
 pub fn convert_entry_point_error_with_block(
     err: EntryPointExecutionError,
@@ -496,6 +504,74 @@ impl TryFrom<EStarknetL1L2Event> for L1HandlerTransaction {
             _ => Err(StarknetApiError::InvalidResourceMappingInitializer(
                 "Invalid event variant".to_string(),
             )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod error_conversion_tests {
+    use super::*;
+    use blockifier::execution::contract_class::TrackedResource;
+    use starknet_api::core::ContractAddress;
+    use starknet_api::core::PatriciaKey;
+
+    fn some_address() -> ContractAddress {
+        ContractAddress(PatriciaKey::try_from(Felt::from(0x1234_u32)).unwrap())
+    }
+
+    fn annotate(err: EntryPointExecutionError) -> AnnotatedEntryPointExecutionError {
+        err.annotated(TrackedResource::CairoSteps, false)
+    }
+
+    #[test]
+    fn uninitialized_storage_address_carries_block_number() {
+        let address = some_address();
+        let err = EntryPointExecutionError::PreExecutionError(
+            PreExecutionError::UninitializedStorageAddress(address),
+        );
+
+        let converted = convert_entry_point_error_with_block(err, 42);
+
+        match converted {
+            TransactionSimulationError::UninitializedStorageAddress(got, block) => {
+                assert_eq!(got, address);
+                assert_eq!(block, 42);
+            }
+            other => panic!("expected UninitializedStorageAddress, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_pre_execution_errors_pass_through() {
+        let err = EntryPointExecutionError::PreExecutionError(
+            PreExecutionError::InsufficientEntryPointGas,
+        );
+
+        let converted = convert_entry_point_error_with_block(err, 42);
+
+        assert!(matches!(
+            converted,
+            TransactionSimulationError::EntryPointExecutionError(_)
+        ));
+    }
+
+    /// The annotated error type is what `execute_call_entry_point` returns; converting it
+    /// must unwrap to the same plain error the rest of the crate reports on.
+    #[test]
+    fn annotated_error_converts_by_unwrapping() {
+        let annotated = annotate(EntryPointExecutionError::PreExecutionError(
+            PreExecutionError::UninitializedStorageAddress(some_address()),
+        ));
+
+        let converted: TransactionSimulationError = annotated.into();
+
+        match converted {
+            TransactionSimulationError::EntryPointExecutionError(
+                EntryPointExecutionError::PreExecutionError(
+                    PreExecutionError::UninitializedStorageAddress(got),
+                ),
+            ) => assert_eq!(got, some_address()),
+            other => panic!("expected the unwrapped inner error, got {other:?}"),
         }
     }
 }
