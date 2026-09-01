@@ -47,10 +47,10 @@ use crate::SimulationArgs;
 use crate::SimulationInfo;
 use crate::TransactionSimulationError;
 use crate::TransactionSimulationResult;
-use blockifier::execution::errors::EntryPointExecutionError;
+use blockifier::execution::errors::AnnotatedEntryPointExecutionError;
 use blockifier::state::cached_state::CachedState;
 use blockifier::state::errors::StateError;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+use cheatnet::runtime_extensions::outer_call_runtime_extension::execution::entry_point::{
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
 use cheatnet::state::CheatnetState;
@@ -573,8 +573,8 @@ fn run_simulation(
                     trace_data_handled_by_revert_call: false,
                 },
             )
-            .map_err(|err: EntryPointExecutionError| {
-                convert_entry_point_error_with_block(err, block_number)
+            .map_err(|err: AnnotatedEntryPointExecutionError| {
+                convert_entry_point_error_with_block(err.into_unannotated(), block_number)
             })
         },
         &|call, state, cheatnet_state, ctx, _| {
@@ -589,8 +589,8 @@ fn run_simulation(
                     trace_data_handled_by_revert_call: false,
                 },
             )
-            .map_err(|err: EntryPointExecutionError| {
-                convert_entry_point_error_with_block(err, block_number)
+            .map_err(|err: AnnotatedEntryPointExecutionError| {
+                convert_entry_point_error_with_block(err.into_unannotated(), block_number)
             })
         },
     )?;
