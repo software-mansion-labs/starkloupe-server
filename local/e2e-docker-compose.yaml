@@ -1,8 +1,5 @@
 # Backing services for the end-to-end simulation test.
 #
-# The same file is used locally (`make e2e-deps`) and by the e2e CI workflow, so
-# a failure in CI can be reproduced verbatim on a laptop.
-#
 # Ports deliberately avoid the defaults: 1234 matches db-docker-compose.yaml, and
 # MinIO sits on 9010/9011 because 9000 is a common collision with other projects.
 name: walnut-e2e
