@@ -2164,7 +2164,7 @@ dependencies = [
 [[package]]
 name = "cairo-serde-macros"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2339,7 +2339,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 [[package]]
 name = "cheatnet"
 version = "0.60.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "bimap",
@@ -2652,7 +2652,7 @@ checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 [[package]]
 name = "conversions"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "blockifier",
@@ -3184,7 +3184,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 [[package]]
 name = "data-transformer"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "cairo-lang-diagnostics",
@@ -4260,7 +4260,7 @@ dependencies = [
 [[package]]
 name = "foundry-ui"
 version = "0.60.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "console 0.16.3",
@@ -7679,7 +7679,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "blockifier",
@@ -7989,7 +7989,7 @@ dependencies = [
 [[package]]
 name = "scarb-api"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "cairo-lang-starknet-classes",
@@ -8512,7 +8512,7 @@ dependencies = [
 [[package]]
 name = "shared"
 version = "0.1.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "anyhow",
  "cairo-vm",
@@ -10457,7 +10457,7 @@ checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 [[package]]
 name = "universal-sierra-compiler-api"
 version = "1.0.0"
-source = "git+https://github.com/software-mansion-labs/starknet-foundry-walnut?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
+source = "git+https://github.com/software-mansion-labs/starknet-foundry-starkloupe?rev=9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089#9ca70d9deab5dbf9dc7fcadd8c9b8a1757575089"
 dependencies = [
  "cairo-lang-casm",
  "cairo-lang-starknet-classes",
