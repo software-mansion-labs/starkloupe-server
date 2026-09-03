@@ -18,7 +18,7 @@ use blockifier::execution::entry_point::CallEntryPoint;
 use blockifier::execution::entry_point::CallType;
 use blockifier::execution::entry_point::EntryPointExecutionContext;
 use blockifier::execution::entry_point::SierraGasRevertTracker;
-use blockifier::execution::errors::EntryPointExecutionError;
+use blockifier::execution::errors::{AnnotatedEntryPointExecutionError, EntryPointExecutionError};
 use blockifier::fee::fee_checks::PostExecutionReport;
 use blockifier::fee::fee_utils::get_extended_vm_resources_cost;
 use blockifier::fee::receipt::TransactionReceipt;
@@ -31,11 +31,11 @@ use blockifier::state::cached_state::StateChanges;
 use blockifier::state::state_api::State;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::HasRelatedFeeType;
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::execution::entry_point::{
+use cheatnet::runtime_extensions::outer_call_runtime_extension::execution::entry_point::{
     execute_call_entry_point, ExecuteCallEntryPointExtraOptions,
 };
-use cheatnet::runtime_extensions::call_to_blockifier_runtime_extension::rpc::CallFailure;
 use cheatnet::state::CheatnetState;
+use cheatnet::trace_data::TraceDataCallFailure;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::calldata;
 use starknet_api::contract_class::EntryPointType;
@@ -205,12 +205,9 @@ pub fn execute_transaction_flows_with_executor<'a>(
             } else {
                 EntryPointType::External
             },
-            entry_point_selector: if tx_type == Some(TransactionType::L1Handler)
-                && ep_selector.is_some()
-            {
-                ep_selector.unwrap()
-            } else {
-                get_entrypoint_selector()
+            entry_point_selector: match ep_selector {
+                Some(selector) if tx_type == Some(TransactionType::L1Handler) => selector,
+                _ => get_entrypoint_selector(),
             },
             calldata: args.calldata.clone(),
             class_hash: None,
@@ -562,13 +559,13 @@ pub fn get_execution_result(
         if let Some(call) = contract_calls_map.get(&deepest_contract_call_id) {
             if let Err(failure) = &call.result {
                 match failure {
-                    CallFailure::Recoverable { panic_data } => {
+                    TraceDataCallFailure::Recoverable { panic_data } => {
                         let reason = felts_to_string(panic_data.as_slice());
                         Ok(ExecutionResult::Reverted {
                             reason: reason.trim().to_string(),
                         })
                     }
-                    CallFailure::Unrecoverable { msg } => {
+                    TraceDataCallFailure::Unrecoverable { msg } => {
                         let reason = msg.to_string().trim().to_string();
                         Ok(ExecutionResult::Reverted { reason })
                     }
@@ -637,8 +634,8 @@ fn execute_fee_transfer(
             trace_data_handled_by_revert_call: false,
         },
     )
-    .map_err(|err: EntryPointExecutionError| {
-        convert_entry_point_error_with_block(err, block_number)
+    .map_err(|err: AnnotatedEntryPointExecutionError| {
+        convert_entry_point_error_with_block(err.into_unannotated(), block_number)
     })?;
 
     Ok(execution_result)

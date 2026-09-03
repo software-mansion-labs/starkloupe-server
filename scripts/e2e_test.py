@@ -69,7 +69,9 @@ CASES = [
     # The same kind of revert, but reached through a Cairo 0 caller: the account
     # and the router are deprecated classes, so the failing Cairo 1 call is
     # classified by cheatnet's deprecated-syscall path rather than the ordinary
-    # one. The panic still has to decode into a readable reason.
+    # one. There the panic arrives as an Unrecoverable message - the VM error
+    # text of the enclosing Cairo 0 frame - rather than as panic data, so the
+    # decoded reason is embedded in that text instead of standing alone.
     {
         "name": "revert-via-cairo0",
         "tx": "0x30bd34100d440fd656982047bf67d1291463d548b67720d871f5a478c14b37d",
@@ -77,6 +79,7 @@ CASES = [
         "revert_reason": "Insufficient tokens received",
         "calls": 30,
         "failed": 4,
+        "recoverable": False,
     },
 ]
 
@@ -223,11 +226,15 @@ def check(case, payload):
     if status != case["status"]:
         raise CheckFailed(f"expected {case['status']}, got {status}")
 
+    # Substring, not equality: what has to hold is that the panic decoded into
+    # readable text. Whether that text stands alone or comes wrapped in the
+    # frame description of a Cairo 0 caller is a formatting detail of the layer
+    # that raised it, and it moves with the blockifier/cheatnet version.
     if case["revert_reason"] is not None:
-        reason = execution.get("revert_reason")
-        if reason != case["revert_reason"]:
+        reason = execution.get("revert_reason") or ""
+        if case["revert_reason"] not in reason:
             raise CheckFailed(
-                f"expected revert_reason {case['revert_reason']!r}, got {reason!r}"
+                f"expected revert_reason to contain {case['revert_reason']!r}, got {reason!r}"
             )
 
     calls = result.get("contract_calls_map") or {}
@@ -257,8 +264,10 @@ def check(case, payload):
             )
 
     # A revert must decode its panic data into readable text rather than leaking
-    # raw felts to the caller.
-    if case["status"] == "REVERTED":
+    # raw felts to the caller. Only where the panic reaches the trace as panic
+    # data at all: a call failing under a Cairo 0 frame is reported as an
+    # Unrecoverable message instead, and the case says so.
+    if case["status"] == "REVERTED" and case.get("recoverable", True):
         recoverable = [
             call
             for call in calls.values()
