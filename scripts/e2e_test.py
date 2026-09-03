@@ -66,6 +66,18 @@ CASES = [
         "calls": 28,
         "failed": 8,
     },
+    # The same kind of revert, but reached through a Cairo 0 caller: the account
+    # and the router are deprecated classes, so the failing Cairo 1 call is
+    # classified by cheatnet's deprecated-syscall path rather than the ordinary
+    # one. The panic still has to decode into a readable reason.
+    {
+        "name": "revert-via-cairo0",
+        "tx": "0x30bd34100d440fd656982047bf67d1291463d548b67720d871f5a478c14b37d",
+        "status": "REVERTED",
+        "revert_reason": "Insufficient tokens received",
+        "calls": 30,
+        "failed": 4,
+    },
 ]
 
 
