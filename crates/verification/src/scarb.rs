@@ -1,5 +1,6 @@
 use crate::artifacts::{read_new_cairo_version_artifacts, read_old_cairo_version_artifacts};
 use crate::manifest::Manifest;
+use crate::scarb_and_dojo_download_scheduler::{parse_version_from_tag, Tool};
 use crate::utils::set_limits;
 
 use anyhow::Result;
@@ -11,6 +12,12 @@ use std::{env, fs};
 use tokio::process::Command;
 use tracing::{error, info};
 use walnut_shared::tuple_to_version_string;
+
+/// A Cairo version as the manifest carries it, in the form the toolchain
+/// naming works in.
+fn tuple_to_semver(version: (u32, u32, u32)) -> Version {
+    Version::new(version.0 as u64, version.1 as u64, version.2 as u64)
+}
 
 fn supported_old_cairo_versions() -> Vec<Version> {
     vec![
@@ -160,9 +167,9 @@ pub async fn compile_with_scarb_for_profile(
 
     let binaries_save_directory_path =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-    let scarb_path = format!(
-        "{}/scarb/scarb_cairo_v_{}_{}_{}",
-        binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
+    let scarb_path = Tool::Scarb.binary_path(
+        &binaries_save_directory_path,
+        &tuple_to_semver(starknet_version),
     );
 
     run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
@@ -193,26 +200,39 @@ pub async fn build_with_scarb_for_profile(
         ));
     }
 
-    if let Some(dojo_version) = &manifest.dojo_version {
-        if !is_dojo_version_supported(dojo_version) {
+    if let Some(dojo_tag) = &manifest.dojo_version {
+        if !is_dojo_version_supported(dojo_tag) {
+            return Err(anyhow::anyhow!("Unsupported Dojo version {}.", dojo_tag));
+        }
+        // The tag is whatever the project wrote in its Scarb.toml, so it
+        // arrives in whatever spelling that project used. It is read here the
+        // same way the release check reads a release tag, which is what makes
+        // the lookup land on the name the check installed under - the support
+        // check above already accepts `v1.8.1` and `1.8.1` alike, so a name
+        // built by pasting the tag straight into it would find nothing for one
+        // of the two.
+        let dojo_semver = Version::parse(&parse_version_from_tag(dojo_tag))
+            .map_err(|e| anyhow::anyhow!("Unreadable Dojo version {}: {}", dojo_tag, e))?;
+        if !dojo_semver.pre.is_empty() {
+            // Prereleases are never installed - the check drops them because an
+            // rc would install under the name of the stable release it precedes
+            // - so resolving one here would hand back the stable toolchain
+            // under the guise of the rc that was asked for.
             return Err(anyhow::anyhow!(
-                "Unsupported Dojo version {}.",
-                dojo_version
+                "Unsupported Dojo version {}: prerelease toolchains are not available.",
+                dojo_tag
             ));
         }
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-        let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
+        let sozo_path = Tool::Sozo.binary_path(&binaries_save_directory_path, &dojo_semver);
         run_project_build_for_profile(tmp_dir, &sozo_path, profile, build_timeout).await?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-        let scarb_path = format!(
-            "{}/scarb/scarb_cairo_v{}.{}.{}",
-            binaries_save_directory_path,
-            manifest.cairo_version.0,
-            manifest.cairo_version.1,
-            manifest.cairo_version.2
+        let scarb_path = Tool::Scarb.binary_path(
+            &binaries_save_directory_path,
+            &tuple_to_semver(manifest.cairo_version),
         );
         run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
     }
