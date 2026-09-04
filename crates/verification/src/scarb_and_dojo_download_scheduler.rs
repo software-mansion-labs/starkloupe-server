@@ -108,7 +108,7 @@ impl Tool {
     /// binaries used to be `scarb_cairo_v_2_6_3` instead, which meant the
     /// separator was a third thing to agree on between here and the two
     /// lookups in crates/verification/src/scarb.rs.
-    fn object_name(self, version: &Version) -> String {
+    pub fn object_name(self, version: &Version) -> String {
         format!(
             "{}_v{}.{}.{}",
             match self {
@@ -118,6 +118,18 @@ impl Tool {
             version.major,
             version.minor,
             version.patch
+        )
+    }
+
+    /// Where a version of this tool lives on disk. The one place a path to a
+    /// toolchain is built, by the check that installs it and by the verifier
+    /// that runs it - the two agreeing is the whole point.
+    pub fn binary_path(self, binaries_dir: &str, version: &Version) -> String {
+        format!(
+            "{}/{}/{}",
+            binaries_dir,
+            self.as_str(),
+            self.object_name(version)
         )
     }
 
@@ -215,7 +227,7 @@ async fn list_all_releases(repo: &str) -> Result<Vec<Release>> {
 }
 
 // Parse version from tag name, handling both "v1.8.0" and "sozo/v1.8.1" formats
-fn parse_version_from_tag(tag_name: &str) -> String {
+pub fn parse_version_from_tag(tag_name: &str) -> String {
     let mut version_str = tag_name.trim();
 
     if version_str.starts_with("sozo/") {
@@ -767,8 +779,7 @@ pub async fn check_for_updates(
                     unsupported += 1;
                     continue;
                 }
-                if Path::new(&format!("{}/{}", tool_dir, tool.object_name(known_version))).exists()
-                {
+                if Path::new(&tool.binary_path(&binaries_dir, known_version)).exists() {
                     already_present += 1;
                     continue;
                 }
@@ -1032,6 +1043,31 @@ mod tests {
             "scarb_cairo_v2.20.0"
         );
         assert_eq!(Tool::Sozo.object_name(&version("1.8.1")), "sozo_v1.8.1");
+    }
+
+    #[test]
+    fn resolves_a_dojo_tag_to_a_path_however_the_project_spelled_it() {
+        // A Dojo tag is written by hand in a project's Scarb.toml, and the
+        // support check accepts it with or without the `v`. Both spellings have
+        // to reach the one binary the release check installed, which is what
+        // pasting the tag into the filename did not do.
+        for tag in ["v1.8.1", "1.8.1"] {
+            let resolved = Version::parse(&parse_version_from_tag(tag)).unwrap();
+            assert_eq!(
+                Tool::Sozo.binary_path("/opt/app/binaries", &resolved),
+                "/opt/app/binaries/sozo/sozo_v1.8.1"
+            );
+        }
+    }
+
+    #[test]
+    fn builds_the_same_path_the_bucket_sync_writes_to() {
+        // crates/server/src/binaries_manager_service.rs drops the bucket's
+        // architecture segment to get here, so these two have to agree.
+        assert_eq!(
+            Tool::Scarb.binary_path("/opt/app/binaries", &version("2.6.3")),
+            "/opt/app/binaries/scarb/scarb_cairo_v2.6.3"
+        );
     }
 
     #[test]
