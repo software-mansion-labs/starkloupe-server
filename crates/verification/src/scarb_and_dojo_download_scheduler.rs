@@ -103,24 +103,22 @@ impl Tool {
     }
 
     /// The filename the verifier builds when it wants this version, and so the
-    /// only name an installed binary may have. Scarb has two spellings and the
-    /// verifier picks between them by version, not by era
-    /// (crates/verification/src/scarb.rs:163 and :212).
+    /// only name an installed binary may have. One spelling per tool, the
+    /// version written the way it is everywhere else — the pre-2.8 Scarb
+    /// binaries used to be `scarb_cairo_v_2_6_3` instead, which meant the
+    /// separator was a third thing to agree on between here and the two
+    /// lookups in crates/verification/src/scarb.rs.
     fn object_name(self, version: &Version) -> String {
-        match self {
-            Tool::Scarb if version.major == 2 && version.minor < 8 => format!(
-                "scarb_cairo_v_{}_{}_{}",
-                version.major, version.minor, version.patch
-            ),
-            Tool::Scarb => format!(
-                "scarb_cairo_v{}.{}.{}",
-                version.major, version.minor, version.patch
-            ),
-            Tool::Sozo => format!(
-                "sozo_v{}.{}.{}",
-                version.major, version.minor, version.patch
-            ),
-        }
+        format!(
+            "{}_v{}.{}.{}",
+            match self {
+                Tool::Scarb => "scarb_cairo",
+                Tool::Sozo => "sozo",
+            },
+            version.major,
+            version.minor,
+            version.patch
+        )
     }
 
     /// Whether a release is old enough that it is not worth fetching to find
@@ -968,15 +966,16 @@ mod tests {
 
     #[test]
     fn names_a_binary_the_way_the_verifier_will_ask_for_it() {
-        // Two spellings, chosen by version rather than by era:
-        // crates/verification/src/scarb.rs:163 and :212.
+        // One spelling, whatever the version: the pre-2.8 binaries are named
+        // the same way as the rest (crates/verification/src/scarb.rs:164
+        // and :211).
         assert_eq!(
             Tool::Scarb.object_name(&version("2.6.3")),
-            "scarb_cairo_v_2_6_3"
+            "scarb_cairo_v2.6.3"
         );
         assert_eq!(
             Tool::Scarb.object_name(&version("2.7.0")),
-            "scarb_cairo_v_2_7_0"
+            "scarb_cairo_v2.7.0"
         );
         assert_eq!(
             Tool::Scarb.object_name(&version("2.8.2")),

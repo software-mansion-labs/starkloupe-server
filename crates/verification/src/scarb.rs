@@ -161,7 +161,7 @@ pub async fn compile_with_scarb_for_profile(
     let binaries_save_directory_path =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
     let scarb_path = format!(
-        "{}/scarb/scarb_cairo_v_{}_{}_{}",
+        "{}/scarb/scarb_cairo_v{}.{}.{}",
         binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
     );
 
