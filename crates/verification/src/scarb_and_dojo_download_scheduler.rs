@@ -507,8 +507,54 @@ impl BucketPublisher {
         Ok(Some(response.body.collect().await?.to_vec()))
     }
 
+    /// Whether the bucket already has an object under this key.
+    ///
+    /// Anything other than a plain absence is an error rather than a `false`,
+    /// for the same reason `get` treats it that way: a failed read taken for an
+    /// empty slot is what turns a permissions problem into an overwrite.
+    async fn has(&self, key: &str) -> Result<bool> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                if err
+                    .as_service_error()
+                    .map(|err| err.is_not_found())
+                    .unwrap_or(false)
+                {
+                    return Ok(false);
+                }
+                Err(err).with_context(|| format!("checking {} in {}", key, self.bucket))
+            }
+        }
+    }
+
+    /// Put a binary in the bucket, unless something is already there.
+    ///
+    /// A binary object is immutable: the key names the version it installs, so
+    /// whatever is already under that key is a build of the same thing and
+    /// there is nothing to gain by replacing it. What there is to lose is a
+    /// build that was put there deliberately - one placed by hand does not
+    /// exist on this machine's disk, so the check that skips an installed
+    /// version never fires, and an unconditional upload would replace it on the
+    /// first pass after a restart.
+    ///
+    /// The check is not atomic. Two machines installing the same version at
+    /// once can both find the key empty and both upload, which is harmless -
+    /// they are uploading the same release asset. It is a hand-placed object
+    /// this protects, and that is not racing anything.
     async fn publish_binary(&self, tool: Tool, name: &str, path: &Path) -> Result<()> {
         let key = self.key_for(tool, name);
+        if self.has(&key).await? {
+            info!("{} is already in {}, leaving it alone", key, self.bucket);
+            return Ok(());
+        }
         let body = ByteStream::from_path(path)
             .await
             .with_context(|| format!("reading {} to upload", path.display()))?;
