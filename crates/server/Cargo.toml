@@ -9,7 +9,6 @@ description = "HTTP API for Starknet transaction simulation, debugging and contr
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-db = { path = "../db" }
 utoipa.workspace = true
 axum.workspace = true
 sqlx.workspace = true
@@ -26,24 +25,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 starknet-rust.workspace = true
 starknet_api.workspace = true
-blockifier.workspace = true
 simulate.workspace = true
 axum-prometheus = "0.4.0"
-cookie.workspace = true
-jsonwebtoken.workspace = true
 urlencoding.workspace = true
-cheatnet.workspace = true
 futures.workspace = true
-cairo-vm.workspace = true
-scarb-api.workspace = true
-cairo-lang-starknet-classes.workspace = true
 anyhow.workspace = true
 lazy-regex.workspace = true
 walnut-shared.workspace = true
 data-decoder.workspace = true
 verification.workspace = true
 num-traits.workspace = true
-num-bigint.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
 clokwerk.workspace = true
@@ -54,10 +45,7 @@ toml.workspace = true
 internal-tracing.workspace = true
 moka = { version = "0.12", features = ["future"] }
 sha2 = "0.10"
-rand = "0.8"
-base64 = "0.22"
 subtle = "2.5"
-async-trait = "0.1"
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
