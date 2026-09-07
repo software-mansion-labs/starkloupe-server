@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "crates/server",
-  "crates/db",
   "crates/internal-tracing",
   "crates/walnut-shared",
   "crates/data-decoder",
