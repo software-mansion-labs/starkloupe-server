@@ -2,7 +2,7 @@
 """End-to-end test for the simulation pipeline.
 
 Boots the server against the services in local/e2e-docker-compose.yaml, replays
-two historical mainnet transactions through /v1/simulate-transaction, and checks
+historical mainnet transactions through /v1/simulate-transaction, and checks
 the results. This exercises the whole path - RPC fork state, blockifier/cheatnet
 execution, trace collection, JSON serialisation - which unit tests do not cover.
 
@@ -30,7 +30,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -87,13 +86,6 @@ class CheckFailed(Exception):
 
 def log(message):
     print(f"==> {message}", flush=True)
-
-
-def tail(path, lines=30):
-    try:
-        return "".join(path.read_text(errors="replace").splitlines(keepends=True)[-lines:])
-    except OSError as error:
-        return f"(could not read {path}: {error})"
 
 
 def find_executable(candidate):
@@ -173,7 +165,7 @@ def server_env(rpc_url, usc):
     }
 
 
-def wait_for_health(base_url, process, log_path, attempts=60, interval=2):
+def wait_for_health(base_url, process, attempts=60, interval=2):
     for _ in range(attempts):
         try:
             with urllib.request.urlopen(f"{base_url}/health", timeout=5) as response:
@@ -182,9 +174,9 @@ def wait_for_health(base_url, process, log_path, attempts=60, interval=2):
         except (urllib.error.URLError, OSError):
             pass
         if process.poll() is not None:
-            raise RuntimeError(f"server exited during startup:\n{tail(log_path)}")
+            raise RuntimeError(f"server exited during startup with code {process.returncode}")
         time.sleep(interval)
-    raise RuntimeError(f"server did not become healthy:\n{tail(log_path)}")
+    raise RuntimeError("server did not become healthy")
 
 
 def simulate(base_url, rpc_url, tx_hash):
@@ -293,24 +285,20 @@ def main():
     usc = resolve_usc()
     server_bin = resolve_server()
 
-    work_dir = Path(tempfile.mkdtemp())
-    log_path = work_dir / "server.log"
     process = None
     try:
         log(f"starting server at {base_url}")
-        with log_path.open("wb") as log_file:
-            process = subprocess.Popen(
-                [str(server_bin)],
-                cwd=REPO_ROOT,
-                env=server_env(rpc_url, usc),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
-            wait_for_health(base_url, process, log_path)
-            log("server healthy")
-            failures = run_cases(base_url, rpc_url)
-            if failures:
-                print(f"--- server log ---\n{tail(log_path, 100)}", file=sys.stderr, flush=True)
+        # The server inherits our stdout and stderr, so its log is streamed
+        # straight into the CI output as it happens, interleaved with the
+        # checks below rather than held back until something fails.
+        process = subprocess.Popen(
+            [str(server_bin)],
+            cwd=REPO_ROOT,
+            env=server_env(rpc_url, usc),
+        )
+        wait_for_health(base_url, process)
+        log("server healthy")
+        failures = run_cases(base_url, rpc_url)
     finally:
         if process is not None and process.poll() is None:
             process.terminate()
@@ -319,7 +307,6 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        shutil.rmtree(work_dir, ignore_errors=True)
 
     if failures:
         sys.exit(f"==> {failures} e2e check(s) failed")

@@ -52,53 +52,34 @@ jobs:
       # RPC, blockifier/cheatnet execution, trace collection and serialisation -
       # so it guards the blast radius of a starknet-foundry or blockifier bump.
       #
-      # It requires the STARKNET_MAINNET_RPC_URL secret, pointing at a provider
-      # that serves JSON-RPC spec 0.10 (older specs omit block header commitments
-      # that starknet-rust needs). The steps are skipped when the secret is
-      # absent so forks are not failed by a credential they cannot have.
-      - name: Check for RPC secret
-        id: e2e_guard
-        if: ${{ vars.E2E_ENABLED != 'false' }}
-        env:
-          # Via env, not interpolated into the script: a secret containing a
-          # quote or $( ... ) would otherwise break or execute.
-          RPC_URL: ${{ secrets.STARKNET_MAINNET_RPC_URL }}
-        run: |
-          if [ -z "$RPC_URL" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::STARKNET_MAINNET_RPC_URL is not set - skipping the e2e run."
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+      # It needs the STARKNET_MAINNET_RPC_URL secret to point at a provider that
+      # serves JSON-RPC spec 0.10; older specs omit the block header commitments
+      # starknet-rust needs.
 
       # The e2e script does not install this itself - it only checks the binary
       # is present, so the download stays a visible, cacheable CI step.
       - name: Install Universal Sierra Compiler
-        if: steps.e2e_guard.outputs.run == 'true'
         run: sh scripts/install-usc.sh
 
       # Built here rather than inside the e2e script, so a compile failure is
       # reported as a compile failure and the run does not hold the Postgres and
       # MinIO containers open for the length of a cold build.
       - name: Build server
-        if: steps.e2e_guard.outputs.run == 'true'
         run: cargo build --bin server
 
       - name: Start Postgres and MinIO
-        if: steps.e2e_guard.outputs.run == 'true'
         run: |
           docker compose -f local/e2e-docker-compose.yaml up -d --wait postgres minio
           docker compose -f local/e2e-docker-compose.yaml run --rm createbuckets
 
       - name: Run e2e simulation test
-        if: steps.e2e_guard.outputs.run == 'true'
         env:
           E2E_RPC_URL: ${{ secrets.STARKNET_MAINNET_RPC_URL }}
           E2E_ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_MAINNET_RPC_URL }}
         run: ./scripts/e2e_test.py
 
       - name: Dump service logs on failure
-        if: failure() && steps.e2e_guard.outputs.run == 'true'
+        if: failure()
         run: docker compose -f local/e2e-docker-compose.yaml logs --tail=100
 
   secrets:

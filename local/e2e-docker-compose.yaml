@@ -23,6 +23,10 @@ services:
   # Stands in for the S3-compatible storage the server expects at startup. The
   # buckets only need to exist — the simulation path never reads from them, and
   # an empty binaries bucket is a warning, not an error.
+  #
+  # The classes bucket staying empty means the test replays its transactions
+  # against unverified contracts: the pipeline runs without source-level debug
+  # info, so what is asserted is the trace structure, not source mapping.
   minio:
     image: quay.io/minio/minio
     container_name: walnut_e2e_minio
