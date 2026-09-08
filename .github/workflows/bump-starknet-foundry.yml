@@ -1,0 +1,24 @@
+name: Bump starknet-foundry
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch of foundry-rs/starknet-foundry to bump to
+        required: false
+        default: master
+
+concurrency:
+  group: bump-starknet-foundry
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: bump + compile + e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
