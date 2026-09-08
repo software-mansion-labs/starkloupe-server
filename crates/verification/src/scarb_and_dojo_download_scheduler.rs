@@ -14,7 +14,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // Struct to deserialize GitHub API release response
 #[derive(Debug, Deserialize)]
@@ -29,15 +29,54 @@ struct Asset {
     name: String,
 }
 
+/// The most releases GitHub returns in one page; asking for more is capped here.
+const RELEASES_PER_PAGE: usize = 100;
+
+/// A repository with more releases than this is not walked to the end. Scarb and
+/// Dojo are in the low hundreds, so the cap only guards against an endless walk
+/// if the API ever stops honouring `page`.
+const MAX_RELEASE_PAGES: usize = 50;
+
+/// Every release of `repo`, newest first.
+///
+/// The endpoint pages at 30 by default and never returns more than
+/// [`RELEASES_PER_PAGE`] at a time, so the pages have to be walked: a single
+/// request hides every release older than the newest 30, which is where the
+/// versions this scheduler still has to install live.
 async fn get_all_releases(repo: &str) -> Result<Vec<Release>, Box<dyn std::error::Error>> {
-    let url = format!("https://api.github.com/repos/{}/releases", repo);
     let client = Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "rust-app")
-        .send()
-        .await?;
-    let releases: Vec<Release> = response.json().await?;
+    let mut releases: Vec<Release> = Vec::new();
+
+    for page in 1..=MAX_RELEASE_PAGES {
+        let url = format!(
+            "https://api.github.com/repos/{}/releases?per_page={}&page={}",
+            repo, RELEASES_PER_PAGE, page
+        );
+        let response = client
+            .get(&url)
+            .header("User-Agent", "rust-app")
+            .send()
+            .await?
+            // Without this a rate-limited 403 deserializes into a confusing
+            // "expected a sequence" instead of saying what GitHub answered.
+            .error_for_status()?;
+        let page_releases: Vec<Release> = response.json().await?;
+
+        // A short page is the last one, so this costs no extra request.
+        let is_last_page = page_releases.len() < RELEASES_PER_PAGE;
+        releases.extend(page_releases);
+        if is_last_page {
+            debug!("Fetched {} releases of {}", releases.len(), repo);
+            return Ok(releases);
+        }
+    }
+
+    warn!(
+        "Stopped paginating {} releases after {} pages ({} releases); older releases were not considered",
+        repo,
+        MAX_RELEASE_PAGES,
+        releases.len()
+    );
     Ok(releases)
 }
 
