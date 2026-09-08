@@ -1,4 +1,3 @@
-pub(crate) mod admin;
 pub(crate) mod calldata_decoder;
 pub(crate) mod classes;
 pub(crate) mod common;
