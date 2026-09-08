@@ -116,13 +116,13 @@ cairo-lang-sierra-to-casm = "=2.19.0"
 # The `starkloupe` feature carries the fork additions this server relies on:
 # VM memory and tracked-resource capture in the call trace, and serde
 # serialization of the trace result types.
-cheatnet = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "e1c6612ce6b7fdbebbfae2aef9f71cf0e92f41ae" , features = [
+cheatnet = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "afce05f418125318f7c9fec10f696ecb922351df" , features = [
   "starkloupe",
 ] }
-runtime = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "e1c6612ce6b7fdbebbfae2aef9f71cf0e92f41ae" }
-scarb-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "e1c6612ce6b7fdbebbfae2aef9f71cf0e92f41ae" }
-conversions = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "e1c6612ce6b7fdbebbfae2aef9f71cf0e92f41ae" }
-universal-sierra-compiler-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "e1c6612ce6b7fdbebbfae2aef9f71cf0e92f41ae" }
+runtime = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "afce05f418125318f7c9fec10f696ecb922351df" }
+scarb-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "afce05f418125318f7c9fec10f696ecb922351df" }
+conversions = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "afce05f418125318f7c9fec10f696ecb922351df" }
+universal-sierra-compiler-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "afce05f418125318f7c9fec10f696ecb922351df" }
 
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }
