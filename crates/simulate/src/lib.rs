@@ -18,7 +18,9 @@ pub mod storage_changes;
 pub mod transaction_extraction;
 pub mod transaction_info;
 pub mod utils;
-use blockifier::execution::errors::{EntryPointExecutionError, PreExecutionError};
+use blockifier::execution::errors::{
+    AnnotatedEntryPointExecutionError, EntryPointExecutionError, PreExecutionError,
+};
 use blockifier::fee::fee_checks::FeeCheckError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
@@ -330,6 +332,12 @@ impl From<anyhow::Error> for TransactionSimulationError {
 impl From<EntryPointExecutionError> for TransactionSimulationError {
     fn from(err: EntryPointExecutionError) -> Self {
         TransactionSimulationError::EntryPointExecutionError(err)
+    }
+}
+
+impl From<AnnotatedEntryPointExecutionError> for TransactionSimulationError {
+    fn from(err: AnnotatedEntryPointExecutionError) -> Self {
+        TransactionSimulationError::EntryPointExecutionError(err.into_unannotated())
     }
 }
 
