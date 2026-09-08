@@ -39,10 +39,33 @@ impl Tool {
         )
     }
 
+    /// The directory this tool's binaries live in under `binaries_dir`.
+    pub fn binary_dir(self, binaries_dir: &str) -> String {
+        let (directory, _) = self.directory_and_prefix();
+        format!("{binaries_dir}/{directory}")
+    }
+
     /// Where the binary for `version` lives under `binaries_dir`.
     pub fn binary_path(self, binaries_dir: &str, version: impl Display) -> String {
-        let (directory, _) = self.directory_and_prefix();
-        format!("{binaries_dir}/{directory}/{}", self.binary_name(version))
+        format!(
+            "{}/{}",
+            self.binary_dir(binaries_dir),
+            self.binary_name(version)
+        )
+    }
+
+    /// Where the marker recording that release `tag` is installed lives.
+    ///
+    /// A Scarb binary is named after the Cairo version it ships, which is only
+    /// known once the archive has been downloaded and the binary run. Keying
+    /// the marker by the release tag instead lets an already installed release
+    /// be recognised without downloading it again.
+    ///
+    /// The tag goes in verbatim except for the separators a Dojo tag carries
+    /// (`sozo/v1.8.1`), which would otherwise open a subdirectory.
+    pub fn installed_marker_path(self, binaries_dir: &str, tag: &str) -> String {
+        let file_name = tag.trim().replace(['/', '\\'], "_");
+        format!("{}/.installed/{file_name}", self.binary_dir(binaries_dir))
     }
 }
 
@@ -104,6 +127,25 @@ mod tests {
         assert_eq!(
             Tool::Sozo.binary_path("/opt/app/binaries", "v1.0.1"),
             "/opt/app/binaries/sozo/sozo_v1.0.1"
+        );
+    }
+
+    #[test]
+    fn keys_an_install_marker_by_the_release_tag() {
+        // The tag is what a release gives us for free; the Cairo version in the
+        // binary name is not derivable from it without downloading the binary.
+        assert_eq!(
+            Tool::Scarb.installed_marker_path("/opt/app/binaries", "v2.12.0"),
+            "/opt/app/binaries/scarb/.installed/v2.12.0"
+        );
+    }
+
+    #[test]
+    fn keeps_a_tag_with_a_separator_out_of_a_subdirectory() {
+        // Dojo tags its releases `sozo/v1.8.1`.
+        assert_eq!(
+            Tool::Sozo.installed_marker_path("/opt/app/binaries", "sozo/v1.8.1"),
+            "/opt/app/binaries/sozo/.installed/sozo_v1.8.1"
         );
     }
 

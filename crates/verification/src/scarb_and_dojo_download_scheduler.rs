@@ -160,42 +160,74 @@ fn parse_version_from_tag(tag_name: &str) -> String {
     version_str.to_string()
 }
 
-pub async fn check_periodically_sozo_updates(
-    repo: &str,
-    versioning_file_name: &str,
-) -> Result<(), Box<dyn Error>> {
-    check_periodically_updates(repo, versioning_file_name, Tool::Sozo, "1.0.12", "/sozo").await
+pub async fn check_periodically_sozo_updates(repo: &str) -> Result<(), Box<dyn Error>> {
+    check_periodically_updates(repo, Tool::Sozo, "1.0.12", "/sozo").await
 }
 
 pub async fn check_periodically_scarb_updates(
     repo: &str,
-    versioning_file_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    check_periodically_updates(
-        repo,
-        versioning_file_name,
-        Tool::Scarb,
-        "2.8.5",
-        "/bin/scarb",
-    )
-    .await
+    check_periodically_updates(repo, Tool::Scarb, "2.8.5", "/bin/scarb").await
 }
 
-// The function does check in Github for new versions of Scarb/Sozo and downloads them if available
+/// Whether the binary for release `tag` is already on disk.
+///
+/// The installed binaries are the record of what has been downloaded, rather
+/// than a "latest installed version" marker: such a marker only moves forward,
+/// so a patch published after a higher version (Scarb backports one every few
+/// releases, and a stable release can follow a release candidate of the next
+/// minor) would sort below it and never install.
+async fn is_installed(tool: Tool, binaries_dir: &str, version: &Version, tag: &str) -> bool {
+    match tool {
+        // The file name follows from the tag, so the binary is its own record.
+        Tool::Sozo => Path::new(&tool.binary_path(binaries_dir, version)).exists(),
+        // The file name carries the Cairo version, which the tag does not give
+        // us, so the marker written at install time holds the name it got. The
+        // binary is checked too, so removing one pulls it again.
+        Tool::Scarb => {
+            match tokio_fs::read_to_string(tool.installed_marker_path(binaries_dir, tag)).await {
+                Ok(binary_name) => Path::new(&format!(
+                    "{}/{}",
+                    tool.binary_dir(binaries_dir),
+                    binary_name.trim()
+                ))
+                .exists(),
+                Err(_) => false,
+            }
+        }
+    }
+}
+
+/// Record that release `tag` installed the binary named `binary_name`.
+async fn record_installed(
+    tool: Tool,
+    binaries_dir: &str,
+    tag: &str,
+    binary_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let marker_path = tool.installed_marker_path(binaries_dir, tag);
+    if let Some(marker_dir) = Path::new(&marker_path).parent() {
+        tokio_fs::create_dir_all(marker_dir).await?;
+    }
+    tokio_fs::write(&marker_path, binary_name.as_bytes()).await?;
+    Ok(())
+}
+
+// Downloads every supported Scarb/Sozo release that is not installed yet.
 // The logic is:
-// 1. Fetch releases JSON from Github. It contains all the versions of Scarb/Sozo in JSON format.
-// 2. Filter from the releases version only below the latest downloaded (saved in *_LATEST_VERSION_FILE_NAME file)
-//    and sort them: oldest first. Now process will iterate and download all missing binaries.
-// 3. Download tar.gz file, extract. Only for SCARB: Then check the Cairo version of the binary and use this
-//    version to name the binary e.g. scarb --version otuputs cairo: 2.9.1 then binary is names scarb_cairo_v2.9.1
-//    NOTE: We save scarb binary with name of Cairo version, not Scarb tag name (e.g. scarb_cairo_v2.9.1)
-//          it means that scarb_vX.X.X can be saved differently like scarb_cairo_vY.Y.Y because as
-//          version we use Cairo version (not Scarb version)
-// 4. Latest download tag version (also for SCARB it's tag, not Cairo version) is saved in *_LATEST_VERSION_FILE_NAME file.
-//    Unnecessary files and folders are removed.
+// 1. Fetch every release from Github (see `get_all_releases`).
+// 2. Drop the releases at or below `latest_unsupported_tag`, and the ones
+//    already on disk (see `is_installed`). Release order does not matter here:
+//    a patch published after a higher version installs like any other.
+// 3. Download the tar.gz and extract it. Only for SCARB: run the binary to read
+//    the Cairo version it ships and name it after that, e.g. `scarb --version`
+//    reporting `cairo: 2.9.1` gives `scarb_cairo_v2.9.1`.
+//    NOTE: the Scarb binary is named after the Cairo version, not the Scarb tag,
+//          so scarb vX.X.X can land under scarb_cairo_vY.Y.Y.
+// 4. Record the install so the release is recognised on the next run, and
+//    remove the archive and the extracted folder.
 pub async fn check_periodically_updates(
     repo: &str,
-    versioning_file_name: &str,
     tool: Tool,
     // We support here every version above that
     latest_unsupported_tag: &str,
@@ -205,45 +237,12 @@ pub async fn check_periodically_updates(
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or_else(|_| ".".to_string());
     tokio_fs::create_dir_all(&binaries_dir_path_string).await?;
 
-    let mut latest_installed_tag = Version::parse(latest_unsupported_tag).unwrap();
-
-    // Check if the version file exists
-    if !Path::new(&versioning_file_name).exists() {
-        info!("{} last tag file does not exist. Creating it...", tool);
-        File::create(&versioning_file_name)
-            .await?
-            .write_all(latest_unsupported_tag.as_bytes())
-            .await?;
-    } else {
-        let content = tokio_fs::read_to_string(&versioning_file_name).await?;
-        let content_parsed = parse_version_from_tag(content.trim());
-        let latest_installed_tag_from_file = match Version::parse(content_parsed.as_str()) {
-            Ok(ver) => ver,
-            Err(_) => {
-                return Err(Box::from(format!(
-                    "Invalid (corrupted) latest {} tag value found in file: {}",
-                    tool, &versioning_file_name
-                )));
-            }
-        };
-        latest_installed_tag = latest_installed_tag_from_file.clone();
-    }
+    // Releases at or below this one are too old to be worth installing. It is a
+    // fixed support boundary, not a record of progress, so it never moves.
+    let latest_unsupported_version = Version::parse(latest_unsupported_tag).unwrap();
 
     let all_releases = get_all_releases(repo).await?;
 
-    // NOTE: Pre-check if 2.9.4 is already installed
-    // The 2.9.4 is release after 2.10.0
-    let version_2_9_4 = Version::parse("2.9.4").unwrap();
-    let expected_2_9_4_path = tool.binary_path(&binaries_dir_path_string, &version_2_9_4);
-    let should_include_2_9_4 = !Path::new(&expected_2_9_4_path).exists();
-
-    // NOTE: Pre-check if 2.16.1 is already installed
-    // The 2.16.1 is release after 2.17.0-rc.0 and 2.17.0-rc.1
-    let version_2_16_1 = Version::parse("2.16.1").unwrap();
-    let expected_2_16_1_path = tool.binary_path(&binaries_dir_path_string, &version_2_16_1);
-    let should_include_2_16_1 = !Path::new(&expected_2_16_1_path).exists();
-
-    // Process all releases in a single pass
     let mut releases: Vec<(Version, Release)> = all_releases
         .into_iter()
         .filter_map(|release| {
@@ -251,26 +250,38 @@ pub async fn check_periodically_updates(
             let version_str = parse_version_from_tag(&release.tag_name);
             let version = Version::parse(&version_str).ok()?;
 
-            // Check for new version and for 2.9.4 and 2.16.1
-            let is_newer = version > latest_installed_tag;
-            let is_2_9_4 = version == version_2_9_4 && should_include_2_9_4;
-            let is_2_16_1 = version == version_2_16_1 && should_include_2_16_1;
-
-            if !is_newer {
+            if version <= latest_unsupported_version {
                 debug!(
-                    "Skipping {} release {} (parsed {}): not newer than current latest installed tag {}.",
-                    tool, release.tag_name, version, latest_installed_tag
+                    "Skipping {} release {} (parsed {}): not above the oldest supported version {}.",
+                    tool, release.tag_name, version, latest_unsupported_version
                 );
+                return None;
             }
 
-            (is_newer || is_2_9_4 || is_2_16_1).then_some((version, release))
+            Some((version, release))
         })
         .collect();
 
-    // Sort once
+    // Oldest first, so an interrupted run leaves off the newest releases rather
+    // than a gap in the middle.
     releases.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (_, release) in releases {
+    for (release_version, release) in releases {
+        if is_installed(
+            tool,
+            &binaries_dir_path_string,
+            &release_version,
+            &release.tag_name,
+        )
+        .await
+        {
+            debug!(
+                "Skipping {} release {}: already installed.",
+                tool, release.tag_name
+            );
+            continue;
+        }
+
         let asset_suffix = asset_suffix_for_arch(tool)?;
         if let Some(asset) = release
             .assets
@@ -308,12 +319,16 @@ pub async fn check_periodically_updates(
                         .await?;
                     // Remove the extracted tar.gz folder
                     tokio::fs::remove_dir_all(extracted_tar_gz_folder_path).await?;
-                    // Save the latest downloaded tool version to the file
-                    // NOTE: We are not update the latest_installed_tag_from_file in case it is
-                    // 2.9.4 or 2.16.1
-                    if version != version_2_9_4 && version != version_2_16_1 {
-                        tokio_fs::write(&versioning_file_name, release.tag_name.as_bytes()).await?;
-                    }
+                    // Record the install under the release tag: the name above
+                    // carries the Cairo version, which nothing can derive from
+                    // the tag without downloading the binary again.
+                    record_installed(
+                        tool,
+                        &binaries_dir_path_string,
+                        &release.tag_name,
+                        &tool.binary_name(&version),
+                    )
+                    .await?;
                     info!(
                         "Extracted successfully: {}",
                         &extracted_binary_destination_path
@@ -330,10 +345,8 @@ pub async fn check_periodically_updates(
                     extract_tar_gz(tar_gz_output_path, extract_path_dir_path).await?;
                     let extracted_binary_path =
                         format!("{}{}", &extract_path, &binary_path_in_extracted_folder);
-                    let version_str = parse_version_from_tag(&release.tag_name);
-                    let version = Version::parse(&version_str)?;
                     let extracted_binary_destination_path =
-                        tool.binary_path(&binaries_dir_path_string, &version);
+                        tool.binary_path(&binaries_dir_path_string, &release_version);
 
                     // Move the binary to the destination directory (e.g. binaries/<tool>)
                     if let Some(destination_dir) =
@@ -345,9 +358,6 @@ pub async fn check_periodically_updates(
                         .await?;
                     // Remove the extracted tar.gz folder
                     tokio::fs::remove_dir_all(&extract_path).await?;
-                    // Save the latest downloaded tool version to the file
-                    // NOTE! We save here the tag, not cairo version (relevant for Scarb only)
-                    tokio_fs::write(&versioning_file_name, release.tag_name.as_bytes()).await?;
                     info!(
                         "Extracted successfully: {}",
                         &extracted_binary_destination_path
