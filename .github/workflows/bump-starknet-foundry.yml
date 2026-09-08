@@ -1,6 +1,15 @@
 name: Bump starknet-foundry
 
+# Weekly canary for the starknet-foundry dependency.
+#
+# Repoints the git deps in Cargo.toml at the tip of upstream starknet-foundry,
+# then compiles the workspace and replays the e2e simulation test against it.
+# Nothing is committed - this only answers "would the next bump break us?" a week
+# before somebody does it by hand. A failure pings Slack.
 on:
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour to avoid the scheduler's peak.
+    - cron: "17 4 * * 1"
   workflow_dispatch:
     inputs:
       ref:
@@ -15,6 +24,18 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  FOUNDRY_REPO: foundry-rs/starknet-foundry
+  # Upstream's default branch is `master`, not `main`. The crates this workspace
+  # uses - including the `starkloupe` feature on cheatnet - live upstream, so the
+  # deps are repointed at this repository as well as at its latest rev; Cargo.toml
+  # still names a fork remote that mirrors it.
+  FOUNDRY_REF: ${{ github.event.inputs.ref || 'master' }}
+  # The .sqlx directory holds prepared queries so sqlx::query! macros compile
+  # without a live database.
+  SQLX_OFFLINE: "true"
+  CARGO_TERM_COLOR: always
+
 jobs:
   bump:
     name: bump + compile + e2e
@@ -22,3 +43,116 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      # Same system packages the Dockerfile installs to build the workspace.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config
+
+      # Installed before the bump on purpose: the cache key is derived from
+      # Cargo.lock, so keying off the committed lock file reuses the build of
+      # everything the bump does not move.
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Resolve latest revision
+        id: rev
+        run: |
+          set -euo pipefail
+          current=$(sed -n -E 's#.*starknet-foundry[^"]*\.git", *rev = "([0-9a-f]{40})".*#\1#p' Cargo.toml | head -1)
+          if [ -z "$current" ]; then
+            echo "::error::No pinned starknet-foundry rev found in Cargo.toml"
+            exit 1
+          fi
+          latest=$(git ls-remote "https://github.com/${FOUNDRY_REPO}.git" "refs/heads/${FOUNDRY_REF}" | cut -f1)
+          if [ -z "$latest" ]; then
+            echo "::error::Branch ${FOUNDRY_REF} does not exist in ${FOUNDRY_REPO}"
+            exit 1
+          fi
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            if [ "$current" = "$latest" ]; then echo "changed=false"; else echo "changed=true"; fi
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### starknet-foundry bump"
+            echo
+            echo "| | rev |"
+            echo "| --- | --- |"
+            echo "| pinned | \`${current}\` |"
+            echo "| ${FOUNDRY_REF} | \`${latest}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already up to date
+        if: steps.rev.outputs.changed == 'false'
+        run: echo "Cargo.toml already pins the tip of ${FOUNDRY_REF}; nothing to test." >> "$GITHUB_STEP_SUMMARY"
+
+      # Every starknet-foundry crate is declared on its own line with the same
+      # remote and rev, so one address plus two substitutions moves them all. The
+      # remote is rewritten too, because Cargo.toml points at a fork that mirrors
+      # upstream rather than at upstream itself.
+      - name: Repoint Cargo.toml
+        if: steps.rev.outputs.changed == 'true'
+        env:
+          LATEST_REV: ${{ steps.rev.outputs.latest }}
+        run: |
+          set -euo pipefail
+          sed -i -E "/starknet-foundry[^\"]*\.git/ {
+            s#git = \"[^\"]*\"#git = \"https://github.com/${FOUNDRY_REPO}.git\"#
+            s#rev = \"[0-9a-f]{40}\"#rev = \"${LATEST_REV}\"#
+          }" Cargo.toml
+          git --no-pager diff -- Cargo.toml
+
+      # Split out from the build so a resolution failure - upstream having moved
+      # to a cairo-lang or blockifier version the workspace pins differently -
+      # is reported as one, and not buried in a compile log.
+      - name: Resolve dependencies
+        if: steps.rev.outputs.changed == 'true'
+        run: cargo fetch
+
+      - name: Check
+        if: steps.rev.outputs.changed == 'true'
+        run: cargo check --workspace --all-targets
+
+      # The e2e script does not install this itself - it only checks the binary
+      # is present.
+      - name: Install Universal Sierra Compiler
+        if: steps.rev.outputs.changed == 'true'
+        run: sh scripts/install-usc.sh
+
+      - name: Build server
+        if: steps.rev.outputs.changed == 'true'
+        run: cargo build --bin server
+
+      - name: Start Postgres and MinIO
+        if: steps.rev.outputs.changed == 'true'
+        run: |
+          docker compose -f local/e2e-docker-compose.yaml up -d --wait postgres minio
+          docker compose -f local/e2e-docker-compose.yaml run --rm createbuckets
+
+      # The e2e test replays real mainnet transactions through the simulation
+      # pipeline - fork state over RPC, blockifier/cheatnet execution, trace
+      # collection and serialisation - which is the coverage that actually
+      # catches a breaking foundry change.
+      - name: Run e2e simulation test
+        if: steps.rev.outputs.changed == 'true'
+        env:
+          E2E_RPC_URL: ${{ secrets.STARKNET_MAINNET_RPC_URL }}
+          E2E_ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_MAINNET_RPC_URL }}
+        run: ./scripts/e2e_test.py
+
+      - name: Dump service logs on failure
+        if: failure() && steps.rev.outputs.changed == 'true'
+        run: docker compose -f local/e2e-docker-compose.yaml logs --tail=100
+
+      - name: Notifying about check fail!
+        if: failure()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          webhook: ${{ secrets.SLACK_FOUNDRY_BUMP_WEBHOOK_URL }}
+          webhook-type: webhook-trigger
+          payload: |
+            {
+              "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
