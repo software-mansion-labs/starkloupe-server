@@ -202,7 +202,6 @@ pub async fn start_github_scarb_binaries_downloader_scheduler() {
     start_downloader_scheduler(
         Tool::Scarb,
         "SCARB_GITHUB_REPO_NAME".to_string(),
-        "SCARB_LATEST_VERSION_FILE_NAME".to_string(),
         "SCARB_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
     )
     .await;
@@ -212,7 +211,6 @@ pub async fn start_github_dojo_binaries_downloader_scheduler() {
     start_downloader_scheduler(
         Tool::Sozo,
         "DOJO_GITHUB_REPO_NAME".to_string(),
-        "DOJO_LATEST_VERSION_FILE_NAME".to_string(),
         "DOJO_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
     )
     .await;
@@ -223,7 +221,6 @@ pub async fn start_github_dojo_binaries_downloader_scheduler() {
 pub async fn start_downloader_scheduler(
     tool: Tool,
     repo_env_var: String,
-    versioning_file_name_env_var: String,
     interval_env_var: String,
 ) {
     let interval: u32 = std::env::var(&interval_env_var)
@@ -237,23 +234,12 @@ pub async fn start_downloader_scheduler(
         tool, &interval
     );
 
-    run_task(
-        tool,
-        repo_env_var.as_ref(),
-        versioning_file_name_env_var.as_ref(),
-    )
-    .await;
+    run_task(tool, repo_env_var.as_ref()).await;
 
     scheduler.every(interval.minutes()).run(move || {
         let repo_env_var = repo_env_var.clone();
-        let versioning_file_name_env_var = versioning_file_name_env_var.clone();
         async move {
-            run_task(
-                tool,
-                repo_env_var.as_ref(),
-                versioning_file_name_env_var.as_ref(),
-            )
-            .await;
+            run_task(tool, repo_env_var.as_ref()).await;
         }
     });
 
@@ -265,7 +251,7 @@ pub async fn start_downloader_scheduler(
     });
 }
 
-async fn run_task(tool: Tool, repo_env_var: &str, versioning_file_name_env_var: &str) {
+async fn run_task(tool: Tool, repo_env_var: &str) {
     info!("Starting {} update check", tool);
 
     let repo = match std::env::var(repo_env_var) {
@@ -276,24 +262,9 @@ async fn run_task(tool: Tool, repo_env_var: &str, versioning_file_name_env_var: 
         }
     };
 
-    let versioning_file_name = match std::env::var(versioning_file_name_env_var) {
-        Ok(value) => value,
-        Err(_) => {
-            error!(
-                "Environment variable {} is not set",
-                versioning_file_name_env_var
-            );
-            return;
-        }
-    };
-
     let res = match tool {
-        Tool::Scarb => {
-            check_periodically_scarb_updates(repo.as_ref(), versioning_file_name.as_ref()).await
-        }
-        Tool::Sozo => {
-            check_periodically_sozo_updates(repo.as_ref(), versioning_file_name.as_ref()).await
-        }
+        Tool::Scarb => check_periodically_scarb_updates(repo.as_ref()).await,
+        Tool::Sozo => check_periodically_sozo_updates(repo.as_ref()).await,
     };
 
     match res {
