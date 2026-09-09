@@ -6,6 +6,9 @@ name: Bump starknet-foundry
 # then compiles the workspace and replays the e2e simulation test against it.
 # Nothing is committed - this only answers "would the next bump break us?" a week
 # before somebody does it by hand. A failure pings Slack.
+#
+# The bump that is actually committed happens elsewhere, and follows releases
+# rather than master: see bump-starknet-foundry-release.yml.
 on:
   schedule:
     # Mondays, 04:17 UTC. Off the hour to avoid the scheduler's peak.
@@ -27,9 +30,8 @@ permissions:
 env:
   FOUNDRY_REPO: foundry-rs/starknet-foundry
   # Upstream's default branch is `master`, not `main`. The crates this workspace
-  # uses - including the `starkloupe` feature on cheatnet - live upstream, so the
-  # deps are repointed at this repository as well as at its latest rev; Cargo.toml
-  # still names a fork remote that mirrors it.
+  # uses - including the `starkloupe` feature on cheatnet, upstreamed in #4584 -
+  # live here, and Cargo.toml pins this remote directly, so only the rev moves.
   FOUNDRY_REF: ${{ github.event.inputs.ref || 'master' }}
   # The .sqlx directory holds prepared queries so sqlx::query! macros compile
   # without a live database.
@@ -60,7 +62,7 @@ jobs:
         id: rev
         run: |
           set -euo pipefail
-          current=$(sed -n -E 's#.*starknet-foundry[^"]*\.git", *rev = "([0-9a-f]{40})".*#\1#p' Cargo.toml | head -1)
+          current=$(sed -n -E 's#.*starknet-foundry\.git", *rev = "([0-9a-f]{40})".*#\1#p' Cargo.toml | head -1)
           if [ -z "$current" ]; then
             echo "::error::No pinned starknet-foundry rev found in Cargo.toml"
             exit 1
@@ -88,20 +90,15 @@ jobs:
         if: steps.rev.outputs.changed == 'false'
         run: echo "Cargo.toml already pins the tip of ${FOUNDRY_REF}; nothing to test." >> "$GITHUB_STEP_SUMMARY"
 
-      # Every starknet-foundry crate is declared on its own line with the same
-      # remote and rev, so one address plus two substitutions moves them all. The
-      # remote is rewritten too, because Cargo.toml points at a fork that mirrors
-      # upstream rather than at upstream itself.
+      # Every starknet-foundry crate is declared on its own line against the same
+      # remote and rev, so one address moves them all.
       - name: Repoint Cargo.toml
         if: steps.rev.outputs.changed == 'true'
         env:
           LATEST_REV: ${{ steps.rev.outputs.latest }}
         run: |
           set -euo pipefail
-          sed -i -E "/starknet-foundry[^\"]*\.git/ {
-            s#git = \"[^\"]*\"#git = \"https://github.com/${FOUNDRY_REPO}.git\"#
-            s#rev = \"[0-9a-f]{40}\"#rev = \"${LATEST_REV}\"#
-          }" Cargo.toml
+          sed -i -E "/starknet-foundry\.git/ s#rev = \"[0-9a-f]{40}\"#rev = \"${LATEST_REV}\"#" Cargo.toml
           git --no-pager diff -- Cargo.toml
 
       # Split out from the build so a resolution failure - upstream having moved
