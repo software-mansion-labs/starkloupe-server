@@ -1,3 +1,4 @@
+use crate::binary_names::Tool;
 use async_compression::tokio::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::StreamExt;
@@ -91,11 +92,14 @@ async fn extract_cairo_version(binary_path: &str) -> Result<Version, Box<dyn Err
     Ok(version)
 }
 
-fn get_sozo_file_name_for_arch() -> Result<String, Box<dyn Error>> {
+/// The suffix of the release asset holding `tool`'s build for this machine.
+fn asset_suffix_for_arch(tool: Tool) -> Result<&'static str, Box<dyn Error>> {
     let architecture = ARCH;
-    let file_name = match architecture {
-        "x86_64" => "linux_amd64.tar.gz",
-        "aarch64" => "darwin_arm64.tar.gz",
+    let suffix = match (tool, architecture) {
+        (Tool::Sozo, "x86_64") => "linux_amd64.tar.gz",
+        (Tool::Sozo, "aarch64") => "darwin_arm64.tar.gz",
+        (Tool::Scarb, "x86_64") => "x86_64-unknown-linux-gnu.tar.gz",
+        (Tool::Scarb, "aarch64") => "aarch64-apple-darwin.tar.gz",
         _ => {
             return Err(Box::from(format!(
                 "Unsupported architecture: {}",
@@ -103,22 +107,7 @@ fn get_sozo_file_name_for_arch() -> Result<String, Box<dyn Error>> {
             )))
         }
     };
-    Ok(file_name.to_string())
-}
-
-fn get_scarb_file_name_for_arch() -> Result<String, Box<dyn Error>> {
-    let architecture = ARCH;
-    let file_name = match architecture {
-        "x86_64" => "x86_64-unknown-linux-gnu.tar.gz",
-        "aarch64" => "aarch64-apple-darwin.tar.gz",
-        _ => {
-            return Err(Box::from(format!(
-                "Unsupported architecture: {}",
-                architecture
-            )))
-        }
-    };
-    Ok(file_name.to_string())
+    Ok(suffix)
 }
 
 // Parse version from tag name, handling both "v1.8.0" and "sozo/v1.8.1" formats
@@ -136,15 +125,7 @@ pub async fn check_periodically_sozo_updates(
     repo: &str,
     versioning_file_name: &str,
 ) -> Result<(), Box<dyn Error>> {
-    check_periodically_updates(
-        repo,
-        versioning_file_name,
-        "sozo",
-        "1.0.12",
-        "/sozo",
-        "/sozo/sozo_",
-    )
-    .await
+    check_periodically_updates(repo, versioning_file_name, Tool::Sozo, "1.0.12", "/sozo").await
 }
 
 pub async fn check_periodically_scarb_updates(
@@ -154,10 +135,9 @@ pub async fn check_periodically_scarb_updates(
     check_periodically_updates(
         repo,
         versioning_file_name,
-        "scarb",
+        Tool::Scarb,
         "2.8.5",
         "/bin/scarb",
-        "/scarb/scarb_cairo_",
     )
     .await
 }
@@ -177,23 +157,20 @@ pub async fn check_periodically_scarb_updates(
 pub async fn check_periodically_updates(
     repo: &str,
     versioning_file_name: &str,
-    tool_name: &str,
+    tool: Tool,
     // We support here every version above that
     latest_unsupported_tag: &str,
     binary_path_in_extracted_folder: &str,
-    binary_destination_path_prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
     let binaries_dir_path_string =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or_else(|_| ".".to_string());
     tokio_fs::create_dir_all(&binaries_dir_path_string).await?;
+
     let mut latest_installed_tag = Version::parse(latest_unsupported_tag).unwrap();
 
     // Check if the version file exists
     if !Path::new(&versioning_file_name).exists() {
-        info!(
-            "{} last tag file does not exist. Creating it...",
-            &tool_name
-        );
+        info!("{} last tag file does not exist. Creating it...", tool);
         File::create(&versioning_file_name)
             .await?
             .write_all(latest_unsupported_tag.as_bytes())
@@ -206,7 +183,7 @@ pub async fn check_periodically_updates(
             Err(_) => {
                 return Err(Box::from(format!(
                     "Invalid (corrupted) latest {} tag value found in file: {}",
-                    &tool_name, &versioning_file_name
+                    tool, &versioning_file_name
                 )));
             }
         };
@@ -218,19 +195,13 @@ pub async fn check_periodically_updates(
     // NOTE: Pre-check if 2.9.4 is already installed
     // The 2.9.4 is release after 2.10.0
     let version_2_9_4 = Version::parse("2.9.4").unwrap();
-    let expected_2_9_4_path = format!(
-        "{}{}v2.9.4",
-        binaries_dir_path_string, binary_destination_path_prefix
-    );
+    let expected_2_9_4_path = tool.binary_path(&binaries_dir_path_string, &version_2_9_4);
     let should_include_2_9_4 = !Path::new(&expected_2_9_4_path).exists();
 
     // NOTE: Pre-check if 2.16.1 is already installed
     // The 2.16.1 is release after 2.17.0-rc.0 and 2.17.0-rc.1
     let version_2_16_1 = Version::parse("2.16.1").unwrap();
-    let expected_2_16_1_path = format!(
-        "{}{}v2.16.1",
-        binaries_dir_path_string, binary_destination_path_prefix
-    );
+    let expected_2_16_1_path = tool.binary_path(&binaries_dir_path_string, &version_2_16_1);
     let should_include_2_16_1 = !Path::new(&expected_2_16_1_path).exists();
 
     // Process all releases in a single pass
@@ -249,7 +220,7 @@ pub async fn check_periodically_updates(
             if !is_newer {
                 debug!(
                     "Skipping {} release {} (parsed {}): not newer than current latest installed tag {}.",
-                    tool_name, release.tag_name, version, latest_installed_tag
+                    tool, release.tag_name, version, latest_installed_tag
                 );
             }
 
@@ -261,15 +232,11 @@ pub async fn check_periodically_updates(
     releases.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (_, release) in releases {
-        let file_name = match tool_name {
-            "scarb" => get_scarb_file_name_for_arch()?,
-            "sozo" => get_sozo_file_name_for_arch()?,
-            _ => panic!("Unknown tool name: {}", tool_name),
-        };
+        let asset_suffix = asset_suffix_for_arch(tool)?;
         if let Some(asset) = release
             .assets
             .iter()
-            .find(|asset| asset.name.ends_with(file_name.as_str()))
+            .find(|asset| asset.name.ends_with(asset_suffix))
         {
             let output_path_string = format!("{}/{}", binaries_dir_path_string, asset.name);
             let tar_gz_output_path = Path::new(&output_path_string);
@@ -278,7 +245,7 @@ pub async fn check_periodically_updates(
             info!("Downloaded to: {:?}", tar_gz_output_path);
 
             if asset.name.ends_with(".tar.gz") {
-                if tool_name == "scarb" {
+                if tool == Tool::Scarb {
                     let binaries_dir_path = Path::new(&binaries_dir_path_string);
                     debug!("Extracting to: {:?}", binaries_dir_path);
                     extract_tar_gz(tar_gz_output_path, binaries_dir_path).await?;
@@ -289,13 +256,10 @@ pub async fn check_periodically_updates(
                         extracted_tar_gz_folder_path, &binary_path_in_extracted_folder
                     );
                     let version = extract_cairo_version(extracted_binary_path.as_str()).await?;
-                    let tag_name = format!("v{}", version);
-                    let extracted_binary_destination_path = format!(
-                        "{}{}{}",
-                        binaries_dir_path_string, &binary_destination_path_prefix, tag_name
-                    );
+                    let extracted_binary_destination_path =
+                        tool.binary_path(&binaries_dir_path_string, &version);
 
-                    // Move the binary to the destination directory (e.g. binaries/<tool_name>)
+                    // Move the binary to the destination directory (e.g. binaries/<tool>)
                     if let Some(destination_dir) =
                         Path::new(&extracted_binary_destination_path).parent()
                     {
@@ -316,7 +280,7 @@ pub async fn check_periodically_updates(
                         &extracted_binary_destination_path
                     );
                 }
-                if tool_name == "sozo" {
+                if tool == Tool::Sozo {
                     let extract_path = format!(
                         "{}/{}",
                         &binaries_dir_path_string,
@@ -329,13 +293,10 @@ pub async fn check_periodically_updates(
                         format!("{}{}", &extract_path, &binary_path_in_extracted_folder);
                     let version_str = parse_version_from_tag(&release.tag_name);
                     let version = Version::parse(&version_str)?;
-                    let tag_name = format!("v{}", version);
-                    let extracted_binary_destination_path = format!(
-                        "{}{}{}",
-                        binaries_dir_path_string, binary_destination_path_prefix, tag_name
-                    );
+                    let extracted_binary_destination_path =
+                        tool.binary_path(&binaries_dir_path_string, &version);
 
-                    // Move the binary to the destination directory (e.g. binaries/<tool_name>)
+                    // Move the binary to the destination directory (e.g. binaries/<tool>)
                     if let Some(destination_dir) =
                         Path::new(&extracted_binary_destination_path).parent()
                     {

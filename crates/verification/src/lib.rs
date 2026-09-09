@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub mod binary_names;
 pub mod db;
 pub mod helpers;
 pub mod manifest;
