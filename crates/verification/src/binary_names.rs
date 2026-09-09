@@ -27,20 +27,20 @@ pub fn bucket_arch_folder() -> Result<&'static str, Box<dyn Error>> {
 /// restore into the directory `is_installed` reads them from.
 pub const INSTALLED_MARKER_DIR: &str = ".installed";
 
-/// The name of the marker recording that release `tag` is installed.
-///
-/// The tag goes in verbatim except for the separators a Dojo tag carries
-/// (`sozo/v1.8.1`), which would otherwise open a subdirectory of their own.
-pub fn installed_marker_name(tag: &str) -> String {
-    tag.trim().replace(['/', '\\'], "_")
-}
-
 /// Where the marker for `tag` sits relative to the tool's directory.
 ///
 /// This is the tail of both the local path and the bucket key, which is what
 /// keeps the two in step.
 pub fn installed_marker_relative_path(tag: &str) -> String {
     format!("{INSTALLED_MARKER_DIR}/{}", installed_marker_name(tag))
+}
+
+/// The name of the marker recording that release `tag` is installed.
+///
+/// The tag goes in verbatim except for the separators a Dojo tag carries
+/// (`sozo/v1.8.1`), which would otherwise open a subdirectory of their own.
+fn installed_marker_name(tag: &str) -> String {
+    tag.trim().replace(['/', '\\'], "_")
 }
 
 /// A tool whose binaries the server keeps one version of per release.

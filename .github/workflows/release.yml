@@ -2,7 +2,7 @@ name: Release
 
 # Builds the image and pushes it to Artifact Registry. It does NOT deploy.
 #
-# Deploying is a deliberate, separate step performed from walnut-infra.
+# Deploying is a deliberate, separate step performed from starkloupe-infra.
 
 on:
   push:

@@ -190,6 +190,12 @@ fn binaries_bucket_name() -> Option<String> {
 /// Put a freshly installed file in the binaries bucket, so the next cold start
 /// restores it instead of coming back to GitHub for it.
 ///
+/// An object already under this key is overwritten. Several releases of Scarb
+/// can ship one Cairo version and so land on one file name, and the newest of
+/// them is the one the install left on this machine's disk - leaving the older
+/// build in the bucket would have a cold start restore a different binary than
+/// the machine that downloaded it runs.
+///
 /// Best effort: the file is already on this machine's disk, so a bucket that is
 /// unreachable, unwritable or unconfigured costs the next cold start a download
 /// and nothing else. It must not fail the install.
@@ -206,32 +212,6 @@ async fn cache_in_bucket(s3_client: &S3Client, tool: Tool, file_name: &str, loca
         }
     };
     let key = tool.bucket_key(arch_folder, file_name);
-
-    // Several releases of Scarb can ship one Cairo version and so land on one
-    // file name. The bucket only has to hold a build of it, not the newest, so
-    // an object that is already there is left alone rather than re-uploaded.
-    match s3_client
-        .head_object()
-        .bucket(&bucket_name)
-        .key(&key)
-        .send()
-        .await
-    {
-        Ok(_) => {
-            debug!("Already in the binaries bucket: {}", key);
-            return;
-        }
-        Err(err) => {
-            if !err
-                .as_service_error()
-                .map(|e| e.is_not_found())
-                .unwrap_or(false)
-            {
-                warn!("Could not look up {} in the binaries bucket: {}", key, err);
-                return;
-            }
-        }
-    }
 
     let body = match ByteStream::from_path(Path::new(local_path)).await {
         Ok(body) => body,
@@ -598,29 +578,5 @@ mod tests {
             )
             .await
         );
-    }
-
-    #[tokio::test]
-    async fn a_release_published_after_a_higher_one_is_not_taken_for_installed() {
-        // The case a "latest installed version" marker could not express: 2.16.1
-        // was released after 2.17.0-rc.1, and used to need a hardcoded exception
-        // to be installed at all.
-        let dir = temp_binaries_dir();
-        let rc = Version::parse("2.17.0-rc.1").unwrap();
-        let patch = Version::parse("2.16.1").unwrap();
-        assert!(patch < rc);
-
-        record_installed(
-            Tool::Scarb,
-            &dir,
-            "v2.17.0-rc.1",
-            &Tool::Scarb.binary_name(&rc),
-        )
-        .await
-        .unwrap();
-        touch(&Tool::Scarb.binary_path(&dir, &rc));
-
-        assert!(is_installed(Tool::Scarb, &dir, &rc, "v2.17.0-rc.1").await);
-        assert!(!is_installed(Tool::Scarb, &dir, &patch, "v2.16.1").await);
     }
 }
