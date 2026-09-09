@@ -1,6 +1,39 @@
 name: Bump starknet-foundry (release)
 
+# Opens the PR that actually moves the pinned starknet-foundry version.
+#
+# Only full releases are followed, and the PR pins by tag - `tag = "v0.63.0"` -
+# so the committed manifest names the release it tracks. Prereleases and release
+# candidates are ignored, and so is the tip of master; master drift is the
+# canary's job (bump-starknet-foundry.yml), which pins by rev and never commits.
+#
+# The PR is not merged here. It exists so ci.yml runs check + e2e against the
+# new version and a human presses the button.
 on:
+  # Fired by whoever notices the release. There is no workflow in
+  # foundry-rs/starknet-foundry that we control, so nothing sends this
+  # automatically today - the daily poll below is what actually drives the job.
+  # The trigger is wired up anyway, because it is the cheap half of the setup
+  # and it makes the bump reachable on demand:
+  #
+  #   gh api repos/${{ github.repository }}/dispatches \
+  #     -f event_type=starknet-foundry-release \
+  #     -F client_payload[tag]=v0.64.0
+  #
+  # client_payload keys, all optional:
+  #   tag        - release tag to pin; defaults to the latest full release
+  #   prerelease - if true the run is skipped, so a sender can forward every
+  #                release event unfiltered and let this job do the filtering
+  repository_dispatch:
+    types: [starknet-foundry-release]
+
+  # The fallback that makes this work without upstream cooperation. Releases
+  # land roughly monthly, so all but one run a month costs a few API calls and
+  # exits.
+  schedule:
+    # 05:23 UTC daily. Off the hour to avoid the scheduler's peak.
+    - cron: "23 5 * * *"
+
   workflow_dispatch:
     inputs:
       tag:
@@ -11,11 +44,17 @@ concurrency:
   group: bump-starknet-foundry-release
   cancel-in-progress: false
 
+# Enough for the GITHUB_TOKEN fallback below to push the branch and open the PR
+# on its own. When FOUNDRY_BUMP_TOKEN is set it is used instead, and these only
+# cover the API reads.
 permissions:
   contents: write
   pull-requests: write
 
 env:
+  # The `starkloupe` feature this server needs was upstreamed in #4584, so the
+  # deps are pinned to upstream directly and this job never rewrites the remote,
+  # only the version.
   FOUNDRY_REPO: foundry-rs/starknet-foundry
   BUMP_BRANCH: bump/starknet-foundry
   CARGO_TERM_COLOR: always
@@ -26,6 +65,192 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # A PR opened with GITHUB_TOKEN does not trigger workflows, which would
+      # leave the bump PR without the CI run that is the whole point of opening
+      # it. FOUNDRY_BUMP_TOKEN is a PAT with contents+pull-requests write; the
+      # fallback keeps the job runnable before the secret exists, at the cost of
+      # a PR somebody has to nudge to get CI on.
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.FOUNDRY_BUMP_TOKEN || github.token }}
+
+      # Cargo.toml may be pinned either way - by tag from a previous run of this
+      # job, or by rev from a hand-rolled bump off master - so the current pin is
+      # read rather than assumed, then resolved to a commit for the comparison
+      # below.
+      - name: Read current pin
+        id: pin
+        run: ./scripts/foundry_pin.py read >> "$GITHUB_OUTPUT"
+
+      # Resolves the tag to pin and decides whether there is anything to do.
+      #
+      # Three ways to bail out, all of them normal:
+      #   - the dispatch payload marks the release as a prerelease
+      #   - the release is already what Cargo.toml pins
+      #   - the release is not ahead of the pinned commit, which is the common
+      #     case here: the pin is currently 25 commits past v0.63.0, because
+      #     past bumps tracked master. Pinning a release we are already past
+      #     would be a downgrade.
+      - name: Resolve release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN_KEY: ${{ steps.pin.outputs.pin_key }}
+          PIN_VALUE: ${{ steps.pin.outputs.pin_value }}
+          PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
+          PAYLOAD_PRERELEASE: ${{ github.event.client_payload.prerelease }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "${PAYLOAD_PRERELEASE:-false}" = "true" ]; then
+            echo "Dispatch is for a prerelease; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag="${PAYLOAD_TAG:-${INPUT_TAG:-}}"
+          if [ -z "$tag" ]; then
+            # /releases/latest is the newest full release by definition - it
+            # excludes drafts and prereleases, unlike /releases.
+            tag=$(gh api "repos/${FOUNDRY_REPO}/releases/latest" --jq .tag_name)
+          else
+            # An explicitly named tag still has to be a full release.
+            if [ "$(gh api "repos/${FOUNDRY_REPO}/releases/tags/${tag}" --jq '.prerelease or .draft')" = "true" ]; then
+              echo "::error::${tag} is a draft or prerelease"
+              exit 1
+            fi
+          fi
+
+          if [ "$PIN_KEY" = "tag" ] && [ "$PIN_VALUE" = "$tag" ]; then
+            echo "Cargo.toml already pins ${tag}." >> "$GITHUB_STEP_SUMMARY"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # /commits/<ref> takes a tag or a sha, and resolves an annotated tag
+          # to its commit, so both kinds of pin land on a comparable sha.
+          rev=$(gh api "repos/${FOUNDRY_REPO}/commits/${tag}" --jq .sha)
+          current=$(gh api "repos/${FOUNDRY_REPO}/commits/${PIN_VALUE}" --jq .sha)
+
+          status=$(gh api "repos/${FOUNDRY_REPO}/compare/${current}...${rev}" --jq .status)
+
+          {
+            echo "### starknet-foundry ${tag}"
+            echo
+            echo "| | pin | commit |"
+            echo "| --- | --- | --- |"
+            echo "| current | \`${PIN_KEY} = ${PIN_VALUE}\` | \`${current}\` |"
+            echo "| release | \`tag = ${tag}\` | \`${rev}\` |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$status" = "ahead" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            # `status` describes the release relative to the current pin:
+            # `identical` when already bumped, `behind` when the pin tracked
+            # master past this release.
+            echo "${tag} is \`${status}\` the pinned commit; not bumping." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "tag=$tag"
+            echo "rev=$rev"
+            echo "current=$current"
+          } >> "$GITHUB_OUTPUT"
+
+      # Writes `tag = "<release>"` over whichever form the manifest had.
+      - name: Pin release tag
+        if: steps.release.outputs.proceed == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ./scripts/foundry_pin.py set tag "$TAG"
+          git --no-pager diff -- Cargo.toml
+
+      - name: Install Rust toolchain
+        if: steps.release.outputs.proceed == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      # Updates Cargo.lock to match, and fails here rather than in the PR if the
+      # release moved to a cairo-lang or blockifier version the workspace pins
+      # differently. Compiling is left to the PR's own CI run.
+      - name: Update Cargo.lock
+        if: steps.release.outputs.proceed == 'true'
+        run: cargo fetch
+
+      # A single long-lived branch, force-pushed. Consecutive releases update
+      # the open PR instead of stacking up new ones, and the force-push
+      # re-triggers CI on it.
+      - name: Push bump branch
+        if: steps.release.outputs.proceed == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          REV: ${{ steps.release.outputs.rev }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BUMP_BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "Bump starknet-foundry to ${TAG}" -m "${REV}"
+          git push --force origin "$BUMP_BRANCH"
+
+      # `gh pr create` fails when a PR is already open for the branch, which is
+      # the expected state on the second release in a row - the force-push above
+      # has already updated it, so only title and body need refreshing.
+      - name: Open or update PR
+        if: steps.release.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FOUNDRY_BUMP_TOKEN || github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          REV: ${{ steps.release.outputs.rev }}
+          CURRENT: ${{ steps.release.outputs.current }}
+          PIN_KEY: ${{ steps.pin.outputs.pin_key }}
+          PIN_VALUE: ${{ steps.pin.outputs.pin_value }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/pr-body.md <<EOF
+          Pins \`${FOUNDRY_REPO}\` at [\`${TAG}\`](https://github.com/${FOUNDRY_REPO}/releases/tag/${TAG}).
+
+          | | pin | commit |
+          | --- | --- | --- |
+          | was | \`${PIN_KEY} = ${PIN_VALUE}\` | \`${CURRENT}\` |
+          | now | \`tag = ${TAG}\` | \`${REV}\` |
+
+          [Changes](https://github.com/${FOUNDRY_REPO}/compare/${CURRENT}...${REV}) since the previous pin.
+
+          Opened by [\`bump-starknet-foundry-release.yml\`](${RUN_URL}). Merge once CI is green.
+          EOF
+
+          existing=$(gh pr list --head "$BUMP_BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" \
+              --title "Bump starknet-foundry to ${TAG}" \
+              --body-file /tmp/pr-body.md
+            url="$existing"
+          else
+            url=$(gh pr create \
+              --head "$BUMP_BRANCH" \
+              --base "$BASE_BRANCH" \
+              --title "Bump starknet-foundry to ${TAG}" \
+              --body-file /tmp/pr-body.md)
+          fi
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notifying about bump fail!
+        if: failure()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          webhook: ${{ secrets.SLACK_FOUNDRY_BUMP_WEBHOOK_URL }}
+          webhook-type: webhook-trigger
+          payload: |
+            {
+              "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }

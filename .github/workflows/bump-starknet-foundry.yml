@@ -7,8 +7,9 @@ name: Bump starknet-foundry
 # Nothing is committed - this only answers "would the next bump break us?" a week
 # before somebody does it by hand. A failure pings Slack.
 #
-# The bump that is actually committed happens elsewhere, and follows releases
-# rather than master: see bump-starknet-foundry-release.yml.
+# This job pins by rev, because master has no tag. The bump that is actually
+# committed happens elsewhere and pins by tag, because it follows releases:
+# see bump-starknet-foundry-release.yml.
 on:
   schedule:
     # Mondays, 04:17 UTC. Off the hour to avoid the scheduler's peak.
@@ -58,15 +59,25 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      # Cargo.toml may be pinned either way - by tag from a release bump, or by
+      # rev from a previous hand-rolled bump off master - so the current pin is
+      # read rather than assumed, then resolved to a commit to compare against
+      # the branch tip.
+      - name: Read current pin
+        id: pin
+        run: ./scripts/foundry_pin.py read >> "$GITHUB_OUTPUT"
+
       - name: Resolve latest revision
         id: rev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN_KEY: ${{ steps.pin.outputs.pin_key }}
+          PIN_VALUE: ${{ steps.pin.outputs.pin_value }}
         run: |
           set -euo pipefail
-          current=$(sed -n -E 's#.*starknet-foundry\.git", *rev = "([0-9a-f]{40})".*#\1#p' Cargo.toml | head -1)
-          if [ -z "$current" ]; then
-            echo "::error::No pinned starknet-foundry rev found in Cargo.toml"
-            exit 1
-          fi
+          # /commits/<ref> takes a tag or a sha, and resolves an annotated tag to
+          # its commit, so both kinds of pin land on a comparable sha.
+          current=$(gh api "repos/${FOUNDRY_REPO}/commits/${PIN_VALUE}" --jq .sha)
           latest=$(git ls-remote "https://github.com/${FOUNDRY_REPO}.git" "refs/heads/${FOUNDRY_REF}" | cut -f1)
           if [ -z "$latest" ]; then
             echo "::error::Branch ${FOUNDRY_REF} does not exist in ${FOUNDRY_REPO}"
@@ -80,25 +91,25 @@ jobs:
           {
             echo "### starknet-foundry bump"
             echo
-            echo "| | rev |"
-            echo "| --- | --- |"
-            echo "| pinned | \`${current}\` |"
-            echo "| ${FOUNDRY_REF} | \`${latest}\` |"
+            echo "| | pin | commit |"
+            echo "| --- | --- | --- |"
+            echo "| current | \`${PIN_KEY} = ${PIN_VALUE}\` | \`${current}\` |"
+            echo "| ${FOUNDRY_REF} | \`rev = ${latest}\` | \`${latest}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Already up to date
         if: steps.rev.outputs.changed == 'false'
         run: echo "Cargo.toml already pins the tip of ${FOUNDRY_REF}; nothing to test." >> "$GITHUB_STEP_SUMMARY"
 
-      # Every starknet-foundry crate is declared on its own line against the same
-      # remote and rev, so one address moves them all.
-      - name: Repoint Cargo.toml
+      # Writes `rev = "<sha>"` over whichever form the manifest had. Discarded
+      # with the runner - this job never commits.
+      - name: Pin latest rev
         if: steps.rev.outputs.changed == 'true'
         env:
           LATEST_REV: ${{ steps.rev.outputs.latest }}
         run: |
           set -euo pipefail
-          sed -i -E "/starknet-foundry\.git/ s#rev = \"[0-9a-f]{40}\"#rev = \"${LATEST_REV}\"#" Cargo.toml
+          ./scripts/foundry_pin.py set rev "$LATEST_REV"
           git --no-pager diff -- Cargo.toml
 
       # Split out from the build so a resolution failure - upstream having moved
