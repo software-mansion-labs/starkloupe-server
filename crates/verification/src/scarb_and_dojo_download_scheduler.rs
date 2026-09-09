@@ -1,6 +1,8 @@
-use crate::binary_names::Tool;
+use crate::binary_names::{bucket_arch_folder, installed_marker_relative_path, Tool};
 use async_compression::tokio::bufread::GzipDecoder;
 use async_tar::Archive;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client as S3Client;
 use futures::StreamExt;
 use lazy_regex::regex;
 use reqwest::Client;
@@ -160,14 +162,75 @@ fn parse_version_from_tag(tag_name: &str) -> String {
     version_str.to_string()
 }
 
-pub async fn check_periodically_sozo_updates(repo: &str) -> Result<(), Box<dyn Error>> {
-    check_periodically_updates(repo, Tool::Sozo, "1.0.12", "/sozo").await
+pub async fn check_periodically_sozo_updates(
+    repo: &str,
+    s3_client: &S3Client,
+) -> Result<(), Box<dyn Error>> {
+    check_periodically_updates(repo, Tool::Sozo, "1.0.12", "/sozo", s3_client).await
 }
 
 pub async fn check_periodically_scarb_updates(
     repo: &str,
+    s3_client: &S3Client,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    check_periodically_updates(repo, Tool::Scarb, "2.8.5", "/bin/scarb").await
+    check_periodically_updates(repo, Tool::Scarb, "2.8.5", "/bin/scarb", s3_client).await
+}
+
+/// The bucket the binaries are cached in, if one is configured.
+///
+/// Local runs leave `BINARIES_S3_BUCKET_NAME` empty; there is nothing to cache
+/// into then, and an install is none the worse for it.
+fn binaries_bucket_name() -> Option<String> {
+    std::env::var("BINARIES_S3_BUCKET_NAME")
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
+/// Put a freshly installed file in the binaries bucket, so the next cold start
+/// restores it instead of coming back to GitHub for it.
+///
+/// An object already under this key is overwritten. Several releases of Scarb
+/// can ship one Cairo version and so land on one file name, and the newest of
+/// them is the one the install left on this machine's disk - leaving the older
+/// build in the bucket would have a cold start restore a different binary than
+/// the machine that downloaded it runs.
+///
+/// Best effort: the file is already on this machine's disk, so a bucket that is
+/// unreachable, unwritable or unconfigured costs the next cold start a download
+/// and nothing else. It must not fail the install.
+async fn cache_in_bucket(s3_client: &S3Client, tool: Tool, file_name: &str, local_path: &str) {
+    let Some(bucket_name) = binaries_bucket_name() else {
+        debug!("No binaries bucket configured, not caching {}", file_name);
+        return;
+    };
+    let arch_folder = match bucket_arch_folder() {
+        Ok(folder) => folder,
+        Err(err) => {
+            warn!("Not caching {}: {}", file_name, err);
+            return;
+        }
+    };
+    let key = tool.bucket_key(arch_folder, file_name);
+
+    let body = match ByteStream::from_path(Path::new(local_path)).await {
+        Ok(body) => body,
+        Err(err) => {
+            warn!("Could not read {} to cache it: {}", local_path, err);
+            return;
+        }
+    };
+    match s3_client
+        .put_object()
+        .bucket(&bucket_name)
+        .key(&key)
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(_) => info!("Cached in the binaries bucket: {}", key),
+        Err(err) => warn!("Could not cache {} in the binaries bucket: {}", key, err),
+    }
 }
 
 /// Whether the binary for release `tag` is already on disk.
@@ -232,6 +295,7 @@ pub async fn check_periodically_updates(
     // We support here every version above that
     latest_unsupported_tag: &str,
     binary_path_in_extracted_folder: &str,
+    s3_client: &S3Client,
 ) -> Result<(), Box<dyn Error>> {
     let binaries_dir_path_string =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or_else(|_| ".".to_string());
@@ -322,17 +386,37 @@ pub async fn check_periodically_updates(
                     // Record the install under the release tag: the name above
                     // carries the Cairo version, which nothing can derive from
                     // the tag without downloading the binary again.
+                    let binary_name = tool.binary_name(&version);
                     record_installed(
                         tool,
                         &binaries_dir_path_string,
                         &release.tag_name,
-                        &tool.binary_name(&version),
+                        &binary_name,
                     )
                     .await?;
                     info!(
                         "Extracted successfully: {}",
                         &extracted_binary_destination_path
                     );
+
+                    // The marker goes to the bucket with the binary: without it
+                    // a restored binary cannot be matched back to this release,
+                    // and the release would be downloaded again to find out
+                    // which Cairo version it ships.
+                    cache_in_bucket(
+                        s3_client,
+                        tool,
+                        &binary_name,
+                        &extracted_binary_destination_path,
+                    )
+                    .await;
+                    cache_in_bucket(
+                        s3_client,
+                        tool,
+                        &installed_marker_relative_path(&release.tag_name),
+                        &tool.installed_marker_path(&binaries_dir_path_string, &release.tag_name),
+                    )
+                    .await;
                 }
                 if tool == Tool::Sozo {
                     let extract_path = format!(
@@ -362,6 +446,16 @@ pub async fn check_periodically_updates(
                         "Extracted successfully: {}",
                         &extracted_binary_destination_path
                     );
+
+                    // No marker to go with it: a Sozo binary is named after the
+                    // tag, so restoring it is enough to recognise the release.
+                    cache_in_bucket(
+                        s3_client,
+                        tool,
+                        &tool.binary_name(&release_version),
+                        &extracted_binary_destination_path,
+                    )
+                    .await;
                 }
             }
             // Remove the tar.gz file
@@ -372,4 +466,141 @@ pub async fn check_periodically_updates(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_installed, record_installed};
+    use crate::binary_names::Tool;
+    use semver::Version;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A directory of its own per test, so the installs of one are not the
+    /// installs of another.
+    fn temp_binaries_dir() -> String {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "walnut-binaries-test-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    fn touch(path: &str) {
+        fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+        fs::write(path, b"").unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_sozo_release_is_installed_when_its_binary_is_there() {
+        // The file name follows from the tag, so nothing else has to be kept -
+        // a binary restored from the bucket is recognised on its own.
+        let dir = temp_binaries_dir();
+        let version = Version::parse("1.8.1").unwrap();
+
+        assert!(!is_installed(Tool::Sozo, &dir, &version, "sozo/v1.8.1").await);
+
+        touch(&Tool::Sozo.binary_path(&dir, &version));
+        assert!(is_installed(Tool::Sozo, &dir, &version, "sozo/v1.8.1").await);
+    }
+
+    #[tokio::test]
+    async fn a_scarb_release_is_installed_only_once_it_has_been_recorded() {
+        // A Scarb binary is named after the Cairo version it ships, which the
+        // tag does not give us - the binary sitting there under some other name
+        // cannot be matched to this release without the marker. This is why the
+        // marker is cached in the bucket alongside the binary.
+        let dir = temp_binaries_dir();
+        let version = Version::parse("2.12.0").unwrap();
+        let binary_name = Tool::Scarb.binary_name("2.11.4");
+        touch(&format!("{}/{}", Tool::Scarb.binary_dir(&dir), binary_name));
+
+        assert!(!is_installed(Tool::Scarb, &dir, &version, "v2.12.0").await);
+
+        record_installed(Tool::Scarb, &dir, "v2.12.0", &binary_name)
+            .await
+            .unwrap();
+        assert!(is_installed(Tool::Scarb, &dir, &version, "v2.12.0").await);
+    }
+
+    #[tokio::test]
+    async fn a_scarb_release_whose_binary_was_removed_installs_again() {
+        // The marker on its own is not proof: a binary deleted off the disk has
+        // to come back.
+        let dir = temp_binaries_dir();
+        let version = Version::parse("2.12.0").unwrap();
+        let binary_name = Tool::Scarb.binary_name("2.12.0");
+        let binary_path = format!("{}/{}", Tool::Scarb.binary_dir(&dir), binary_name);
+
+        touch(&binary_path);
+        record_installed(Tool::Scarb, &dir, "v2.12.0", &binary_name)
+            .await
+            .unwrap();
+        assert!(is_installed(Tool::Scarb, &dir, &version, "v2.12.0").await);
+
+        fs::remove_file(&binary_path).unwrap();
+        assert!(!is_installed(Tool::Scarb, &dir, &version, "v2.12.0").await);
+    }
+
+    #[tokio::test]
+    async fn two_releases_shipping_one_cairo_version_share_a_binary() {
+        // Several Scarb releases ship the same Cairo version and so land on one
+        // file name. Each gets its own marker, so neither is downloaded twice.
+        let dir = temp_binaries_dir();
+        let cairo = Version::parse("2.12.0").unwrap();
+        let binary_name = Tool::Scarb.binary_name(&cairo);
+        touch(&format!("{}/{}", Tool::Scarb.binary_dir(&dir), binary_name));
+
+        for tag in ["v2.12.0", "v2.12.1"] {
+            record_installed(Tool::Scarb, &dir, tag, &binary_name)
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            is_installed(
+                Tool::Scarb,
+                &dir,
+                &Version::parse("2.12.0").unwrap(),
+                "v2.12.0"
+            )
+            .await
+        );
+        assert!(
+            is_installed(
+                Tool::Scarb,
+                &dir,
+                &Version::parse("2.12.1").unwrap(),
+                "v2.12.1"
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_release_published_after_a_higher_one_is_not_taken_for_installed() {
+        // The case a "latest installed version" marker could not express: 2.16.1
+        // was released after 2.17.0-rc.1, and used to need a hardcoded exception
+        // to be installed at all.
+        let dir = temp_binaries_dir();
+        let rc = Version::parse("2.17.0-rc.1").unwrap();
+        let patch = Version::parse("2.16.1").unwrap();
+        assert!(patch < rc);
+
+        record_installed(
+            Tool::Scarb,
+            &dir,
+            "v2.17.0-rc.1",
+            &Tool::Scarb.binary_name(&rc),
+        )
+        .await
+        .unwrap();
+        touch(&Tool::Scarb.binary_path(&dir, &rc));
+
+        assert!(is_installed(Tool::Scarb, &dir, &rc, "v2.17.0-rc.1").await);
+        assert!(!is_installed(Tool::Scarb, &dir, &patch, "v2.16.1").await);
+    }
 }
