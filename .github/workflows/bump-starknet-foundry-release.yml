@@ -1,0 +1,31 @@
+name: Bump starknet-foundry (release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to pin (default: latest full release)"
+        required: false
+
+concurrency:
+  group: bump-starknet-foundry-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FOUNDRY_REPO: foundry-rs/starknet-foundry
+  BUMP_BRANCH: bump/starknet-foundry
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bump:
+    name: open bump PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.FOUNDRY_BUMP_TOKEN || github.token }}
