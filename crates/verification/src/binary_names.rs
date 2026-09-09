@@ -6,7 +6,42 @@
 //! schedulers) and everything that runs one (the verifier) goes through here,
 //! so the two cannot drift apart.
 
+use std::env::consts::ARCH;
+use std::error::Error;
 use std::fmt::{self, Display};
+
+/// The folder the bucket keys this machine's binaries under.
+///
+/// Note it is not `ARCH`: the bucket says "arm64" where Rust says "aarch64".
+pub fn bucket_arch_folder() -> Result<&'static str, Box<dyn Error>> {
+    match ARCH {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" | "arm" => Ok("arm64"),
+        other => Err(Box::from(format!("Unsupported architecture: {}", other))),
+    }
+}
+
+/// The directory the install markers are kept in, under the tool's own.
+///
+/// Both the local path and the bucket key go through here, so the markers
+/// restore into the directory `is_installed` reads them from.
+pub const INSTALLED_MARKER_DIR: &str = ".installed";
+
+/// The name of the marker recording that release `tag` is installed.
+///
+/// The tag goes in verbatim except for the separators a Dojo tag carries
+/// (`sozo/v1.8.1`), which would otherwise open a subdirectory of their own.
+pub fn installed_marker_name(tag: &str) -> String {
+    tag.trim().replace(['/', '\\'], "_")
+}
+
+/// Where the marker for `tag` sits relative to the tool's directory.
+///
+/// This is the tail of both the local path and the bucket key, which is what
+/// keeps the two in step.
+pub fn installed_marker_relative_path(tag: &str) -> String {
+    format!("{INSTALLED_MARKER_DIR}/{}", installed_marker_name(tag))
+}
 
 /// A tool whose binaries the server keeps one version of per release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,12 +95,22 @@ impl Tool {
     /// known once the archive has been downloaded and the binary run. Keying
     /// the marker by the release tag instead lets an already installed release
     /// be recognised without downloading it again.
-    ///
-    /// The tag goes in verbatim except for the separators a Dojo tag carries
-    /// (`sozo/v1.8.1`), which would otherwise open a subdirectory.
     pub fn installed_marker_path(self, binaries_dir: &str, tag: &str) -> String {
-        let file_name = tag.trim().replace(['/', '\\'], "_");
-        format!("{}/.installed/{file_name}", self.binary_dir(binaries_dir))
+        format!(
+            "{}/{}",
+            self.binary_dir(binaries_dir),
+            installed_marker_relative_path(tag)
+        )
+    }
+
+    /// The bucket key `file_name` is cached under for this architecture.
+    ///
+    /// The architecture segment exists only in the bucket; on disk everything
+    /// lives under `<binaries dir>/<tool>`. `file_name` is the path relative to
+    /// that directory, so it carries [`INSTALLED_MARKER_DIR`] for a marker.
+    pub fn bucket_key(self, arch_folder: &str, file_name: &str) -> String {
+        let (directory, _) = self.directory_and_prefix();
+        format!("{directory}/{arch_folder}/{file_name}")
     }
 }
 
@@ -78,7 +123,7 @@ impl Display for Tool {
 
 #[cfg(test)]
 mod tests {
-    use super::Tool;
+    use super::{installed_marker_relative_path, Tool};
     use semver::Version;
 
     #[test]
@@ -146,6 +191,32 @@ mod tests {
         assert_eq!(
             Tool::Sozo.installed_marker_path("/opt/app/binaries", "sozo/v1.8.1"),
             "/opt/app/binaries/sozo/.installed/sozo_v1.8.1"
+        );
+    }
+
+    #[test]
+    fn caches_a_marker_under_the_same_key_shape_as_a_binary() {
+        // `local_path_for` on the download side only accepts
+        // `<tool>/<arch>/<name>`, so a marker restores like any binary does.
+        assert_eq!(
+            Tool::Scarb.bucket_key("x86_64", &Tool::Scarb.binary_name("2.12.0")),
+            "scarb/x86_64/scarb_cairo_v2.12.0"
+        );
+        assert_eq!(
+            Tool::Scarb.bucket_key("x86_64", &installed_marker_relative_path("v2.12.0")),
+            "scarb/x86_64/.installed/v2.12.0"
+        );
+    }
+
+    #[test]
+    fn caches_a_marker_where_the_download_side_puts_it_back() {
+        // The bucket key and the local path have to name the same file, or a
+        // restored marker lands somewhere `is_installed` never looks.
+        let key = Tool::Scarb.bucket_key("x86_64", &installed_marker_relative_path("v2.12.0"));
+        let restored = format!("/opt/app/binaries/{}", key.replace("/x86_64/", "/"));
+        assert_eq!(
+            restored,
+            Tool::Scarb.installed_marker_path("/opt/app/binaries", "v2.12.0")
         );
     }
 

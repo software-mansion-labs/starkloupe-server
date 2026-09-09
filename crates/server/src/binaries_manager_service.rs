@@ -2,7 +2,6 @@ use aws_sdk_s3::Client;
 use chrono::Utc;
 use clokwerk::{AsyncScheduler, TimeUnits};
 use lazy_regex::regex_captures;
-use std::env::consts::ARCH;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -11,35 +10,29 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::spawn;
 use tracing::{error, info, warn};
-use verification::binary_names::Tool;
+use verification::binary_names::{bucket_arch_folder, Tool};
 use verification::scarb_and_dojo_download_scheduler::{
     check_periodically_scarb_updates, check_periodically_sozo_updates,
 };
-
-/// The folder the bucket keys this machine's binaries under.
-///
-/// Note it is not `ARCH`: the bucket says "arm64" where Rust says "aarch64".
-fn bucket_arch_folder() -> Result<&'static str, Box<dyn std::error::Error>> {
-    match ARCH {
-        "x86_64" => Ok("x86_64"),
-        "aarch64" | "arm" => Ok("arm64"),
-        other => Err(Box::from(format!("Unsupported architecture: {}", other))),
-    }
-}
 
 /// Where a bucket object belongs on disk: `scarb/x86_64/scarb_cairo_v2.10.1`
 /// becomes `<BINARIES_SAVE_DIRECTORY_PATH>/scarb/scarb_cairo_v2.10.1`. The
 /// architecture segment exists only in the bucket - the verifier looks under
 /// `<dir>/<tool>/<name>`.
 ///
-/// Returns `None` for keys that are not `<tool>/<arch_folder>/<name>`: other
-/// architectures, and the empty folder markers a listing can contain.
+/// The name may be an install marker, which lives one directory deeper (in
+/// `binary_names::INSTALLED_MARKER_DIR`); the rest of the path is carried over
+/// as it is, so a marker restores where `is_installed` reads it from.
+///
+/// Returns `None` for keys of any other shape: other architectures, deeper
+/// nesting, and the empty folder markers a listing can contain.
 fn local_path_for(
     object_key: &str,
     arch_folder: &str,
     binaries_save_directory_path: &str,
 ) -> Option<String> {
-    let (_, tool, arch, name) = regex_captures!(r"^([^/]+)/([^/]+)/([^/]+)$", object_key)?;
+    let (_, tool, arch, name) =
+        regex_captures!(r"^([^/]+)/([^/]+)/(\.installed/[^/]+|[^/]+)$", object_key)?;
     (arch == arch_folder).then(|| format!("{binaries_save_directory_path}/{tool}/{name}"))
 }
 
@@ -69,10 +62,11 @@ async fn list_bucket_objects(
 
 /// Populate the local toolchain directory from the binaries bucket.
 ///
-/// This will pull binaries available in the bucket for this architecture.
-/// The bucket should be populated separately.
-/// No assumptions about bucket contents.
-/// Future toolchains are pulled via scheduled check from github releases.
+/// This will pull the objects the bucket holds for this architecture, making no
+/// assumptions about which those are. Whatever is missing is pulled from GitHub
+/// releases by the scheduler started right after this, which caches what it
+/// installs back into the bucket - so each release is fetched from GitHub once
+/// across all machines, and a cold start after that restores it from here.
 pub async fn download_scarb_and_sozo_binaries_from_s3(
     s3_client: &Client,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -198,20 +192,22 @@ async fn download_binary(
     Ok(true)
 }
 
-pub async fn start_github_scarb_binaries_downloader_scheduler() {
+pub async fn start_github_scarb_binaries_downloader_scheduler(s3_client: Client) {
     start_downloader_scheduler(
         Tool::Scarb,
         "SCARB_GITHUB_REPO_NAME".to_string(),
         "SCARB_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
+        s3_client,
     )
     .await;
 }
 
-pub async fn start_github_dojo_binaries_downloader_scheduler() {
+pub async fn start_github_dojo_binaries_downloader_scheduler(s3_client: Client) {
     start_downloader_scheduler(
         Tool::Sozo,
         "DOJO_GITHUB_REPO_NAME".to_string(),
         "DOJO_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
+        s3_client,
     )
     .await;
 }
@@ -222,6 +218,7 @@ pub async fn start_downloader_scheduler(
     tool: Tool,
     repo_env_var: String,
     interval_env_var: String,
+    s3_client: Client,
 ) {
     let interval: u32 = std::env::var(&interval_env_var)
         .unwrap_or_else(|_| "60".to_string())
@@ -234,12 +231,13 @@ pub async fn start_downloader_scheduler(
         tool, &interval
     );
 
-    run_task(tool, repo_env_var.as_ref()).await;
+    run_task(tool, repo_env_var.as_ref(), &s3_client).await;
 
     scheduler.every(interval.minutes()).run(move || {
         let repo_env_var = repo_env_var.clone();
+        let s3_client = s3_client.clone();
         async move {
-            run_task(tool, repo_env_var.as_ref()).await;
+            run_task(tool, repo_env_var.as_ref(), &s3_client).await;
         }
     });
 
@@ -251,7 +249,7 @@ pub async fn start_downloader_scheduler(
     });
 }
 
-async fn run_task(tool: Tool, repo_env_var: &str) {
+async fn run_task(tool: Tool, repo_env_var: &str, s3_client: &Client) {
     info!("Starting {} update check", tool);
 
     let repo = match std::env::var(repo_env_var) {
@@ -263,8 +261,8 @@ async fn run_task(tool: Tool, repo_env_var: &str) {
     };
 
     let res = match tool {
-        Tool::Scarb => check_periodically_scarb_updates(repo.as_ref()).await,
-        Tool::Sozo => check_periodically_sozo_updates(repo.as_ref()).await,
+        Tool::Scarb => check_periodically_scarb_updates(repo.as_ref(), s3_client).await,
+        Tool::Sozo => check_periodically_sozo_updates(repo.as_ref(), s3_client).await,
     };
 
     match res {
@@ -276,6 +274,7 @@ async fn run_task(tool: Tool, repo_env_var: &str) {
 #[cfg(test)]
 mod tests {
     use super::local_path_for;
+    use verification::binary_names::{installed_marker_relative_path, Tool};
 
     #[test]
     fn maps_a_bucket_key_to_the_path_the_verifier_reads() {
@@ -302,11 +301,37 @@ mod tests {
     }
 
     #[test]
+    fn restores_an_install_marker_into_the_directory_it_is_read_from() {
+        // The marker keyed by release tag is cached with the binaries, and has
+        // to land where `is_installed` looks for it. Building the expected path
+        // from `installed_marker_path` ties this to the naming, so the two
+        // cannot drift - the key here is one directory deeper than a binary.
+        assert_eq!(
+            local_path_for(
+                &Tool::Scarb.bucket_key("x86_64", &installed_marker_relative_path("v2.12.0")),
+                "x86_64",
+                "/opt/app/binaries"
+            ),
+            Some(Tool::Scarb.installed_marker_path("/opt/app/binaries", "v2.12.0"))
+        );
+    }
+
+    #[test]
     fn rejects_anything_that_is_not_tool_arch_name() {
         assert_eq!(local_path_for("scarb/x86_64/", "x86_64", "/binaries"), None);
         assert_eq!(local_path_for("scarb/x86_64", "x86_64", "/binaries"), None);
         assert_eq!(
             local_path_for("scarb/x86_64/nested/scarb", "x86_64", "/binaries"),
+            None
+        );
+        // Only the marker directory goes one level deeper, and only with a
+        // file in it.
+        assert_eq!(
+            local_path_for("scarb/x86_64/.installed/", "x86_64", "/binaries"),
+            None
+        );
+        assert_eq!(
+            local_path_for("scarb/x86_64/.installed/a/b", "x86_64", "/binaries"),
             None
         );
         assert_eq!(local_path_for("", "x86_64", "/binaries"), None);
