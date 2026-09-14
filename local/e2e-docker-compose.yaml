@@ -45,7 +45,7 @@ services:
       retries: 30
 
   createbuckets:
-    image: minio/mc
+    image: quay.io/minio/mc
     depends_on:
       minio:
         condition: service_healthy
