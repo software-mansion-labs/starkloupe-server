@@ -11,6 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::spawn;
 use tracing::{error, info, warn};
+use verification::binary_names::Tool;
 use verification::scarb_and_dojo_download_scheduler::{
     check_periodically_scarb_updates, check_periodically_sozo_updates,
 };
@@ -199,7 +200,7 @@ async fn download_binary(
 
 pub async fn start_github_scarb_binaries_downloader_scheduler() {
     start_downloader_scheduler(
-        "scarb".to_string(),
+        Tool::Scarb,
         "SCARB_GITHUB_REPO_NAME".to_string(),
         "SCARB_LATEST_VERSION_FILE_NAME".to_string(),
         "SCARB_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
@@ -209,7 +210,7 @@ pub async fn start_github_scarb_binaries_downloader_scheduler() {
 
 pub async fn start_github_dojo_binaries_downloader_scheduler() {
     start_downloader_scheduler(
-        "sozo".to_string(),
+        Tool::Sozo,
         "DOJO_GITHUB_REPO_NAME".to_string(),
         "DOJO_LATEST_VERSION_FILE_NAME".to_string(),
         "DOJO_RUN_SCHEDULER_INTERVAL_MINUTES".to_string(),
@@ -220,7 +221,7 @@ pub async fn start_github_dojo_binaries_downloader_scheduler() {
 // 1. Runs immidiately after app startup
 // 2. Then runs every X minutes (60 by default)
 pub async fn start_downloader_scheduler(
-    tool_name: String,
+    tool: Tool,
     repo_env_var: String,
     versioning_file_name_env_var: String,
     interval_env_var: String,
@@ -233,23 +234,22 @@ pub async fn start_downloader_scheduler(
     let mut scheduler = AsyncScheduler::with_tz(Utc);
     info!(
         "Starting {} binaries downloader scheduler. Checking every: {} minutes",
-        &tool_name, &interval
+        tool, &interval
     );
 
     run_task(
-        tool_name.as_ref(),
+        tool,
         repo_env_var.as_ref(),
         versioning_file_name_env_var.as_ref(),
     )
     .await;
 
     scheduler.every(interval.minutes()).run(move || {
-        let name = tool_name.clone();
         let repo_env_var = repo_env_var.clone();
         let versioning_file_name_env_var = versioning_file_name_env_var.clone();
         async move {
             run_task(
-                name.as_ref(),
+                tool,
                 repo_env_var.as_ref(),
                 versioning_file_name_env_var.as_ref(),
             )
@@ -265,8 +265,8 @@ pub async fn start_downloader_scheduler(
     });
 }
 
-async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_var: &str) {
-    info!("Starting {} update check", tool_name);
+async fn run_task(tool: Tool, repo_env_var: &str, versioning_file_name_env_var: &str) {
+    info!("Starting {} update check", tool);
 
     let repo = match std::env::var(repo_env_var) {
         Ok(value) => value,
@@ -287,22 +287,18 @@ async fn run_task(tool_name: &str, repo_env_var: &str, versioning_file_name_env_
         }
     };
 
-    let res = match tool_name {
-        "scarb" => {
+    let res = match tool {
+        Tool::Scarb => {
             check_periodically_scarb_updates(repo.as_ref(), versioning_file_name.as_ref()).await
         }
-        "sozo" => {
+        Tool::Sozo => {
             check_periodically_sozo_updates(repo.as_ref(), versioning_file_name.as_ref()).await
-        }
-        _ => {
-            error!("Unknown tool name: {}", &tool_name);
-            return;
         }
     };
 
     match res {
-        Ok(_) => info!("Finished {} update check", tool_name),
-        Err(err) => error!("Error in {} update check: {:?}", tool_name, err),
+        Ok(_) => info!("Finished {} update check", tool),
+        Err(err) => error!("Error in {} update check: {:?}", tool, err),
     }
 }
 

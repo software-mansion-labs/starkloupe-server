@@ -1,4 +1,5 @@
 use crate::artifacts::{read_new_cairo_version_artifacts, read_old_cairo_version_artifacts};
+use crate::binary_names::Tool;
 use crate::manifest::Manifest;
 use crate::utils::set_limits;
 
@@ -160,9 +161,9 @@ pub async fn compile_with_scarb_for_profile(
 
     let binaries_save_directory_path =
         std::env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-    let scarb_path = format!(
-        "{}/scarb/scarb_cairo_v_{}_{}_{}",
-        binaries_save_directory_path, starknet_version.0, starknet_version.1, starknet_version.2
+    let scarb_path = Tool::Scarb.binary_path(
+        &binaries_save_directory_path,
+        tuple_to_version_string(starknet_version),
     );
 
     run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
@@ -202,17 +203,14 @@ pub async fn build_with_scarb_for_profile(
         }
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-        let sozo_path = format!("{binaries_save_directory_path}/sozo/sozo_{}", dojo_version);
+        let sozo_path = Tool::Sozo.binary_path(&binaries_save_directory_path, dojo_version);
         run_project_build_for_profile(tmp_dir, &sozo_path, profile, build_timeout).await?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
-        let scarb_path = format!(
-            "{}/scarb/scarb_cairo_v{}.{}.{}",
-            binaries_save_directory_path,
-            manifest.cairo_version.0,
-            manifest.cairo_version.1,
-            manifest.cairo_version.2
+        let scarb_path = Tool::Scarb.binary_path(
+            &binaries_save_directory_path,
+            tuple_to_version_string(manifest.cairo_version),
         );
         run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
     }
