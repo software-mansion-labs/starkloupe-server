@@ -2857,17 +2857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cookie"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cd91cf61412820176e137621345ee43b3f4423e589e7ae4e50d601d93e35ef8"
-dependencies = [
- "percent-encoding",
- "time",
- "version_check",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3389,17 +3378,6 @@ dependencies = [
  "starknet-types-core",
  "test-case",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "db"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "sqlx",
- "time",
- "uuid 1.6.1",
 ]
 
 [[package]]
@@ -4177,7 +4155,7 @@ dependencies = [
  "hashers",
  "http 0.2.9",
  "instant",
- "jsonwebtoken 8.3.0",
+ "jsonwebtoken",
  "once_cell",
  "pin-project",
  "reqwest 0.11.27",
@@ -5834,23 +5812,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6971da4d9c3aa03c3d8f3ff0f4155b534aad021292003895a469716b2a230378"
 dependencies = [
  "base64 0.21.5",
- "pem 1.1.1",
+ "pem",
  "ring 0.16.20",
- "serde",
- "serde_json",
- "simple_asn1",
-]
-
-[[package]]
-name = "jsonwebtoken"
-version = "9.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c7ea04a7c5c055c175f189b6dc6ba036fd62306b58c66c9f6389036c503a3f4"
-dependencies = [
- "base64 0.21.5",
- "js-sys",
- "pem 3.0.2",
- "ring 0.17.5",
  "serde",
  "serde_json",
  "simple_asn1",
@@ -6896,16 +6859,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8835c273a76a90455d7344889b0964598e3316e2a79ede8e36f16bdcf2228b8"
 dependencies = [
  "base64 0.13.1",
-]
-
-[[package]]
-name = "pem"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3163d2912b7c3b52d651a055f2c7eec9ba5cd22d26ef75b8dd3a59980b185923"
-dependencies = [
- "base64 0.21.5",
- "serde",
 ]
 
 [[package]]
@@ -8669,33 +8622,21 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "axum",
  "axum-prometheus",
- "base64 0.22.1",
- "blockifier",
- "cairo-lang-starknet-classes",
- "cairo-vm",
- "cheatnet",
  "chrono",
  "clokwerk",
- "cookie",
  "data-decoder",
- "db",
  "dotenv",
  "ethers",
  "futures",
  "internal-tracing",
- "jsonwebtoken 9.2.0",
  "lazy-regex",
  "moka",
- "num-bigint",
  "num-traits",
- "rand 0.8.8",
  "reqwest 0.11.27",
- "scarb-api",
  "serde",
  "serde_json",
  "sha2 0.10.9",
