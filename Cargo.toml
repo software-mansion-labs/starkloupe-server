@@ -1,12 +1,12 @@
 [workspace]
 members = [
-  "crates/server",
-  "crates/internal-tracing",
-  "crates/walnut-shared",
-  "crates/data-decoder",
-  "crates/scarb-dep-resolver",
-  "crates/simulate",
-  "crates/verification",
+    "crates/server",
+    "crates/internal-tracing",
+    "crates/walnut-shared",
+    "crates/data-decoder",
+    "crates/scarb-dep-resolver",
+    "crates/simulate",
+    "crates/verification",
 ]
 resolver = "2"
 
@@ -28,11 +28,11 @@ scarb-dep-resolver = { path = "./crates/scarb-dep-resolver" }
 
 axum = { version = "0.6.20", features = ["macros"] }
 sqlx = { version = "0.7.2", features = [
-  "runtime-tokio",
-  "tls-native-tls",
-  "postgres",
-  "uuid",
-  "time",
+    "runtime-tokio",
+    "tls-native-tls",
+    "postgres",
+    "uuid",
+    "time",
 ] }
 tower = { version = "0.4.13", features = ["timeout"] }
 tower-http = { version = "0.4.4", features = ["cors", "trace"] }
@@ -55,10 +55,10 @@ reqwest = { version = "0.11.22", features = ["json", "stream"] }
 utoipa = "4.2.3"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.17", features = [
-  "std",
-  "registry",
-  "env-filter",
-  "json",
+    "std",
+    "registry",
+    "env-filter",
+    "json",
 ] }
 cookie = { version = "0.18", features = ["percent-encode"] }
 jsonwebtoken = "9.2.0"
@@ -85,43 +85,43 @@ tiny-keccak = "2.0.2"
 
 #starknet
 starknet-rust = "0.19.0"
-starknet_api = "0.19.0-rc.2" # depend on foundry
+starknet_api = "0.20.0-rc.0" # depend on foundry
 starknet-types-core = { version = "0.2.4", features = [
-  "hash",
-  "prime-bigint",
-  "serde",
+    "hash",
+    "prime-bigint",
+    "serde",
 ] }
 starknet-selector-decoder = { git = "https://github.com/amanusk/starknet-selector-decoder", branch = "main" }
 
-blockifier = { version = "0.19.0-rc.2", default-features = false, features = [
-  "testing",
-  "tracing",
-  "node_api",
+blockifier = { version = "0.20.0-rc.0", default-features = false, features = [
+    "testing",
+    "tracing",
+    "node_api",
 ] } # depend on foundry
 cairo-annotations = { version = "0.10.0", features = ["cairo-lang"] }
 cairo-vm = "=3.2.0"
 
 # Cairo compiler
-cairo-lang-casm = "=2.19.0"
-cairo-lang-runner = "=2.19.0"
-cairo-lang-utils = "=2.19.0"
-cairo-lang-starknet = "=2.19.0"
-cairo-lang-sierra = "=2.19.0"
-cairo-lang-sierra-type-size = "=2.19.0"
-cairo-lang-starknet-classes = "=2.19.0"
-cairo-lang-sierra-to-casm = "=2.19.0"
+cairo-lang-casm = "=2.19.4"
+cairo-lang-runner = "=2.19.4"
+cairo-lang-utils = "=2.19.4"
+cairo-lang-starknet = "=2.19.4"
+cairo-lang-sierra = "=2.19.4"
+cairo-lang-sierra-type-size = "=2.19.4"
+cairo-lang-starknet-classes = "=2.19.4"
+cairo-lang-sierra-to-casm = "=2.19.4"
 
 # Starknet Foundry
 # The `starkloupe` feature carries the fork additions this server relies on:
 # VM memory and tracked-resource capture in the call trace, and serde
 # serialization of the trace result types.
-cheatnet = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "5eb423a9cbe9feefbf94a5cdb3a0288a09b5848b" , features = [
-  "starkloupe",
+cheatnet = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "a0f5d141cb829b4ace5c9fbeec7e05c42440d5a9", features = [
+    "starkloupe",
 ] }
-runtime = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "5eb423a9cbe9feefbf94a5cdb3a0288a09b5848b" }
-scarb-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "5eb423a9cbe9feefbf94a5cdb3a0288a09b5848b" }
-conversions = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "5eb423a9cbe9feefbf94a5cdb3a0288a09b5848b" }
-universal-sierra-compiler-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "5eb423a9cbe9feefbf94a5cdb3a0288a09b5848b" }
+runtime = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "a0f5d141cb829b4ace5c9fbeec7e05c42440d5a9" }
+scarb-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "a0f5d141cb829b4ace5c9fbeec7e05c42440d5a9" }
+conversions = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "a0f5d141cb829b4ace5c9fbeec7e05c42440d5a9" }
+universal-sierra-compiler-api = { git = "https://github.com/software-mansion-labs/starknet-foundry-starkloupe.git", rev = "a0f5d141cb829b4ace5c9fbeec7e05c42440d5a9" }
 
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }
