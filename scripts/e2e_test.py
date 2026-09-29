@@ -163,7 +163,6 @@ def server_env(rpc_url, usc):
         "BINARIES_S3_BUCKET_NAME": "walnut-binaries",
         "BINARIES_SAVE_DIRECTORY_PATH": "./binaries",
         "UNIVERSAL_SIERRA_COMPILER": usc,
-        "WALNUT_ADMIN_TOKEN": "e2e-local-token",
         "LOG_LEVEL": "INFO",
     }
 
@@ -264,7 +263,7 @@ def check(case, payload):
             call
             for call in calls.values()
             if isinstance(call.get("result"), dict)
-            and "Recoverable" in (call["result"].get("Err") or {})
+               and "Recoverable" in (call["result"].get("Err") or {})
         ]
         if not recoverable:
             raise CheckFailed("expected at least one Recoverable failure among the calls")

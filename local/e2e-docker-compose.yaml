@@ -15,7 +15,7 @@ services:
     ports:
       - 1234:5432
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -28,7 +28,9 @@ services:
   # against unverified contracts: the pipeline runs without source-level debug
   # info, so what is asserted is the trace structure, not source mapping.
   minio:
-    image: quay.io/minio/minio
+    # Community fork of MinIO; official minio/minio images are no longer public.
+    # Pinned to RELEASE.2026-08-04T00-00-00Z.
+    image: docker.io/pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     container_name: walnut_e2e_minio
     command: server /data --console-address ":9001"
     environment:
@@ -39,13 +41,15 @@ services:
       - 9010:9000
       - 9011:9001
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: [ "CMD-SHELL", "mc ready local || exit 1" ]
       interval: 2s
       timeout: 5s
       retries: 30
 
   createbuckets:
-    image: quay.io/minio/mc
+    # Community fork of MinIO; official minio/minio images are no longer public.
+    # Pinned to RELEASE.2026-08-04T00-00-00Z.
+    image: docker.io/pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     depends_on:
       minio:
         condition: service_healthy
