@@ -1,6 +1,7 @@
 use crate::binary_names::{bucket_arch_folder, installed_marker_relative_path, Tool};
 use async_compression::tokio::bufread::GzipDecoder;
 use async_tar::Archive;
+use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use futures::StreamExt;
@@ -229,7 +230,13 @@ async fn cache_in_bucket(s3_client: &S3Client, tool: Tool, file_name: &str, loca
         .await
     {
         Ok(_) => info!("Cached in the binaries bucket: {}", key),
-        Err(err) => warn!("Could not cache {} in the binaries bucket: {}", key, err),
+        // `{}` on an SDK error prints just "service error"; the context carries
+        // the status code and the message the bucket answered with.
+        Err(err) => warn!(
+            "Could not cache {} in the binaries bucket: {}",
+            key,
+            DisplayErrorContext(&err)
+        ),
     }
 }
 
