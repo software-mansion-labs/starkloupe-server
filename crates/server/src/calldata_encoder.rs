@@ -1,4 +1,4 @@
-use crate::abi_fetcher::fetch_contract_abi;
+use crate::abi_fetcher::{fetch_contract_abi, fetch_contract_abi_by_rpc_url};
 use data_decoder::{split_into_limbs, DecodedValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -364,16 +364,31 @@ pub fn encode_parameters_basic(
 
 /// Encode decoded calldata back to raw calldata format with ABI information.
 /// ABI fetches for all contract calls are performed in parallel.
+///
+/// Either `chain_id` (a known network) or `rpc_url` (a custom network) must be provided;
+/// `chain_id` takes precedence when both are given, matching `parse_chain_id_and_rpc_url`.
 pub async fn encode_decoded_calldata(
     decoded_calls: &[crate::handlers::simulate::ContractCall],
-    chain_id: &str,
+    chain_id: Option<&str>,
+    rpc_url: Option<&str>,
 ) -> Result<Vec<String>, String> {
     use crate::abi_fetcher::ContractAbiData;
 
     // Fetch all ABIs in parallel
     let abi_futures: Vec<_> = decoded_calls
         .iter()
-        .map(|call| fetch_contract_abi(&call.contract_address, chain_id))
+        .map(|call| {
+            let contract_address = call.contract_address.as_str();
+            async move {
+                if let Some(chain_id) = chain_id {
+                    fetch_contract_abi(contract_address, chain_id).await
+                } else if let Some(rpc_url) = rpc_url {
+                    fetch_contract_abi_by_rpc_url(contract_address, rpc_url).await
+                } else {
+                    Err("Missing required field: chain_id or rpc_url".to_string())
+                }
+            }
+        })
         .collect();
     let abi_results: Vec<Result<Arc<ContractAbiData>, String>> =
         futures::future::join_all(abi_futures).await;

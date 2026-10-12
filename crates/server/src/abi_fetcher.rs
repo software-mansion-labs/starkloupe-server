@@ -33,22 +33,49 @@ fn abi_cache() -> &'static Cache<AbiCacheKey, Arc<ContractAbiData>> {
     })
 }
 
-/// Fetch contract ABI for encoding/decoding purposes.
+/// Fetch contract ABI for encoding/decoding purposes, for a known chain.
 /// Results are cached in-memory keyed by `(contract_address, chain_id)`.
 pub async fn fetch_contract_abi(
     contract_address: &str,
     chain_id: &str,
 ) -> Result<Arc<ContractAbiData>, String> {
+    let (e_chain_id, _network) =
+        extract_chain_id(chain_id).map_err(|e| format!("Invalid chain ID: {}", e))?;
+
+    let (starknet_rpc_url, _) = get_rpc_urls(&e_chain_id);
+    let rpc_url = starknet_rpc_url.ok_or("No RPC URL available for chain")?;
+
+    fetch_contract_abi_cached(contract_address, chain_id, rpc_url).await
+}
+
+/// Fetch contract ABI for encoding/decoding purposes, for a custom (non-listed) RPC endpoint.
+/// Results are cached in-memory keyed by `(contract_address, rpc_url)`.
+pub async fn fetch_contract_abi_by_rpc_url(
+    contract_address: &str,
+    rpc_url: &str,
+) -> Result<Arc<ContractAbiData>, String> {
+    let url = url::Url::parse(rpc_url).map_err(|e| format!("Invalid RPC URL: {}", e))?;
+    fetch_contract_abi_cached(contract_address, rpc_url, url).await
+}
+
+async fn fetch_contract_abi_cached(
+    contract_address: &str,
+    cache_key_id: &str,
+    rpc_url: url::Url,
+) -> Result<Arc<ContractAbiData>, String> {
     let cache = abi_cache();
-    let key: AbiCacheKey = (contract_address.to_lowercase(), chain_id.to_string());
+    let key: AbiCacheKey = (contract_address.to_lowercase(), cache_key_id.to_string());
 
     if let Some(cached) = cache.get(&key).await {
-        info!("ABI cache hit for {} on {}", contract_address, chain_id);
+        info!("ABI cache hit for {} on {}", contract_address, cache_key_id);
         return Ok(cached);
     }
 
-    info!("ABI cache miss for {} on {}", contract_address, chain_id);
-    let data = fetch_contract_abi_uncached(contract_address, chain_id).await?;
+    info!(
+        "ABI cache miss for {} on {}",
+        contract_address, cache_key_id
+    );
+    let data = fetch_contract_abi_uncached(contract_address, rpc_url).await?;
     let data = Arc::new(data);
     cache.insert(key, data.clone()).await;
     Ok(data)
@@ -57,14 +84,8 @@ pub async fn fetch_contract_abi(
 /// The actual RPC + parsing logic, called only on cache miss.
 async fn fetch_contract_abi_uncached(
     contract_address: &str,
-    chain_id: &str,
+    rpc_url: url::Url,
 ) -> Result<ContractAbiData, String> {
-    let (e_chain_id, _network) =
-        extract_chain_id(chain_id).map_err(|e| format!("Invalid chain ID: {}", e))?;
-
-    let (starknet_rpc_url, _) = get_rpc_urls(&e_chain_id);
-    let rpc_url = starknet_rpc_url.ok_or("No RPC URL available for chain")?;
-
     let provider = walnut_shared::create_rpc_client_from_url(rpc_url);
 
     // Parse contract address
