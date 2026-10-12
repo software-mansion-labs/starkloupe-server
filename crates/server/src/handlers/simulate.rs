@@ -224,21 +224,25 @@ async fn handle_decoded_calldata_simulation(
 ) -> Result<Arc<simulate::TransactionSimulationResult>, Response> {
     let decoded_args_for_error = args.clone();
 
-    let chain_id = args.chain_id.as_deref().ok_or_else(|| {
+    if args.chain_id.is_none() && args.rpc_url.is_none() {
+        return Err(sim_error_response(
+            "Missing required field: chain_id or rpc_url".to_string(),
+            SimulationPayload::WithDecodedCalldata(decoded_args_for_error),
+        ));
+    }
+
+    let raw_calldata = calldata_encoder::encode_decoded_calldata(
+        &args.decoded_calldata,
+        args.chain_id.as_deref(),
+        args.rpc_url.as_deref(),
+    )
+    .await
+    .map_err(|e| {
         sim_error_response(
-            "Missing required field: chain_id".to_string(),
-            SimulationPayload::WithDecodedCalldata(decoded_args_for_error.clone()),
+            format!("Failed to encode decoded calldata: {}", e),
+            SimulationPayload::WithDecodedCalldata(decoded_args_for_error),
         )
     })?;
-
-    let raw_calldata = calldata_encoder::encode_decoded_calldata(&args.decoded_calldata, chain_id)
-        .await
-        .map_err(|e| {
-            sim_error_response(
-                format!("Failed to encode decoded calldata: {}", e),
-                SimulationPayload::WithDecodedCalldata(decoded_args_for_error),
-            )
-        })?;
 
     let raw_args = SimulationRawArgs {
         chain_id: args.chain_id,
