@@ -235,9 +235,7 @@ async fn fetch_block_with_txs(
     match block_with_txs {
         Ok(MaybePreConfirmedBlockWithTxs::Block(block_txs)) => Ok(block_txs),
         Ok(MaybePreConfirmedBlockWithTxs::PreConfirmedBlock(_)) => {
-            Err(TransactionSimulationError::PreConfirmedBlock(
-                "Pre-confirmed block is not allowed at the configuration level".to_string(),
-            ))
+            Err(TransactionSimulationError::PreConfirmedBlock)
         }
         Err(err) => Err(TransactionSimulationError::ProviderError(err)),
     }
