@@ -84,9 +84,10 @@ use starknet_api::executable_transaction::TransactionType;
 use starknet_api::transaction::L1HandlerTransaction;
 use starknet_api::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
 use starknet_rust::core::types::{
-    BlockId, ContractClass, ExecutionResources, ExecutionResult, Felt, ReceiptBlock, Transaction,
+    BlockId, ContractClass, ExecutionResources, ExecutionResult, Felt, ReceiptBlock, StarknetError,
+    Transaction,
 };
-use starknet_rust::providers::Provider;
+use starknet_rust::providers::{Provider, ProviderError};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
@@ -777,6 +778,18 @@ pub async fn simulate_transaction_by_hash(
     }
 }
 
+/// Maps "transaction not found" to `None` so the dedicated error is reported, but surfaces any
+/// other provider failure (rpc down, rate limit, unsupported method...) instead of masking it.
+fn none_if_hash_not_found<T>(
+    result: Result<T, ProviderError>,
+) -> Result<Option<T>, TransactionSimulationError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(ProviderError::StarknetError(StarknetError::TransactionHashNotFound)) => Ok(None),
+        Err(err) => Err(TransactionSimulationError::ProviderError(err)),
+    }
+}
+
 #[instrument(name = "simulate_starknet_tx", skip_all, fields(
     tx_hash = %transaction_hash.to_hex_string(),
     chain_id = ?chain_id,
@@ -795,10 +808,12 @@ async fn simulate_starknet_transaction_by_hash(
     let starknet_rpc_url = starknet_rpc_url.ok_or(TransactionSimulationError::InvalidRpcUrl)?;
     let provider_client = create_rpc_client_from_url(starknet_rpc_url.clone());
     // Fetch transaction
-    let transaction = provider_client
-        .get_transaction_by_hash(transaction_hash, None)
-        .await;
-    if let Ok(transaction) = transaction {
+    let transaction = none_if_hash_not_found(
+        provider_client
+            .get_transaction_by_hash(transaction_hash, None)
+            .await,
+    )?;
+    if let Some(transaction) = transaction {
         // Check if it's a DEPLOY or DEPLOY_ACCOUNT transaction (not supported)
         if matches!(transaction, Transaction::Deploy(_)) {
             let tx_hash_str = transaction_hash.to_hex_string();
@@ -829,27 +844,28 @@ async fn simulate_starknet_transaction_by_hash(
         )) = extract_submitted_tx(transaction)
         {
             // Fetch receipt
-            let transaction_receipt_with_block_info = provider_client
-                .get_transaction_receipt(transaction_hash)
-                .await;
-            if let Ok(transaction_receipt_with_block_info) = transaction_receipt_with_block_info {
+            let transaction_receipt_with_block_info = none_if_hash_not_found(
+                provider_client
+                    .get_transaction_receipt(transaction_hash)
+                    .await,
+            )?;
+            if let Some(transaction_receipt_with_block_info) = transaction_receipt_with_block_info {
                 let transaction_receipt = transaction_receipt_with_block_info.receipt;
                 let block_info = transaction_receipt_with_block_info.block;
 
                 match block_info {
                     ReceiptBlock::PreConfirmed { .. } => {
-                        return Err(TransactionSimulationError::PreConfirmedBlock(
-                            "Transaction simualtion in pre-confirmed block not found".to_string(),
-                        ));
+                        return Err(TransactionSimulationError::PreConfirmedBlock);
                     }
                     ReceiptBlock::Block { block_number, .. } => {
                         // Fetch or derive chain_id
                         let chain_id = match chain_id {
                             Some(chain_id) => ChainId::from(chain_id),
                             None => extract_chain_id_from_felt(
-                                provider_client.chain_id().await.map_err(|_| {
-                                    TransactionSimulationError::FailedToFetchChainId
-                                })?,
+                                provider_client
+                                    .chain_id()
+                                    .await
+                                    .map_err(TransactionSimulationError::FailedToFetchChainId)?,
                             )?,
                         };
 
@@ -1017,12 +1033,7 @@ pub async fn simulate_ethereum_transaction_by_hash(
     let transaction_receipt = provider_eth_client
         .get_transaction_receipt(transaction_hash)
         .await
-        .map_err(|_| {
-            TransactionSimulationError::TransactionHashNotFound(
-                transaction_hash.to_string(),
-                mask_private_token_in_url(&ethereum_rpc_url),
-            )
-        })?
+        .map_err(|err| TransactionSimulationError::EthProviderError(err.to_string()))?
         .ok_or(TransactionSimulationError::TransactionHashNotFound(
             transaction_hash.to_string(),
             mask_private_token_in_url(&ethereum_rpc_url),
@@ -1076,7 +1087,7 @@ async fn process_l1_handler_transaction(
     background_retry: Option<&BackgroundRetryService>,
 ) -> Result<TransactionSimulationResult, TransactionSimulationError> {
     let l1_handler_tx = L1HandlerTransaction::try_from(l1_event)
-        .map_err(|_| TransactionSimulationError::ConversionError)?;
+        .map_err(|err| TransactionSimulationError::ConversionError(err.to_string()))?;
 
     let l2_chain_id = to_chain_id(&chain_id);
     let core_l2_chain_id = ChainId::from(l2_chain_id);

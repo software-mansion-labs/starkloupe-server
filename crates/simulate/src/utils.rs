@@ -38,7 +38,7 @@ pub async fn parse_chain_id_and_rpc_url_debug(
         let chain_id_felt = provider_client
             .chain_id()
             .await
-            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?;
+            .map_err(TransactionSimulationError::FailedToFetchChainId)?;
         let core_chain_id = extract_chain_id_from_felt(chain_id_felt)?;
         Ok((core_chain_id, rpc_url))
     } else {
@@ -64,7 +64,7 @@ pub async fn parse_chain_id_and_rpc_url(
         let chain_id_felt = provider_client
             .chain_id()
             .await
-            .map_err(|_| TransactionSimulationError::FailedToFetchChainId)?;
+            .map_err(TransactionSimulationError::FailedToFetchChainId)?;
         let core_chain_id = extract_chain_id_from_felt(chain_id_felt)?;
         Ok((core_chain_id, rpc_url))
     } else {
