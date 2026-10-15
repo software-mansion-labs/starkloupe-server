@@ -73,10 +73,10 @@ CASES = [
     # decoded reason is embedded in that text instead of standing alone.
     {
         "name": "revert-via-cairo0",
-        "tx": "0x30bd34100d440fd656982047bf67d1291463d548b67720d871f5a478c14b37d",
+        "tx": "0xc7f545cda8f69caacc0700caca773357d8809cbbb5e311379ff638d447d13f",
         "status": "REVERTED",
         "revert_reason": "Insufficient tokens received",
-        "calls": 30,
+        "calls": 20,
         "failed": 4,
         "recoverable": False,
     },
