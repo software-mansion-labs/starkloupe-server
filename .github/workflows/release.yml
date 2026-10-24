@@ -2,15 +2,15 @@ name: Release
 
 # Builds the image and pushes it to Artifact Registry. It does NOT deploy.
 #
-# A release (a tag push, or a manual run on main) then asks starkloupe-infra to
-# promote the image: a repository_dispatch there records its digest in a pull
-# request against releases/starkloupe-server.json. Merging that and running
+# Runs only for a `v*` tag on a commit that is on main; any other tag fails
+# before building. The release then asks starkloupe-infra to promote the
+# image: a repository_dispatch there records its digest in a pull request
+# against releases/starkloupe-server.json. Merging that and running
 # starkloupe-infra's Terraform Apply workflow is what deploys it.
 
 on:
   push:
     tags: ["v[0-9]+.*"]
-  workflow_dispatch:
 
 concurrency:
   group: release
@@ -29,6 +29,20 @@ jobs:
     name: build and push
     runs-on: ubuntu-latest
     steps:
+      # Every image this workflow pushes is dispatched to starkloupe-infra for
+      # promotion, so it only builds a tag on a commit that has landed on main.
+      # Compared on GitHub rather than with git, so the checkout stays shallow:
+      # `main...<sha>` is "identical" or "behind" exactly when <sha> is in main.
+      - name: Require the tag to be on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}" --jq .status)"
+          if [ "${status}" != identical ] && [ "${status}" != behind ]; then
+            echo "Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main (${status})."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       # No service account key: the provider is locked to this repository in
@@ -46,26 +60,17 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Tag pushes are named after the release tag. A manual run is named after
-      # the commit - a branch name is not a valid Docker tag, and it would be
-      # reused by the next build off the same branch. Only a release moves
-      # `latest`.
+      # Named after the release tag. git-<sha> is the tag starkloupe-infra's
+      # promotion cross-checks against the digest it is sent.
       - name: Resolve image tags
         id: tags
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="git-$GITHUB_SHA"
-          fi
           {
-            echo "image=${IMAGE}:${tag}"
+            echo "image=${IMAGE}:${GITHUB_REF_NAME}"
             echo "list<<EOF"
-            echo "${IMAGE}:${tag}"
-            if [ "$GITHUB_REF_TYPE" = tag ]; then
-              echo "${IMAGE}:latest"
-              echo "${IMAGE}:git-${GITHUB_SHA}"
-            fi
+            echo "${IMAGE}:${GITHUB_REF_NAME}"
+            echo "${IMAGE}:latest"
+            echo "${IMAGE}:git-${GITHUB_SHA}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -102,11 +107,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Only releases are promoted: a manual run from a branch still builds and
-      # pushes, but asks for nothing.
       - name: Create starkloupe-infra dispatch token
         id: infra-token
-        if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.INFRA_APP_ID }}
@@ -116,7 +118,6 @@ jobs:
           permission-contents: write
 
       - name: Request promotion in starkloupe-infra
-        if: steps.infra-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.infra-token.outputs.token }}
           DIGEST: ${{ steps.build.outputs.digest }}
