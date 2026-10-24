@@ -72,7 +72,7 @@ jobs:
       # SQLX_OFFLINE=true is set in the Dockerfile, so the compile-time-checked
       # queries build against the committed .sqlx directory. If a PR touched SQL
       # without running `cargo sqlx prepare`, this is where it fails.
-      # starkloupe-infra checks the labels, the provenance and the SBOM before
+      # starkloupe-infra checks the labels and the provenance before
       # it records a digest. Single platform on purpose: it reads the labels
       # with `imagetools inspect`, which returns none for a multi-platform index.
       - name: Build and push
@@ -86,7 +86,6 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           provenance: mode=max
-          sbom: true
           tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
