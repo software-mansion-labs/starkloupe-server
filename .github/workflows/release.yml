@@ -19,6 +19,7 @@ concurrency:
 permissions:
   contents: read
   id-token: write # required to mint the Workload Identity token
+  attestations: write # sign the image's build provenance
 
 env:
   REGION: us-central1
@@ -77,23 +78,26 @@ jobs:
       # SQLX_OFFLINE=true is set in the Dockerfile, so the compile-time-checked
       # queries build against the committed .sqlx directory. If a PR touched SQL
       # without running `cargo sqlx prepare`, this is where it fails.
-      # starkloupe-infra checks the labels and the provenance before
-      # it records a digest. Single platform on purpose: it reads the labels
-      # with `imagetools inspect`, which returns none for a multi-platform index.
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          provenance: mode=max
+          provenance: false
           tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # starkloupe-infra will only promote this digest if GitHub has signed
+      # provenance for it from this repository's release workflow. A workflow in
+      # another repository can push under this image name, but cannot produce
+      # that signature.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
 
       - name: Pushed image
         env:
