@@ -1,4 +1,4 @@
-name: Bump starknet-foundry
+name: Check starknet-foundry bump
 
 on:
   workflow_dispatch:
