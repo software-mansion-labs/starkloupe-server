@@ -1,11 +1,31 @@
 name: Bump starknet-foundry on release
 
+# Opens the PR that moves the pinned starknet-foundry version.
+#
+# The purpose of this workflow is to make sure that we support the latest version of starknet.
+# This relies on:
+#   - the fact that we depend on starknet-foundry and its starknet-related dependencies e.g. blockifier
+#   - the assumption that starknet-foundry makes the best effort to support the latest version of starknet
+#
+# Only full releases are followed and the PR pins by tag in Cargo.toml.
 on:
+  # Repository dispatch endpoint which triggers the bump.
+  # Intended to be used in the future by starknet-foundry release workflow.
+  #
+  # client_payload keys, all optional:
+  #   tag - release tag to pin; defaults to the latest full release. Prereleases
+  #         are looked up and skipped. Drafts have no tag ref, so a draft tag
+  #         fails the release lookup instead - senders must not forward draft events.
+  repository_dispatch:
+    types: [ starknet-foundry-release ]
+
+  # The fallback that makes this work without repository dispatch.
+  schedule:
+    # 05:23 UTC daily. Off the hour to avoid the scheduler's peak.
+    - cron: "23 5 * * *"
+
+  # TODO: remove before merging
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to pin (default: latest full release)"
-        required: false
 
 concurrency:
   group: bump-starknet-foundry-release
@@ -18,14 +38,188 @@ permissions:
 env:
   FOUNDRY_REPO: foundry-rs/starknet-foundry
   BUMP_BRANCH: bump/starknet-foundry
-  CARGO_TERM_COLOR: always
+  # Identity of the bump commits. The open-PR check below tells the workflow's own
+  # commits from human ones by this email, so both steps must agree on it.
+  BOT_NAME: github-actions[bot]
+  BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
 
 jobs:
-  bump:
-    name: open bump PR
+  resolve-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      push: ${{ steps.existing.outputs.push }}
+      tag: ${{ steps.release.outputs.tag }}
+      rev: ${{ steps.release.outputs.rev }}
     steps:
       - uses: actions/checkout@v4
+
+      # foundry_pin.py edits Cargo.toml through tomlkit. Pinned exactly: the
+      # script relies on one of its private helpers to rename a key in place.
+      - name: Install foundry_pin.py dependencies
+        uses: actions/setup-python@v5
         with:
-          token: ${{ secrets.FOUNDRY_BUMP_TOKEN || github.token }}
+          python-version: "3.12"
+      - run: pip install tomlkit==0.13.3
+
+      - name: Read current pin
+        id: pin
+        run: ./scripts/foundry_pin.py read >> "$GITHUB_OUTPUT"
+
+      # Resolves the released and decides if there is anything to do.
+      #
+      # Bails out when:
+      #   - the named release is a draft or prerelease
+      #   - the release is not ahead of the pinned commit: it is already pinned,
+      #     or the pin tracked master past it
+      - name: Resolve release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN_VALUE: ${{ steps.pin.outputs.pin_value }}
+          PAYLOAD_TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          set -euo pipefail
+
+          tag="${PAYLOAD_TAG:-}"
+          if [ -z "$tag" ]; then
+            tag=$(gh api "repos/${FOUNDRY_REPO}/releases/latest" --jq .tag_name)
+          elif [ "$(gh api "repos/${FOUNDRY_REPO}/releases/tags/${tag}" --jq '.prerelease or .draft')" = "true" ]; then
+            echo "${tag} is a draft or prerelease; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          rev=$(gh api "repos/${FOUNDRY_REPO}/commits/${tag}" --jq .sha)
+          current=$(gh api "repos/${FOUNDRY_REPO}/commits/${PIN_VALUE}" --jq .sha)
+          # The release relative to the pin: only `ahead` is worth bumping to -
+          # `identical` is already bumped, `behind` or `diverged` would move back
+          # past commits the pin already has.
+          status=$(gh api "repos/${FOUNDRY_REPO}/compare/${current}...${rev}" --jq .status)
+
+          if [ "$status" = "ahead" ]; then
+            echo "needs_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+            printf '\nNot bumping: %s compared with the pinned commit is `%s`.\n' "$tag" "$status" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf 'tag=%s\nrev=%s\ncurrent=%s\n' "$tag" "$rev" "$current" >> "$GITHUB_OUTPUT"
+
+      # The pin on main stays behind until the bump PR is merged, so every daily
+      # run until then resolves the same release as new. This risks force-pushing
+      # away any commits someone added to adapt the code to the new foundry by hand.
+      # So an open PR is only replaced when it holds nothing but this workflow's own commit.
+      - name: Check open bump PR
+        id: existing
+        if: steps.release.outputs.needs_bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          number=$(gh pr list --head "$BUMP_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Resolve release compares against main, which keeps the old pin until
+          # the PR is merged, so it reports the same release as new every day.
+          # Rebuilding an identical PR would only re-run its CI.
+          gh api "repos/${GITHUB_REPOSITORY}/contents/Cargo.toml?ref=${BUMP_BRANCH}" \
+            -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/bump-Cargo.toml"
+          if [ "$(./scripts/foundry_pin.py --manifest "$RUNNER_TEMP/bump-Cargo.toml" read | paste -sd ' ' -)" = "pin_key=tag pin_value=${TAG}" ]; then
+            echo "PR #${number} already bumps to ${TAG}; leaving it alone." >> "$GITHUB_STEP_SUMMARY"
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Matched on the commit email rather than the GitHub login, which is
+          # null whenever an email maps to no account.
+          foreign=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${number}/commits" \
+            --jq ".[] | select(.commit.author.email != \"${BOT_EMAIL}\") | .sha")
+          if [ -n "$foreign" ]; then
+            echo "::error::PR #${number} has commits not made by this workflow; not overwriting it with ${TAG}. Rebase it onto ${TAG} by hand, or close it to let the workflow reopen it."
+            exit 1
+          fi
+          echo "push=true" >> "$GITHUB_OUTPUT"
+
+  open-bump-pr:
+    runs-on: ubuntu-latest
+    needs: resolve-release
+    if: needs.resolve-release.outputs.push == 'true'
+    env:
+      TAG: ${{ needs.resolve-release.outputs.tag }}
+      REV: ${{ needs.resolve-release.outputs.rev }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install foundry_pin.py dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install tomlkit==0.13.3
+
+      - name: Pin release tag and sync deps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+                    gh api "repos/${FOUNDRY_REPO}/contents/Cargo.toml?ref=${REV}" \
+            -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/foundry-Cargo.toml"
+          ./scripts/foundry_pin.py bump tag "$TAG" "$RUNNER_TEMP/foundry-Cargo.toml"
+          git --no-pager diff -- Cargo.toml
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Update Cargo.lock
+        run: cargo fetch
+
+      - name: Push bump branch
+        run: |
+          set -euo pipefail
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git checkout -b "$BUMP_BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "Bump starknet-foundry to ${TAG}"
+          git push --force origin "$BUMP_BRANCH"
+
+      - name: Open or update PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          cat > "$RUNNER_TEMP/pr-body.md" <<EOF
+          Pins \`${FOUNDRY_REPO}\` at [\`${TAG}\`](https://github.com/${FOUNDRY_REPO}/releases/tag/${TAG}).
+          EOF
+
+          existing=$(gh pr list --head "$BUMP_BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" \
+              --title "Bump starknet-foundry to ${TAG}" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+            url="$existing"
+          else
+            url=$(gh pr create \
+              --head "$BUMP_BRANCH" \
+              --base "$BASE_BRANCH" \
+              --title "Bump starknet-foundry to ${TAG}" \
+              --body-file "$RUNNER_TEMP/pr-body.md")
+          fi
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+
+  notify-failed:
+    runs-on: ubuntu-latest
+    needs: open-bump-pr
+    if: failure()
+    steps:
+      - uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          webhook: ${{ secrets.SLACK_FOUNDRY_BUMP_WEBHOOK_URL }}
+          webhook-type: webhook-trigger
+          payload: |
+            url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

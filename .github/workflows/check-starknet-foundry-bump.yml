@@ -1,12 +1,15 @@
 name: Check starknet-foundry bump
 
+# Weekly check for the starknet-foundry bump.
+#
+# Repoints the git deps in Cargo.toml at the tip of upstream starknet-foundry,
+# then runs e2e tests against it. A failure pings Slack.
 on:
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour to avoid the scheduler's peak.
+    - cron: "17 4 * * 1"
+
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch of foundry-rs/starknet-foundry to bump to
-        required: false
-        default: master
 
 concurrency:
   group: bump-starknet-foundry
@@ -15,10 +18,128 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  FOUNDRY_REPO: foundry-rs/starknet-foundry
+  FOUNDRY_REF: 'master'
+  # The .sqlx directory holds prepared queries so sqlx::query! macros compile
+  # without a live database.
+  SQLX_OFFLINE: "true"
+
 jobs:
-  bump:
-    name: bump + compile + e2e
+  resolve-latest-revision:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      current: ${{ steps.rev.outputs.current }}
+      latest: ${{ steps.rev.outputs.latest }}
     steps:
       - uses: actions/checkout@v4
+
+      # foundry_pin.py edits Cargo.toml through tomlkit. Pinned exactly: the
+      # script relies on one of its private helpers to rename a key in place.
+      - name: Install foundry_pin.py dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install tomlkit==0.13.3
+
+      - name: Read current pin
+        id: pin
+        run: ./scripts/foundry_pin.py read >> "$GITHUB_OUTPUT"
+
+      - name: Resolve latest revision
+        id: rev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN_KEY: ${{ steps.pin.outputs.pin_key }}
+          PIN_VALUE: ${{ steps.pin.outputs.pin_value }}
+        run: |
+          set -euo pipefail
+          # /commits/<ref> takes a tag or a sha, and resolves an annotated tag to
+          # its commit, so both kinds of pin land on a comparable sha.
+          current=$(gh api "repos/${FOUNDRY_REPO}/commits/${PIN_VALUE}" --jq .sha)
+          latest=$(git ls-remote "https://github.com/${FOUNDRY_REPO}.git" "refs/heads/${FOUNDRY_REF}" | cut -f1)
+          if [ -z "$latest" ]; then
+            echo "::error::Branch ${FOUNDRY_REF} does not exist in ${FOUNDRY_REPO}"
+            exit 1
+          fi
+          printf 'current=%s\nlatest=%s\n' "$current" "$latest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### starknet-foundry bump"
+            echo
+            echo "| | pin | commit |"
+            echo "| --- | --- | --- |"
+            echo "| current | \`${PIN_KEY} = ${PIN_VALUE}\` | \`${current}\` |"
+            echo "| ${FOUNDRY_REF} | \`rev = ${latest}\` | \`${latest}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already up to date
+        if: steps.rev.outputs.current == steps.rev.outputs.latest
+        run: echo "Cargo.toml already pins the tip of ${FOUNDRY_REF}; nothing to test." >> "$GITHUB_STEP_SUMMARY"
+
+  bump-and-test:
+    runs-on: ubuntu-latest
+    needs: resolve-latest-revision
+    if: needs.resolve-latest-revision.outputs.current != needs.resolve-latest-revision.outputs.latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installed before the bump on purpose: the cache key is derived from
+      # Cargo.lock, so keying off the committed lock file reuses the build of
+      # everything the bump does not move.
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install foundry_pin.py dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install tomlkit==0.13.3
+
+      - name: Pin latest rev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_REV: ${{ needs.resolve-latest-revision.outputs.latest }}
+        run: |
+          set -euo pipefail
+                    gh api "repos/${FOUNDRY_REPO}/contents/Cargo.toml?ref=${LATEST_REV}" \
+            -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/foundry-Cargo.toml"
+          ./scripts/foundry_pin.py bump rev "$LATEST_REV" "$RUNNER_TEMP/foundry-Cargo.toml"
+          git --no-pager diff -- Cargo.toml
+
+      - name: Resolve dependencies and check
+        run: cargo check --workspace --all-targets
+
+      # Keep steps below in sync with ci.yml
+
+      - name: Install Universal Sierra Compiler
+        run: sh scripts/install-usc.sh
+
+      - name: Build server
+        run: cargo build --bin server
+
+      - name: Start Postgres and MinIO
+        run: |
+          docker compose -f local/e2e-docker-compose.yaml up -d --wait postgres minio
+          docker compose -f local/e2e-docker-compose.yaml run --rm createbuckets
+
+      - name: Run e2e simulation test
+        env:
+          E2E_RPC_URL: ${{ secrets.STARKNET_MAINNET_RPC_URL }}
+          E2E_ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_MAINNET_RPC_URL }}
+        run: ./scripts/e2e_test.py
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f local/e2e-docker-compose.yaml logs --tail=100
+
+  notify-failed:
+    runs-on: ubuntu-latest
+    needs: bump-and-test
+    if: failure()
+    steps:
+      - uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          webhook: ${{ secrets.SLACK_FOUNDRY_BUMP_WEBHOOK_URL }}
+          webhook-type: webhook-trigger
+          payload: |
+            url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
