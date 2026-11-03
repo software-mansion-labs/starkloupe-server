@@ -6,7 +6,7 @@ on:
   pull_request:
   merge_group:
   push:
-    branches: [main]
+    branches: [ main ]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,7 +16,6 @@ env:
   # The .sqlx directory holds prepared queries so sqlx::query! macros compile
   # without a live database.
   SQLX_OFFLINE: "true"
-  CARGO_TERM_COLOR: always
 
 jobs:
   check:
@@ -25,12 +24,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
-      # Same system packages the Dockerfile installs to build the workspace.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev pkg-config
 
       # Channel comes from rust-toolchain.toml; this also caches the build.
       - name: Install Rust toolchain
