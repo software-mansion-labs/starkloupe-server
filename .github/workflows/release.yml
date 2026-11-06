@@ -30,7 +30,7 @@ jobs:
     name: build and push
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
     steps:
       # Every image this workflow pushes is dispatched to starkloupe-infra for
       # promotion, so it only builds a tag on a commit that has landed on main.
@@ -77,10 +77,46 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Rerunning the workflow at a commit that already has an image would
+      # rebuild it, and builds are not reproducible: git-<sha> could move to a
+      # different digest while a promotion of the first one is still open or
+      # already merged. So an image already built for this commit is reused, but
+      # only if GitHub has signed its provenance from this repository's release
+      # workflow, since anyone with registry access can push a git-<sha> tag.
+      # Anything else is built as usual.
+      - name: Reuse an existing build of this commit
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          digest="$(
+            gcloud artifacts docker images describe "${IMAGE}:git-${GITHUB_SHA}" \
+              --format='value(image_summary.digest)' 2>/dev/null || true
+          )"
+          if [ -z "${digest}" ]; then
+            echo "No image for ${GITHUB_SHA} yet; building it."
+            exit 0
+          fi
+          if ! gh attestation verify "oci://${IMAGE}@${digest}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --source-digest "${GITHUB_SHA}" \
+            --deny-self-hosted-runners; then
+            echo "The image tagged git-${GITHUB_SHA} has no matching provenance; building it."
+            exit 0
+          fi
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${GITHUB_REF_NAME}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Reusing ${digest}, already built from ${GITHUB_SHA}."
+
       # SQLX_OFFLINE=true is set in the Dockerfile, so the compile-time-checked
       # queries build against the committed .sqlx directory. If a PR touched SQL
       # without running `cargo sqlx prepare`, this is where it fails.
       - name: Build and push
+        if: steps.existing.outputs.digest == ''
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -96,6 +132,7 @@ jobs:
       # another repository can push under this image name, but cannot produce
       # that signature.
       - name: Attest build provenance
+        if: steps.existing.outputs.digest == ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
