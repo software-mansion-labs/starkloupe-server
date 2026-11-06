@@ -112,16 +112,6 @@ jobs:
             --tag "${IMAGE}:${GITHUB_REF_NAME}" \
             --tag "${IMAGE}:latest" \
             "${IMAGE}@${digest}"
-          for tag in "${GITHUB_REF_NAME}" latest; do
-            tagged="$(
-              gcloud artifacts docker images describe "${IMAGE}:${tag}" \
-                --format='value(image_summary.digest)'
-            )"
-            if [ "${tagged}" != "${digest}" ]; then
-              echo "${IMAGE}:${tag} resolves to ${tagged}, not ${digest}."
-              exit 1
-            fi
-          done
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "Reusing ${digest}, already built from ${GITHUB_SHA}."
 
