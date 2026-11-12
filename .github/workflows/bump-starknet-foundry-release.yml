@@ -53,12 +53,12 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       rev: ${{ steps.release.outputs.rev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
 
       # foundry_pin.py edits Cargo.toml through tomlkit. Pinned exactly, as its
       # output formatting differs between versions.
       - name: Install foundry_pin.py dependencies
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
       - run: pip install tomlkit==0.13.3
@@ -172,10 +172,10 @@ jobs:
       TAG: ${{ needs.resolve-release.outputs.tag }}
       REV: ${{ needs.resolve-release.outputs.rev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
 
       - name: Install foundry_pin.py dependencies
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.12"
       - run: pip install tomlkit==0.13.3
@@ -191,7 +191,7 @@ jobs:
           git --no-pager diff -- Cargo.toml
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
 
       - name: Update Cargo.lock
         run: cargo fetch
@@ -237,7 +237,7 @@ jobs:
     needs: open-bump-pr
     if: failure()
     steps:
-      - uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+      - uses: slackapi/slack-github-action@v4.0.0
         with:
           webhook: ${{ secrets.SLACK_FOUNDRY_BUMP_WEBHOOK_URL }}
           webhook-type: webhook-trigger
