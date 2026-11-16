@@ -129,9 +129,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Initialize Voyager client with API key
             let voyager_config = verification::voyager::VoyagerConfig::get_voyager_config();
+            let (voyager_mainnet_url, voyager_sepolia_url) = walnut_shared::voyager_api_urls();
+            tracing::info!(
+                enabled = voyager_config.enabled,
+                class_source_url = %voyager_config.base_url,
+                mainnet_url = %voyager_mainnet_url,
+                sepolia_url = %voyager_sepolia_url,
+                "Voyager configuration"
+            );
             let voyager_client = match verification::voyager::VoyagerClient::new(voyager_config) {
                 Ok(client) => {
-                    tracing::info!("Voyager client initialized and enabled");
+                    tracing::info!("Voyager client initialized");
                     Some(client)
                 }
                 Err(e) => {
