@@ -392,7 +392,7 @@ pub async fn get_contract_handler(
             if let Some(chain_id) = chain_id_for_voyager {
                 if let Some(voyager_url) = get_voyager_api_url(&chain_id) {
                     if let Some(alias) =
-                        fetch_voyager_contract_alias(voyager_url, &contract_address).await
+                        fetch_voyager_contract_alias(&voyager_url, &contract_address).await
                     {
                         contract_name = Some(alias);
                         break;

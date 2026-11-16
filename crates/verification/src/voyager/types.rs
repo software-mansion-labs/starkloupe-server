@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use walnut_shared::voyager_api_key;
+use walnut_shared::{env_or_default, voyager_api_key, VOYAGER_MAINNET_API_URL};
 
 /// Configuration for Voyager API client
 #[derive(Clone, Debug)]
@@ -15,7 +15,9 @@ impl VoyagerConfig {
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,
-            base_url: "https://api.voyager.online/beta".to_string(),
+            base_url: env_or_default("VOYAGER_API_URL_MAINNET", VOYAGER_MAINNET_API_URL)
+                .trim_end_matches('/')
+                .to_string(),
             enabled: true,
             timeout_secs: 30,
         }
