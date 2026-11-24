@@ -39,7 +39,7 @@ services:
       - DOJO_GITHUB_REPO_NAME=dojoengine/dojo
       - DOJO_RUN_SCHEDULER_INTERVAL_MINUTES=60
       - LOG_LEVEL=INFO
-      - BUILD_CPU_LIMIT=300
+      - BUILD_CPU_LIMIT=600
     volumes:
       - ./docker-volumes/walnut-server/binaries:/opt/app/binaries:rw
       - ./docker-volumes/walnut-server/verifications:/opt/app/tmp:rw

@@ -1,5 +1,5 @@
 use super::types::{CompilerVersion, VoyagerSourceResponse};
-use crate::artifacts::find_class_hash_by_contract_name;
+use crate::artifacts::{find_class_hash_by_contract_name, find_package_by_class_hash};
 use crate::manifest::Manifest;
 use crate::scarb::{build_with_scarb_for_profile, is_new_cairo_version_supported};
 use crate::utils::{
@@ -68,6 +68,9 @@ pub struct Phase1Result {
     pub source_code: HashMap<String, String>,
     /// Contract name from Voyager (for multi-contract project selection)
     pub verified_name: String,
+    /// Workspace package defining the contract that matched the on-chain hash, to tell apart
+    /// same-named contracts of different members in Phase 2. None when no profile matched.
+    pub original_package: Option<String>,
 }
 
 /// Phase 1: prepare source files and build non-inline profiles (release, dev) to find
@@ -275,12 +278,29 @@ pub async fn compile_voyager_phase1(
         break 'retry;
     }
 
-    if original_contract_class.is_none() {
-        warn!(
-            "Phase 1: no non-inline profile matched on-chain hash {} — function calls unavailable for simple trace",
-            original_class_hash
-        );
-    }
+    let original_package = match &original_profile {
+        Some(profile) => {
+            let tmp_dir = tmp_dir.clone();
+            let package_name = manifest.package_name.clone();
+            let profile = profile.clone();
+            let class_hash = original_class_hash.clone();
+            tokio::task::spawn_blocking(move || {
+                find_package_by_class_hash(&tmp_dir, &package_name, &profile, &class_hash)
+            })
+            .await?
+            .unwrap_or_else(|e| {
+                warn!("Phase 1: failed to find package of matched class: {:?}", e);
+                None
+            })
+        }
+        None => {
+            warn!(
+                "Phase 1: no non-inline profile matched on-chain hash {} — function calls unavailable for simple trace",
+                original_class_hash
+            );
+            None
+        }
+    };
 
     Ok(Phase1Result {
         original_class_hash,
@@ -292,6 +312,7 @@ pub async fn compile_voyager_phase1(
         tmp_dir,
         source_code,
         verified_name,
+        original_package,
     })
 }
 
@@ -348,12 +369,14 @@ pub async fn compile_voyager_phase2(
         let tmp_dir_clone = tmp_dir.clone();
         let package_name = phase1.manifest.package_name.clone();
         let inline_profile_clone = phase1.inline_profile.clone();
+        let original_package = phase1.original_package.clone();
         let target_class_hash = tokio::task::spawn_blocking(move || {
             find_class_hash_by_contract_name(
                 &tmp_dir_clone,
                 &package_name,
                 &inline_profile_clone,
                 &verified_name_clone,
+                original_package.as_deref(),
             )
         })
         .await??;
