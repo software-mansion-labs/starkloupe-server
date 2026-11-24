@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::{env, fs};
 use tokio::process::Command;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use walnut_shared::tuple_to_version_string;
 
 fn supported_old_cairo_versions() -> Vec<Version> {
@@ -36,14 +36,38 @@ fn minimum_supported_new_dojo_version() -> Version {
     Version::parse("1.1.0").unwrap()
 }
 
-/// Returns the default build timeout read from `BUILD_TIMEOUT_SECS` env var (default 120s).
+/// Per-process CPU-time limit (seconds) for build processes, from `BUILD_CPU_LIMIT` (default 600s).
+fn build_cpu_limit_secs() -> Result<u64> {
+    Ok(std::env::var("BUILD_CPU_LIMIT")
+        .unwrap_or("600".to_string())
+        .parse::<u64>()?)
+}
+
+/// Returns the default build timeout read from `BUILD_TIMEOUT_SECS` env var (default 300s).
 /// Pass the result to `build_with_scarb_for_profile` / `compile_with_scarb_for_profile`.
 /// Use `None` to skip the tokio timeout (background retries rely on OS CPU limit only).
+///
+/// The timeout must stay below `BUILD_CPU_LIMIT`: only a timeout is retried in the background
+/// (without a wall-clock deadline), whereas a build killed by the CPU limit fails for good.
+/// CPU time accrues across all of a build's threads, so with equal limits a parallel build is
+/// killed by the CPU limit before the timeout can fire.
 pub fn default_build_timeout() -> Option<Duration> {
     let secs: u64 = std::env::var("BUILD_TIMEOUT_SECS")
-        .unwrap_or("120".to_string())
+        .unwrap_or("300".to_string())
         .parse()
-        .unwrap_or(120);
+        .unwrap_or(300);
+    static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+    WARN_ONCE.call_once(|| {
+        if let Ok(cpu_limit) = build_cpu_limit_secs() {
+            if secs >= cpu_limit {
+                warn!(
+                    "BUILD_TIMEOUT_SECS ({}) is not below BUILD_CPU_LIMIT ({}): builds will hit \
+                     the CPU limit before timing out and won't be retried in the background",
+                    secs, cpu_limit
+                );
+            }
+        }
+    });
     Some(Duration::from_secs(secs))
 }
 
@@ -55,15 +79,17 @@ pub fn is_build_timeout_error(e: &anyhow::Error) -> bool {
 
 /// `build_timeout`: `Some(d)` wraps with `tokio::time::timeout`; `None` waits without a deadline
 /// (the OS-level CPU limit from `BUILD_CPU_LIMIT` still applies).
+///
+/// `workspace` passes `--workspace` so every member is built, not just the root package — the
+/// contract may live in a member. Scarb only; `sozo` has no such flag.
 async fn run_project_build_for_profile(
     tmp_dir: &PathBuf,
     path: &str,
     profile: &str,
     build_timeout: Option<Duration>,
+    workspace: bool,
 ) -> Result<()> {
-    let cpu_limit: u64 = std::env::var("BUILD_CPU_LIMIT")
-        .unwrap_or("300".to_string())
-        .parse::<u64>()?;
+    let cpu_limit = build_cpu_limit_secs()?;
 
     let absolute_path = fs::canonicalize(path).map_err(|e| {
         let binary = path
@@ -82,6 +108,9 @@ async fn run_project_build_for_profile(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    if workspace {
+        cmd.arg("--workspace");
+    }
 
     unsafe {
         cmd.pre_exec(move || {
@@ -166,7 +195,7 @@ pub async fn compile_with_scarb_for_profile(
         tuple_to_version_string(starknet_version),
     );
 
-    run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
+    run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout, true).await?;
 
     read_old_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
@@ -204,7 +233,7 @@ pub async fn build_with_scarb_for_profile(
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
         let sozo_path = Tool::Sozo.binary_path(&binaries_save_directory_path, dojo_version);
-        run_project_build_for_profile(tmp_dir, &sozo_path, profile, build_timeout).await?;
+        run_project_build_for_profile(tmp_dir, &sozo_path, profile, build_timeout, false).await?;
     } else {
         let binaries_save_directory_path =
             env::var("BINARIES_SAVE_DIRECTORY_PATH").unwrap_or("".to_string());
@@ -212,7 +241,7 @@ pub async fn build_with_scarb_for_profile(
             &binaries_save_directory_path,
             tuple_to_version_string(manifest.cairo_version),
         );
-        run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout).await?;
+        run_project_build_for_profile(tmp_dir, &scarb_path, profile, build_timeout, true).await?;
     }
     read_new_cairo_version_artifacts(tmp_dir, &manifest.package_name, profile)
 }
