@@ -5485,12 +5485,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indextree"
-version = "4.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6f7e29c1619ec492f411b021ac9f30649d5f522ca6f287f2467ee48c8dfe10"
-
-[[package]]
 name = "indicatif"
 version = "0.17.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5563,7 +5557,6 @@ dependencies = [
  "data-decoder",
  "futures",
  "indexmap 2.14.2",
- "indextree",
  "itertools 0.12.1",
  "moka",
  "num-bigint",
@@ -11098,16 +11091,12 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
- "aws-config",
  "aws-sdk-s3",
  "aws-smithy-types",
- "axum",
  "blockifier",
  "cairo-annotations",
  "cairo-lang-starknet-classes",
  "cairo-vm",
- "cheatnet",
- "data-decoder",
  "futures",
  "hex",
  "lazy-regex",
@@ -11115,8 +11104,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "reqwest 0.11.27",
- "runtime",
- "scarb-api",
  "scarb-dep-resolver",
  "semver",
  "serde",
@@ -11168,8 +11155,6 @@ dependencies = [
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
  "cairo-vm",
- "cheatnet",
- "conversions",
  "ethers",
  "hex",
  "num-bigint",

@@ -41,14 +41,9 @@ serde = { version = "1.0.163", features = ["derive"] }
 serde_json = "1.0.104"
 url = "2.5.0"
 num-bigint = { version = "0.4.4", features = ["rand"] }
-camino = { version = "1.1.4", features = ["serde1"] }
-fs2 = "0.4.3"
 flate2 = "1.0.27"
 anyhow = "1.0.75"
 num-traits = "0.2.18"
-ctor = "0.2.4"
-indoc = "2"
-starknet-rust-crypto = "0.9.0"
 dotenv = "0.15.0"
 chrono = { version = "0.4.31", features = ["serde"] }
 reqwest = { version = "0.11.22", features = ["json", "stream"] }
@@ -60,8 +55,6 @@ tracing-subscriber = { version = "0.3.17", features = [
     "env-filter",
     "json",
 ] }
-cookie = { version = "0.18", features = ["percent-encode"] }
-jsonwebtoken = "9.2.0"
 urlencoding = "2.1.3"
 uuid = { version = "1.6.1", features = ["v4", "fast-rng"] }
 time = { version = "0.3.36", features = ["serde", "serde-well-known", "formatting", "parsing"] }
@@ -79,7 +72,6 @@ thiserror = "1.0.60"
 num-integer = "0.1.46"
 lazy_static = "1.5.0"
 phf = { version = "0.11", features = ["macros"] }
-fs_extra = "1.3.0"
 ethers = "2.0.14"
 tiny-keccak = "2.0.2"
 
@@ -103,9 +95,7 @@ cairo-vm = "=3.2.0"
 
 # Cairo compiler
 cairo-lang-casm = "=2.19.5"
-cairo-lang-runner = "=2.19.5"
 cairo-lang-utils = "=2.19.5"
-cairo-lang-starknet = "=2.19.5"
 cairo-lang-sierra = "=2.19.5"
 cairo-lang-sierra-type-size = "=2.19.5"
 cairo-lang-starknet-classes = "=2.19.5"
@@ -119,13 +109,11 @@ cheatnet = { git = "https://github.com/foundry-rs/starknet-foundry.git", rev = "
     "starkloupe",
 ] }
 runtime = { git = "https://github.com/foundry-rs/starknet-foundry.git", rev = "ca47ea25a26f692f020d68c593c086ac717c76b2" }
-scarb-api = { git = "https://github.com/foundry-rs/starknet-foundry.git", rev = "ca47ea25a26f692f020d68c593c086ac717c76b2" }
 conversions = { git = "https://github.com/foundry-rs/starknet-foundry.git", rev = "ca47ea25a26f692f020d68c593c086ac717c76b2" }
 universal-sierra-compiler-api = { git = "https://github.com/foundry-rs/starknet-foundry.git", rev = "ca47ea25a26f692f020d68c593c086ac717c76b2" }
 
 # For Scarb binary download scheduler
 tokio-util = { version = "0.7.11", features = ["compat"] }
-regex = "1.11.1"
 async-tar = "0.5.0"
 semver = "1.0"
 async-compression = { version = "0.4.1", features = ["gzip", "tokio"] }
