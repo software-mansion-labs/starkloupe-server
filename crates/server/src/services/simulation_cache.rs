@@ -49,7 +49,7 @@ impl CacheKey {
                 format!("[{}]", &self.hash[..8])
             }
         } else {
-            format!("[{}]", &self.hash)
+            format!("[{}]", self.hash)
         }
     }
 

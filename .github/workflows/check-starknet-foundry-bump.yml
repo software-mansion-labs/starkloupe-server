@@ -86,8 +86,9 @@ jobs:
       # Installed before the bump on purpose: the cache key is derived from
       # Cargo.lock, so keying off the committed lock file reuses the build of
       # everything the bump does not move.
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
 
       - name: Install foundry_pin.py dependencies
         uses: actions/setup-python@v5.6.0

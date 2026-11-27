@@ -4,18 +4,21 @@
 version: 'v0.0.3'
 workflows:
     '.github/workflows/bump-starknet-foundry-release.yml':
-        - 'actions-rust-lang/setup-rust-toolchain@v1.17.0'
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-python@v5.6.0'
+        - 'dtolnay/rust-toolchain@master'
         - 'slackapi/slack-github-action@v4.0.0'
     '.github/workflows/check-starknet-foundry-bump.yml':
-        - 'actions-rust-lang/setup-rust-toolchain@v1.17.0'
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-python@v5.6.0'
+        - 'dtolnay/rust-toolchain@master'
         - 'slackapi/slack-github-action@v4.0.0'
     '.github/workflows/ci.yml':
         - 'actions-rust-lang/setup-rust-toolchain@v1.17.0'
         - 'actions/checkout@v4.4.0'
+        - 'actions/checkout@v7.0.1'
+        - 'dtolnay/rust-toolchain@master'
+        - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/release.yml':
         - 'actions/attest-build-provenance@v4.2.2'
@@ -77,6 +80,11 @@ dependencies:
         commit: 'sha1-8d2750c68a42422c14e847fe6c8ac0403b4cbd6f'
         owner_id: 5429470
         repo_id: 288485773
+    'dtolnay/rust-toolchain@master':
+        ref: 'master'
+        commit: 'sha1-df2a88e9fe4098bad09cb42c3dec7187f15861fc'
+        owner_id: 1940490
+        repo_id: 260749683
     'google-github-actions/auth@v2.1.13':
         ref: 'v2.1.13'
         commit: 'sha1-c200f3691d83b41bf9bbd8638997a462592937ed'
@@ -95,6 +103,11 @@ dependencies:
     'swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4':
         ref: 'v2.9.1'
         commit: 'sha1-c19371144df3bb44fab255c43d04cbc2ab54d1c4'
+        owner_id: 580492
+        repo_id: 298565987
+    'swatinem/rust-cache@v2.9.3':
+        ref: 'v2.9.3'
+        commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
     'taiki-e/install-action@v2.90.3':

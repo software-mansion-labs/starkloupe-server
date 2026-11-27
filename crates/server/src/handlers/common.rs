@@ -30,6 +30,8 @@ pub async fn resolve_block_number(args: &SimulationArgs) -> Result<Option<BlockN
 
 /// Wraps a closure in `spawn_blocking` + `timeout`. Returns the inner result on success,
 /// or a standardized error `Response` for panics and timeouts.
+// An `axum` `Response` is the natural error type for handler helpers; boxing it buys nothing here.
+#[allow(clippy::result_large_err)]
 pub async fn spawn_blocking_with_timeout<F, T>(f: F, context: &str) -> Result<T, Response>
 where
     F: FnOnce() -> T + Send + 'static,

@@ -99,7 +99,7 @@ pub async fn initiate_verification(
 
     let class_hash_to_cairo_version: HashMap<String, (u32, u32, u32)> = class_hashes
         .iter()
-        .zip(classes_from_blockchain.into_iter())
+        .zip(classes_from_blockchain)
         .filter_map(|(class_hash, result)| {
             match result {
                 Ok((_, cairo_version)) => Some((class_hash.to_string(), cairo_version)),

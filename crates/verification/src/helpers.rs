@@ -483,7 +483,7 @@ fn update_new_cairo_version_class_verification_data(
                 let error_message = format!(
                     "Contract class hash does not match. Expected {}, but found {:?}",
                     class_hash,
-                    &classes_to_verify_map.keys()
+                    classes_to_verify_map.keys()
                 );
                 error!(error_message);
                 *class_result = Err(anyhow::anyhow!(error_message));
