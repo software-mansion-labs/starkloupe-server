@@ -101,7 +101,7 @@ jobs:
           LATEST_REV: ${{ needs.resolve-latest-revision.outputs.latest }}
         run: |
           set -euo pipefail
-                    gh api "repos/${FOUNDRY_REPO}/contents/Cargo.toml?ref=${LATEST_REV}" \
+          gh api "repos/${FOUNDRY_REPO}/contents/Cargo.toml?ref=${LATEST_REV}" \
             -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/foundry-Cargo.toml"
           ./scripts/foundry_pin.py bump rev "$LATEST_REV" "$RUNNER_TEMP/foundry-Cargo.toml"
           git --no-pager diff -- Cargo.toml
