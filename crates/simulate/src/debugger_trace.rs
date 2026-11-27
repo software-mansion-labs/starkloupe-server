@@ -31,7 +31,7 @@ impl DebuggerTraceBuilder {
             contract_call.debugger_trace_step_index = Some(*debugger_trace_step_index);
         }
 
-        for (_function_call_id, function_call) in function_calls_map.0.iter_mut() {
+        for function_call in function_calls_map.0.values_mut() {
             if function_call.debugger_trace_step_index.is_none() {
                 let contract_call = contract_calls_map
                     .0

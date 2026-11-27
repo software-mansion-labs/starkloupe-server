@@ -229,13 +229,9 @@ fn decode_array(
 
     if let Some(GenericArg::Type(concrete_type_id)) = generic_args.first() {
         for _ in 0..array_length {
-            if let Some(decoded_value) =
-                decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)
-            {
-                decoded_elements.push(decoded_value.value);
-            } else {
-                return None;
-            }
+            let decoded_value =
+                decode_event_datas(concrete_type_id, type_declaration_map, values, data_index)?;
+            decoded_elements.push(decoded_value.value);
         }
     }
 

@@ -70,10 +70,9 @@ fn decode_type(
                 inner_ty
             } else if ty.ends_with("[]") {
                 ty.strip_suffix("[]").unwrap()
-            } else if let Some(stripped) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                stripped.split(';').next().unwrap().trim()
             } else {
-                return None;
+                let stripped = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']'))?;
+                stripped.split(';').next().unwrap().trim()
             };
             // Get array length (fixed or dynamic)
             let array_length =

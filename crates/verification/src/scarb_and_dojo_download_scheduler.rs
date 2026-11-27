@@ -374,7 +374,7 @@ pub async fn check_periodically_updates(
                         output_path_string.trim_end_matches(".tar.gz");
                     let extracted_binary_path = format!(
                         "{}{}",
-                        extracted_tar_gz_folder_path, &binary_path_in_extracted_folder
+                        extracted_tar_gz_folder_path, binary_path_in_extracted_folder
                     );
                     let version = extract_cairo_version(extracted_binary_path.as_str()).await?;
                     let extracted_binary_destination_path =
@@ -428,14 +428,14 @@ pub async fn check_periodically_updates(
                 if tool == Tool::Sozo {
                     let extract_path = format!(
                         "{}/{}",
-                        &binaries_dir_path_string,
-                        &asset.name.trim_end_matches(".tar.gz")
+                        binaries_dir_path_string,
+                        asset.name.trim_end_matches(".tar.gz")
                     );
                     let extract_path_dir_path = Path::new(extract_path.as_str());
                     info!("Extracting to: {:?}", extract_path_dir_path);
                     extract_tar_gz(tar_gz_output_path, extract_path_dir_path).await?;
                     let extracted_binary_path =
-                        format!("{}{}", &extract_path, &binary_path_in_extracted_folder);
+                        format!("{}{}", extract_path, binary_path_in_extracted_folder);
                     let extracted_binary_destination_path =
                         tool.binary_path(&binaries_dir_path_string, &release_version);
 
